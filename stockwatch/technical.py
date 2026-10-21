@@ -66,7 +66,10 @@ def analyze(df: pd.DataFrame, trailing_atr_mult: float = 3.0, owned: bool = True
     c = ind["Close"]
     price = float(last["Close"])
     signals: list[Signal] = []
-    score = 50.0
+    parts: list[tuple[str, float]] = []   # (factor, points), shown on the details page
+
+    def add(label: str, points: float):
+        parts.append((label, round(float(points), 1)))
 
     hi52 = float(c.iloc[-252:].max())
     lo52 = float(c.iloc[-252:].min())
@@ -82,10 +85,12 @@ def analyze(df: pd.DataFrame, trailing_atr_mult: float = 3.0, owned: bool = True
 
     # --- trend (the backbone of the score); recent listings lack long averages, so skip them
     if not np.isnan(last["SMA200"]):
-        score += 12 if above200 else -12
-        score += 6 if last["SMA50"] > last["SMA200"] else -6
+        add("Price above the 200-day average" if above200 else "Price below the 200-day average",
+            12 if above200 else -12)
+        add("50-day above 200-day (uptrend structure)" if last["SMA50"] > last["SMA200"]
+            else "50-day below 200-day (downtrend structure)", 6 if last["SMA50"] > last["SMA200"] else -6)
     if not np.isnan(last["SMA50"]):
-        score += 8 if above50 else -8
+        add("Price above the 50-day average" if above50 else "Price below the 50-day average", 8 if above50 else -8)
 
     if crossed_above(ind["SMA50"], ind["SMA200"], 5):
         signals.append(Signal(OPPORTUNITY, "technical", "golden_cross",
@@ -103,27 +108,28 @@ def analyze(df: pd.DataFrame, trailing_atr_mult: float = 3.0, owned: bool = True
     # --- momentum
     r = float(last["RSI"])
     if r < 30:
-        score += 4  # oversold: potential entry, but only an opportunity if the trend agrees
+        add(f"RSI {r:.0f}: oversold, bounce potential", 4)  # an opportunity only if the trend agrees
         signals.append(Signal(OPPORTUNITY if not downtrend else RISK, "technical", "rsi_oversold",
                               f"RSI {r:.0f} oversold" + (" inside a downtrend" if downtrend else ""),
                               2 if uptrend else 1))
     elif r > 75:
-        score -= 4
+        add(f"RSI {r:.0f}: overbought", -4)
         signals.append(Signal(RISK, "technical", "rsi_overbought",
                               f"RSI {r:.0f} overbought - extended, consider trimming", 1))
     elif 50 <= r <= 70:
-        score += 4
+        add(f"RSI {r:.0f}: healthy momentum", 4)
 
     if crossed_above(ind["MACD"], ind["MACD_signal"], 3):
-        score += 4
+        add("Fresh MACD bullish crossover", 4)
         signals.append(Signal(OPPORTUNITY, "technical", "macd_bull", "MACD bullish crossover", 1))
     elif crossed_below(ind["MACD"], ind["MACD_signal"], 3):
-        score -= 4
+        add("Fresh MACD bearish crossover", -4)
         signals.append(Signal(RISK, "technical", "macd_bear", "MACD bearish crossover", 1))
-    score += 4 if last["MACD"] > last["MACD_signal"] else -4
+    add("MACD above its signal line" if last["MACD"] > last["MACD_signal"] else "MACD below its signal line",
+        4 if last["MACD"] > last["MACD_signal"] else -4)
 
     if not np.isnan(ret_3m):
-        score += float(np.clip(ret_3m * 40, -10, 10))
+        add(f"3-month price change {ret_3m * 100:+.0f}%", np.clip(ret_3m * 40, -10, 10))
 
     # --- price location
     if price <= last["BB_lower"] and uptrend:
@@ -133,7 +139,7 @@ def analyze(df: pd.DataFrame, trailing_atr_mult: float = 3.0, owned: bool = True
         signals.append(Signal(OPPORTUNITY, "technical", "new_52w_high", "Breaking out to a 52-week high", 1))
     drawdown = price / hi52 - 1
     if drawdown < -0.30:
-        score -= 6
+        add(f"{-drawdown:.0%} below the 52-week high", -6)
         signals.append(Signal(RISK, "technical", "deep_drawdown",
                               f"{-drawdown:.0%} below its 52-week high", 2))
 
@@ -155,5 +161,15 @@ def analyze(df: pd.DataFrame, trailing_atr_mult: float = 3.0, owned: bool = True
         "atr": float(last["ATR"]), "high_52w": hi52, "low_52w": lo52, "drawdown_52w": drawdown,
         "ret_1m": ret_1m, "ret_3m": ret_3m, "volume_ratio": vol_ratio, "day_change": day_move,
         "trend": "up" if uptrend else "down" if downtrend else "mixed", "trailing_stop": trail,
+        "score_parts": parts, "raw_points": sum(pt for _, pt in parts),
     }
-    return float(np.clip(score, 0, 100)), metrics, signals
+    return to_score(metrics["raw_points"]), metrics, signals
+
+
+def to_score(points: float) -> float:
+    """Map net factor points onto 0-100 with a smooth S-curve instead of a hard clip.
+
+    Near 50 it moves about one-for-one with the points, so thresholds keep their meaning,
+    but the ends compress rather than saturate: a stock where every factor is negative
+    lands around 5-15 and still ranks against other weak stocks instead of all reading 0."""
+    return float(100 / (1 + np.exp(-points / 25)))

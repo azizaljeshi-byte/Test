@@ -122,6 +122,7 @@ a.mc-a:hover .mc-card { border-color:var(--c); transform:translateY(-1px); box-s
 .mc-tbl td { text-align:right; padding:.3rem .45rem; border-bottom:1px solid rgba(27,52,66,.6); color:var(--ink); white-space:nowrap; font-family:var(--mono); }
 .mc-tbl th:first-child, .mc-tbl td:first-child { text-align:left; }
 .mc-tbl tr.me td { color:var(--opp); }
+.mc-tbl.wrap td:first-child { white-space:normal; font-family:var(--sans); }
 .mc-fv { position:relative; height:44px; margin:.7rem .3rem 1.4rem; font-family:var(--mono); }
 .mc-fv .track { position:absolute; left:0; right:0; top:16px; height:6px; border-radius:3px; background:rgba(108,138,151,.2); }
 .mc-fv .band { position:absolute; top:12px; height:14px; border-radius:5px; background:rgba(54,197,240,.2); border:1px solid var(--info); }
@@ -369,11 +370,13 @@ def market_card(r: dict) -> str:
             f'<div style="margin-top:.4rem">{trig}{risks}</div>{plan_line(r.get("plan"))}</div></a>')
 
 
-def table(headers: list[str], rows: list[list], highlight: int | None = None) -> str:
+def table(headers: list[str], rows: list[list], highlight: int | None = None, wrap: bool = False) -> str:
+    """wrap=True lets the first column wrap, for tables with long labels on a phone."""
     head = "".join(f"<th>{escape(h)}</th>" for h in headers)
     body = "".join(f'<tr{" class=me" if i == highlight else ""}>' + "".join(f"<td>{escape(str(c))}</td>" for c in r) + "</tr>"
                    for i, r in enumerate(rows))
-    return f'<div class="mc-tbl"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
+    return (f'<div class="mc-tbl{" wrap" if wrap else ""}"><table><thead><tr>{head}</tr></thead>'
+            f'<tbody>{body}</tbody></table></div>')
 
 
 def fair_value_bar(fv: dict, price: float) -> str:

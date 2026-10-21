@@ -874,3 +874,14 @@ def test_estimate_next_earnings_from_results_filings():
                {"form": "8-K", "date": "2026-08-05", "items": "5.02"}]
     assert sec.estimate_next_earnings(filings, today=date(2026, 10, 21)) == date(2026, 10, 27)
     assert sec.estimate_next_earnings([], today=date(2026, 10, 21)) is None
+
+
+def test_technical_score_curve_and_breakdown():
+    falling = frame(np.geomspace(150, 40, 300))
+    ts, m, _ = technical.analyze(falling)
+    assert 3 < ts < 25                                   # mostly negative factors: low, but not a flat 0
+    assert m["raw_points"] == pytest.approx(sum(p for _, p in m["score_parts"]))
+    assert any("below the 200-day" in name for name, _ in m["score_parts"])
+    worse = frame(np.r_[np.geomspace(150, 40, 290), np.geomspace(40, 25, 10)])
+    assert technical.analyze(worse)[0] < ts               # still ranked, not tied at 0
+    assert technical.to_score(0) == 50 and abs(technical.to_score(10) - 60) < 1.5   # ~1:1 near the middle

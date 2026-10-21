@@ -364,6 +364,17 @@ if view == "target":
         else:
             st.caption("No SEC data. Foreign companies and funds may file differently, or SEC was unreachable.")
 
+    parts = t.get("score_parts") or []
+    if parts:
+        with st.expander(f"Why the technical score is {snap['technical_score']:.0f}", expanded=False):
+            ordered = sorted(parts, key=lambda x: x[1])
+            st.markdown(ui.table(["Factor", "Points"], [[name, f"{pts:+.1f}"] for name, pts in ordered]
+                                 + [["Net (50 is neutral)", f"{sum(pt for _, pt in parts):+.1f}"]], wrap=True),
+                        unsafe_allow_html=True)
+            st.caption("Each factor adds or subtracts points from a neutral 50. The total goes through a smooth "
+                       "curve, so a stock where every factor is negative lands near 5-15 instead of a flat 0, "
+                       "and weak stocks can still be told apart.")
+
     with st.expander("All readouts", expanded=False):
         kv = [
             ("Trend", (t.get("trend") or "—").upper()), ("RSI", ui.num(t.get("rsi"), ".0f")),

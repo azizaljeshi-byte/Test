@@ -204,7 +204,10 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
     rs_adj, rs, rs_sig = relative.analyze(
         hist, market_hist,
         _optional(provider.history, sector_etf) if sector_etf else None, sector_etf, h.tier)
-    ts = float(min(100, max(0, ts + rs_adj)))
+    if rs_adj:
+        tech["score_parts"] = tech.get("score_parts", []) + [("Relative strength vs SPY (3 months)", round(rs_adj, 1))]
+        tech["raw_points"] = tech.get("raw_points", 0) + rs_adj
+        ts = technical.to_score(tech["raw_points"])
     tech.update(rs)
 
     quote = _optional(provider.quote, h.ticker) or {}
