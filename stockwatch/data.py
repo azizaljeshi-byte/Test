@@ -655,7 +655,8 @@ class CachedProvider:
     """Shares fetches across threads and scans. Fundamentals and events change slowly,
     so they're kept longer, which also keeps the Yahoo request count down."""
 
-    TTL = {"history": 300, "fundamentals": 6 * 3600, "events": 3600, "research": 12 * 3600, "quote": 60,
+    # history stays under the tracker's 2-minute sweep so today's bar carries the live price
+    TTL = {"history": 100, "fundamentals": 6 * 3600, "events": 3600, "research": 12 * 3600, "quote": 60,
            "filings": 3 * 3600, "bulk_history": 900, "street": 3 * 3600,
            "sec_facts": 24 * 3600}
 

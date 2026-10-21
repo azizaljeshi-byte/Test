@@ -244,7 +244,7 @@ def _bar(label: str, v: float | None) -> str:
     return f'<div class="mc-bar"><span>{label}</span><i><u style="width:{v:.0f}%"></u></i><span>{v:.0f}</span></div>'
 
 
-def card(snap: dict) -> str:
+def card(snap: dict, was: str | None = None) -> str:
     p = snap["payload"]
     t, ev = p.get("technical", {}), p.get("events") or {}
     color, glyph = VERDICT_STYLE.get(snap["verdict"], (MUTED, "●"))
@@ -270,6 +270,8 @@ def card(snap: dict) -> str:
                      f'{q["ext_price"]:.2f} <small><i class="mc-g" style="color:{OPP if ch >= 0 else RISK}">'
                      f'{"▲" if ch >= 0 else "▼"}</i>{pct(ch, digits=1)}</small>')
     meta = []
+    if was:
+        meta.append(f'<b style="color:{color}">● NEW</b> was {escape(was)}')
     trend = t.get("trend")
     if trend:
         meta.append(f'TREND <b>{ {"up": "↗ UP", "down": "↘ DOWN"}.get(trend, "→ MIXED") }</b>')
@@ -302,8 +304,9 @@ def card(snap: dict) -> str:
             f'<div class="mc-meta">{"".join(f"<span>{m}</span>" for m in meta)}</div>{sig}{plan_line(p.get("plan"))}</div></a>')
 
 
-def cards(snaps: list[dict]) -> str:
-    return f'<div class="mc-cards">{"".join(card(s) for s in snaps)}</div>'
+def cards(snaps: list[dict], changed: dict[str, str] | None = None) -> str:
+    changed = changed or {}
+    return f'<div class="mc-cards">{"".join(card(s, changed.get(s["ticker"])) for s in snaps)}</div>'
 
 
 def urgency(snap: dict) -> tuple:

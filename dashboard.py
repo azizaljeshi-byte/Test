@@ -14,12 +14,11 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import briefing, market, technical, tradeplan, ui
+from stockwatch import briefing, live, market, technical, tradeplan, ui
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
 from stockwatch.data import NY, get_provider, us_session
 from stockwatch.engine import evaluate
 from stockwatch.relative import market_regime
-from stockwatch.scanner import refresh_quotes, run_once
 from stockwatch.store import Store
 
 st.set_page_config(page_title="StockWatch · Mission Control", page_icon="🛸", layout="wide")
@@ -61,29 +60,26 @@ if base.sheet_url and tickers - known:
 st.session_state.known_tickers = known | tickers
 
 
+@st.cache_resource
+def tracker(name: str, code_version: str) -> live.Tracker:
+    """One background tracker per app process; it sweeps and refreshes prices while the market trades."""
+    return live.Tracker(provider(name, code_version))
+
+
+tracking = tracker("demo" if os.getenv("STOCKWATCH_DEMO") else base.settings.data_provider, CODE_VERSION)
+
+
 def scan_now():
-    run_once(portfolio, data, store)
-    st.session_state.last_auto = time.time()
+    live.sweep(data, store)
 
-
-# whenever the market is trading, freshen prices once when the page opens; after that the 2-minute
-# background refresh keeps them current, so taps and filters never wait on a price download
-if us_session() != "CLOSED" and tickers and not st.session_state.get("prices_checked"):
-    st.session_state.prices_checked = True
-    fetched = [((x["payload"].get("quote") or {}).get("fetched_at") or "") for x in store.latest_snapshots()
-               if x["ticker"] in tickers]
-    stale_before = time.time() - 180
-    if fetched and any(not f or datetime.fromisoformat(f).timestamp() < stale_before for f in fetched):
-        with st.spinner("Updating live prices..."):
-            refresh_quotes(portfolio, data, store)
 
 snaps = [s for s in store.latest_snapshots() if s["ticker"] in tickers]
 last_scan = max((s["scanned_at"] for s in snaps), default=None)
 session = ui.SESSION_LABEL[us_session()]
 quote_times = [(x["payload"].get("quote") or {}).get("fetched_at") for x in snaps]
 quote_times = [q for q in quote_times if q]
-live = (f" · prices {max(quote_times)[11:16]} UTC" if quote_times and us_session() != "CLOSED" else "")
-st.markdown(ui.header(f"{session}{live} · {len(tickers)} targets · last sweep "
+price_label = (f" · prices {max(quote_times)[11:16]} UTC" if quote_times and us_session() != "CLOSED" else "")
+st.markdown(ui.header(f"{session}{price_label} · {len(tickers)} targets · last sweep "
                       f"{last_scan[5:16].replace('T', ' ') + ' UTC' if last_scan else 'never'}"),
             unsafe_allow_html=True)
 
@@ -99,21 +95,43 @@ if base.sheet_error:
     st.warning(f"Couldn't read the Google Sheet, showing the backup list instead. {base.sheet_error}")
 
 def controls():
-    c1, c2 = st.columns([1, 1])
+    c1, c2 = st.columns([1, 1.6])
     if c1.button("⟳ Sweep now", use_container_width=True):
         with st.spinner("Sweeping targets..."):
             scan_now()
         st.rerun()
-    auto = c2.toggle("Auto-sweep", value=False, help="Re-scans on an interval while this page is open.")
-    if auto:
-        interval = st.select_slider("Sweep every", [5, 15, 30, 60], value=15, format_func=lambda m: f"{m} min")
+    status = tracking.status()
+    if not status["alive"]:
+        c2.caption("⚠ Live tracking stopped. Reboot the app to restart it.")
+    elif status["session"] == "CLOSED":
+        c2.caption("Market closed. Live tracking resumes at 4:00am New York time.")
+    else:
+        nxt = status["next_sweep_in"]
+        def every(sec):
+            return f"{sec // 60} min" if sec % 60 == 0 else f"{sec}s"
+        c2.caption(f"🟢 Live: full analysis every {every(live.SWEEP_SECONDS)}, prices every "
+                   f"{every(live.QUOTE_SECONDS)}" + (f" · next analysis in {nxt}s" if nxt else " · analysing now"))
 
-        @st.fragment(run_every="60s")
-        def _auto():
-            if time.time() - st.session_state.get("last_auto", 0) >= interval * 60:
-                scan_now()
-                st.rerun()
-        _auto()
+
+@st.fragment(run_every="30s")
+def _watch_for_updates():
+    """Reload the page when the tracker lands new results, and pop up the important new alerts."""
+    mark = store.watermark()
+    seen = st.session_state.get("watermark")
+    if seen is None:
+        st.session_state.watermark = mark
+        return
+    if mark != seen:
+        fresh = [a for a in store.alerts_after(seen[1]) if a["ticker"] in tickers and a["severity"] >= 2]
+        for a in fresh[:5]:
+            st.toast(f"{'🟢' if a['kind'] == 'opportunity' else '🔴'} {a['ticker']}: {a['message']}")
+        if len(fresh) > 5:
+            st.toast(f"+{len(fresh) - 5} more new alerts in the Log")
+        st.session_state.watermark = mark
+        st.rerun()
+
+
+_watch_for_updates()
 
 
 if not snaps:
@@ -162,17 +180,6 @@ st.markdown(ui.tiles([
 
 controls()
 
-LIVE_REFRESH_SECONDS = 120
-
-if us_session() != "CLOSED":
-    # keep prices moving while the page is open, in and out of regular hours (minute bars only, so cheap)
-    @st.fragment(run_every=f"{LIVE_REFRESH_SECONDS}s")
-    def _live_prices():
-        newest = max(quote_times) if quote_times else None
-        if not newest or time.time() - datetime.fromisoformat(newest).timestamp() >= LIVE_REFRESH_SECONDS - 10:
-            refresh_quotes(portfolio, data, store)
-            st.rerun()
-    _live_prices()
 
 # ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
 VIEWS = {"radar": "◉ Radar", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log", "fleet": "+ Fleet"}
@@ -186,6 +193,17 @@ if view != current:
 
 # ---------------------------------------------------------------- radar
 prevs = {s["ticker"]: store.previous_snapshot(s["ticker"]) for s in snaps}
+
+def verdict_changes(snaps: list[dict]) -> dict[str, str]:
+    """Stocks whose verdict changed in the last 30 minutes -> the verdict they had before."""
+    cutoff = time.time() - 30 * 60
+    out = {}
+    for x in snaps:
+        prev = prevs.get(x["ticker"])
+        if prev and prev["verdict"] != x["verdict"] and datetime.fromisoformat(x["scanned_at"]).timestamp() >= cutoff:
+            out[x["ticker"]] = prev["verdict"]
+    return out
+
 
 @st.fragment
 def radar_list(snaps: list[dict]):
@@ -206,7 +224,7 @@ def radar_list(snaps: list[dict]):
     shown = sorted(snaps, key=ui.urgency)
     if choice in groups:
         shown = [x for x in shown if groups[choice](x)]
-    st.markdown(ui.cards(shown) if shown else '<div class="mc-d">No stocks with this status right now.</div>',
+    st.markdown(ui.cards(shown, changed=verdict_changes(snaps)) if shown else '<div class="mc-d">No stocks with this status right now.</div>',
                 unsafe_allow_html=True)
 
 

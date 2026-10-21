@@ -70,6 +70,17 @@ class Store:
         self.conn.commit()
         return fresh
 
+    def watermark(self) -> tuple[int, int, str]:
+        """Changes when a sweep, a price refresh or a new alert lands; the page polls this cheaply."""
+        snap = self.conn.execute("SELECT COALESCE(MAX(id), 0) FROM snapshots").fetchone()[0]
+        alert = self.conn.execute("SELECT COALESCE(MAX(id), 0) FROM alerts").fetchone()[0]
+        quotes = self.conn.execute("SELECT COALESCE(MAX(json_extract(payload, '$.quote.fetched_at')), '') "
+                                   "FROM snapshots WHERE id IN (SELECT MAX(id) FROM snapshots GROUP BY ticker)").fetchone()[0]
+        return snap, alert, quotes
+
+    def alerts_after(self, alert_id: int) -> list[dict]:
+        return [dict(r) for r in self.conn.execute("SELECT * FROM alerts WHERE id > ? ORDER BY id", (alert_id,))]
+
     def recent_alerts(self, limit: int = 200) -> list[dict]:
         rows = self.conn.execute("SELECT * FROM alerts ORDER BY created_at DESC, id DESC LIMIT ?", (limit,))
         return [dict(r) for r in rows]

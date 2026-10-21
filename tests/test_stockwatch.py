@@ -929,3 +929,30 @@ def test_bulk_quotes_split_one_download_per_ticker(monkeypatch):
     assert q["AAA"]["ext_session"] == "pre" and abs(q["AAA"]["ext_change"] - 0.04) < 1e-9
     assert q["BBB"]["ext_price"] is None and "no extended-hours trades" in q["BBB"]["error"]
     assert q["CCC"]["error"] == "not in the bulk download"
+
+
+def test_live_tracker_sweeps_then_refreshes_prices(monkeypatch, tmp_path):
+    from stockwatch import live
+    import stockwatch.live as live_mod
+    monkeypatch.setenv("STOCKWATCH_PORTFOLIO", "holdings:\n  - {ticker: AAA, tier: 2, shares: 5}\n")
+    monkeypatch.delenv("STOCKWATCH_SHEET_URL", raising=False)
+    store = Store(tmp_path / "live.db")
+    t = live.Tracker(get_provider("demo"), store_path=tmp_path / "live.db", start=False)
+    monkeypatch.setattr(live_mod, "us_session", lambda now=None: "CLOSED")
+    assert t.step(store) == "closed"
+    monkeypatch.setattr(live_mod, "us_session", lambda now=None: "REGULAR")
+    assert t.step(store) == "sweep" and store.snapshot("AAA") is not None
+    mark = store.watermark()
+    assert t.step(store) == "idle"
+    assert t.step(store, now=time.time() + live.QUOTE_SECONDS + 1) == "quotes"
+    assert t.step(store, now=time.time() + live.SWEEP_SECONDS + 1) == "sweep"
+    assert store.watermark() != mark and t.status()["session"] in ("PRE", "REGULAR", "POST", "CLOSED")
+
+
+def test_card_marks_changed_verdicts():
+    snap = {"ticker": "X", "tier": 1, "verdict": "BUY SETUP", "price": 10.0, "fundamental_score": 70,
+            "technical_score": 60, "composite": 66,
+            "payload": {"watchlist": True, "signals": [], "position": {}, "fundamental": {"available": True},
+                        "technical": {}, "quote": {}}}
+    assert "NEW</b> was WATCH" in ui.cards([snap], changed={"X": "WATCH"})
+    assert "NEW" not in ui.cards([snap])

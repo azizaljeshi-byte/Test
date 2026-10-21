@@ -136,6 +136,8 @@ Options-implied moves are compared with the stock's usual reaction. Within a wee
 - **Each stock** gets a plain-English summary: why it has its verdict, what changed since the last scan, and what to watch next (earnings, key levels, the 200-day trigger, fair value, stops).
 - **The Radar tab** opens with a portfolio-level mission brief.
 
+**Live tracking:** while the market is trading (4:00am-8:00pm New York, weekdays), a background tracker in the app re-runs the full analysis every 2 minutes (technicals on today's live bar, verdicts, plans, alerts) and refreshes prices every minute in between (`STOCKWATCH_SWEEP_SECONDS` / `STOCKWATCH_QUOTE_SECONDS` to change). The page picks up new results within 30 seconds, pops up new important alerts, and marks cards whose verdict just changed ("NEW · was HOLD"). It runs while the app is awake; for alerts when nobody has it open, use the GitHub Actions notifications.
+
 **Live prices:** while the market is trading (pre-market, regular hours, after-hours), prices refresh every 2 minutes while the page is open, and on page load when they're over 3 minutes old. During regular hours cards show the live price and today's change, marked LIVE. Outside regular hours they show the latest pre-market or after-hours trade. Scores, verdicts and plans still update on a sweep. It comes from Yahoo's quote, falling back to 1-minute and then 5-minute bars that include extended hours. **Log → System diagnostics** shows, for each stock, the session, the price, which source answered, and any problem.
 Cards show `PRE` or `AH` next to the regular close, and the header shows the current session.
 A move of 3% or more outside regular hours raises a signal; 5% or more on a stock you hold raises an alert (often an earnings reaction).
