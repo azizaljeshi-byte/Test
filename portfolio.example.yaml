@@ -1,0 +1,47 @@
+# Copy to portfolio.yaml and edit with your own positions.
+#
+# tier 1 = core long-term holdings: judged mostly on fundamentals, wider stops.
+# tier 2 = tactical / satellite positions: judged more on technicals, tighter stops.
+# shares: 0 means "watchlist" - scanned for entry opportunities only.
+
+settings:
+  scan_interval_minutes: 15
+  alert_cooldown_hours: 24        # don't repeat the same alert for a ticker within this window
+  data_provider: yahoo            # yahoo | demo
+  benchmark: SPY
+
+tiers:
+  1:
+    fundamental_weight: 0.65
+    technical_weight: 0.35
+    stop_loss_pct: 25             # alert if price falls this % below cost basis
+    trailing_atr_mult: 4.0        # alert if close < recent high - N * ATR
+    max_position_pct: 15          # concentration alert above this portfolio weight
+  2:
+    fundamental_weight: 0.40
+    technical_weight: 0.60
+    stop_loss_pct: 12
+    trailing_atr_mult: 2.5
+    max_position_pct: 7
+
+holdings:
+  - ticker: AAPL
+    tier: 1
+    shares: 40
+    cost_basis: 165.00
+  - ticker: MSFT
+    tier: 1
+    shares: 20
+    cost_basis: 310.00
+  - ticker: NVDA
+    tier: 2
+    shares: 30
+    cost_basis: 95.00
+    target_price: 180             # optional: take-profit alert
+  - ticker: AMD
+    tier: 2
+    shares: 25
+    cost_basis: 140.00
+  - ticker: GOOGL
+    tier: 1
+    shares: 0                     # watchlist
