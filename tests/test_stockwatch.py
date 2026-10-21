@@ -39,6 +39,9 @@ class FixedProvider:
     def research(self, ticker):
         return {}
 
+    def quote(self, ticker):
+        return {}
+
 
 STRONG_FUNDAMENTALS = dict(pe_forward=15, peg=0.9, revenue_growth=0.25, earnings_growth=0.3,
                            operating_margin=0.3, roe=0.3, free_cash_flow=1e9, debt_to_equity=0.2,
@@ -347,3 +350,57 @@ def test_company_overview_report_card():
     # missing data degrades to fewer grades, not errors
     bare = briefing.overview({"ticker": "Y", "verdict": "WATCH", "technical_score": 50.0, "payload": {}})
     assert bare["name"] == "Y" and {g["area"] for g in bare["grades"] if g["grade"] != "?"} == {"Momentum"}
+
+
+# ---- extended hours
+
+from stockwatch.data import YahooProvider, us_session
+from stockwatch.engine import _extended_hours
+
+
+def test_us_session_by_new_york_clock():
+    utc = timezone.utc
+    assert us_session(datetime(2026, 10, 21, 12, 0, tzinfo=utc)) == "PRE"       # 08:00 ET Wed
+    assert us_session(datetime(2026, 10, 21, 15, 0, tzinfo=utc)) == "REGULAR"   # 11:00 ET
+    assert us_session(datetime(2026, 10, 21, 21, 30, tzinfo=utc)) == "POST"     # 17:30 ET
+    assert us_session(datetime(2026, 10, 22, 2, 0, tzinfo=utc)) == "CLOSED"     # 22:00 ET
+    assert us_session(datetime(2026, 10, 24, 15, 0, tzinfo=utc)) == "CLOSED"    # Saturday
+
+
+def _fake_yahoo(info, bars=None):
+    class T:
+        def __init__(self, sym):
+            self.info = info
+
+        def history(self, **kw):
+            return bars if bars is not None else pd.DataFrame()
+
+    yp = YahooProvider.__new__(YahooProvider)
+    yp._yf = type("yf", (), {"Ticker": T})
+    return yp
+
+
+def test_yahoo_quote_reads_pre_and_post_market():
+    post = _fake_yahoo({"marketState": "POST", "regularMarketPrice": 100.0, "postMarketPrice": 92.0,
+                        "postMarketTime": 1761080000}).quote("X")
+    assert post["ext_session"] == "post" and abs(post["ext_change"] + 0.08) < 1e-9 and post["ext_time"].tzinfo
+    pre = _fake_yahoo({"marketState": "PRE", "regularMarketPrice": 50.0, "preMarketPrice": 51.0,
+                       "postMarketPrice": 49.0}).quote("X")
+    assert pre["ext_session"] == "pre" and pre["ext_price"] == 51.0       # stale post price ignored pre-market
+    live = _fake_yahoo({"marketState": "REGULAR", "regularMarketPrice": 50.0, "postMarketPrice": 49.0}).quote("X")
+    assert live["ext_price"] is None                                         # no extended price during the session
+
+
+def test_yahoo_quote_falls_back_to_extended_bars():
+    idx = pd.DatetimeIndex([pd.Timestamp("2026-10-21 19:55", tz="America/New_York")])
+    bars = pd.DataFrame({"Close": [105.0]}, index=idx)
+    q = _fake_yahoo({"marketState": "POST", "regularMarketPrice": 100.0}, bars).quote("X")
+    assert q["ext_session"] == "post" and abs(q["ext_change"] - 0.05) < 1e-9
+
+
+def test_extended_hours_signal_thresholds():
+    assert _extended_hours({"ext_change": 0.02, "ext_price": 1, "ext_session": "post"}, False) == []
+    s = _extended_hours({"ext_change": -0.07, "ext_price": 93.0, "ext_session": "post"}, False)[0]
+    assert s.kind == "risk" and s.severity == 2 and s.message.startswith("After hours: -7.0%")
+    s = _extended_hours({"ext_change": 0.06, "ext_price": 10.6, "ext_session": "pre"}, True)[0]
+    assert s.kind == "opportunity" and s.severity == 1 and "Pre-market" in s.message

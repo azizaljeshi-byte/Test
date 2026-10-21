@@ -33,6 +33,7 @@ class Evaluation:
     events: dict = field(default_factory=dict)
     research: dict = field(default_factory=dict)
     profile: dict = field(default_factory=dict)
+    quote: dict = field(default_factory=dict)
     name: str | None = None
     error: str | None = None
     scanned_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
@@ -122,6 +123,18 @@ def _verdict(ev: Evaluation) -> str:
     return "HOLD"
 
 
+def _extended_hours(q: dict, watchlist: bool) -> list[Signal]:
+    """Pre-market / after-hours moves, often an earnings or news reaction the daily bars haven't seen yet."""
+    ch = q.get("ext_change")
+    if ch is None or abs(ch) < 0.03:
+        return []
+    label = "Pre-market" if q.get("ext_session") == "pre" else "After hours"
+    kind = OPPORTUNITY if ch > 0 else RISK
+    sev = 2 if abs(ch) >= 0.05 and not watchlist else 1
+    return [Signal(kind, "extended hours", f"ext_{q.get('ext_session')}_{'up' if ch > 0 else 'down'}",
+                   f"{label}: {ch:+.1%} at {q['ext_price']:.2f}", sev)]
+
+
 def _optional(fn, *args):
     """Supporting data (benchmarks, news) is nice to have; never fail the evaluation over it."""
     try:
@@ -155,6 +168,9 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider) -> Evalua
     ts = float(min(100, max(0, ts + rs_adj)))
     tech.update(rs)
 
+    quote = _optional(provider.quote, h.ticker) or {}
+    ext_sig = _extended_hours(quote, h.is_watchlist)
+
     raw_events = _optional(provider.events, h.ticker) or {}
     events, event_sig = catalysts.analyze(raw_events, owned=not h.is_watchlist, tier=h.tier)
 
@@ -174,11 +190,11 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider) -> Evalua
     composite = rules.fundamental_weight * fs + rules.technical_weight * ts
     pos, pos_sig = _position(h, price, tech, rules)
     signals = (tech_sig + rs_sig + fund_sig + _confluence(fs, tech, tech_sig, h.tier)
-               + event_sig + deep_sig + pos_sig)
+               + event_sig + deep_sig + ext_sig + pos_sig)
     signals.sort(key=lambda s: (-s.severity, s.kind))
     ev = Evaluation(h.ticker, h.tier, h.is_watchlist, price, round(ts, 1), round(fs, 1),
                     round(composite, 1), "", signals, tech, fund, pos, events, research,
-                    {k: f.get(k) for k in PROFILE_KEYS}, name=f.get("name"))
+                    {k: f.get(k) for k in PROFILE_KEYS}, quote, name=f.get("name"))
     ev.verdict = _verdict(ev)
     return ev
 

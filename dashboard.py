@@ -11,7 +11,7 @@ from plotly.subplots import make_subplots
 
 from stockwatch import briefing, technical, ui
 from stockwatch.config import load_portfolio, to_yaml
-from stockwatch.data import get_provider
+from stockwatch.data import get_provider, us_session
 from stockwatch.engine import evaluate
 from stockwatch.relative import market_regime
 from stockwatch.scanner import run_once
@@ -45,7 +45,9 @@ def scan_now():
 
 snaps = [s for s in store.latest_snapshots() if s["ticker"] in tickers]
 last_scan = max((s["scanned_at"] for s in snaps), default=None)
-st.markdown(ui.header(f"{len(tickers)} targets · last sweep {last_scan[5:16].replace('T', ' ') + ' UTC' if last_scan else 'never'}"),
+session = ui.SESSION_LABEL[us_session()]
+st.markdown(ui.header(f"{session} · {len(tickers)} targets · last sweep "
+                      f"{last_scan[5:16].replace('T', ' ') + ' UTC' if last_scan else 'never'}"),
             unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- controls
@@ -74,7 +76,8 @@ reg = None
 try:
     reg = market_regime(data.history(portfolio.settings.benchmark))
     reg_color = {"RISK-ON": ui.OPP, "RISK-OFF": ui.RISK}.get(reg["state"], ui.WARN)
-    market_tile = ("Market", reg["state"], f"SPY {ui.pct(reg['day_change'], digits=1)} today · {ui.pct(reg['vs_200d'])} vs 200d", reg_color)
+    market_tile = ("Market", reg["state"], f"{session} · SPY {ui.pct(reg['day_change'], digits=1)} · "
+                   f"{ui.pct(reg['vs_200d'])} vs 200d", reg_color)
 except Exception:
     market_tile = ("Market", "NO SIGNAL", "benchmark unavailable", ui.MUTED)
 

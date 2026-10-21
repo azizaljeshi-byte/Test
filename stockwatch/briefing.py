@@ -94,6 +94,11 @@ def stock(snap: dict, prev: dict | None = None) -> dict:
 
     # ---- what to watch
     watch = []
+    q = p.get("quote") or {}
+    if _ok(q.get("ext_change")) and _ok(q.get("ext_price")):
+        label = "Pre-market" if q.get("ext_session") == "pre" else "After hours"
+        watch.append(f"{label} it is trading at {q['ext_price']:.2f} ({q['ext_change'] * 100:+.1f}% vs the last close); "
+                     "the scores above use regular-session prices.")
     if ev.get("earnings_date"):
         line = f"Earnings on {ev['earnings_date']} ({ev['days_to_earnings']} days)"
         if _ok(earn.get("avg_move")):
@@ -145,6 +150,13 @@ def portfolio(snaps: list[dict], prevs: dict[str, dict | None], regime: dict | N
                   and s["payload"]["events"]["days_to_earnings"] <= 7)
     if soon:
         lines.append("Reporting this week: " + ", ".join(f"{t} ({d}d)" for d, t in soon) + ".")
+    movers = sorted(((s["payload"].get("quote") or {}).get("ext_change"), s["ticker"],
+                     (s["payload"].get("quote") or {}).get("ext_session")) for s in snaps
+                    if _ok((s["payload"].get("quote") or {}).get("ext_change"))
+                    and abs(s["payload"]["quote"]["ext_change"]) >= 0.03)
+    if movers:
+        lines.append("Big out-of-hours moves: " + ", ".join(
+            f"{t} {c * 100:+.1f}% {'pre' if sess == 'pre' else 'AH'}" for c, t, sess in movers) + ".")
     flips = [f"{s['ticker']} {prevs[s['ticker']]['verdict']} -> {s['verdict']}" for s in snaps
              if prevs.get(s["ticker"]) and prevs[s["ticker"]]["verdict"] != s["verdict"]]
     if flips:

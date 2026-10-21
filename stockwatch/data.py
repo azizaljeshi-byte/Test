@@ -15,6 +15,7 @@ import zlib
 from concurrent.futures import Future
 from datetime import date, datetime, timedelta, timezone
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -46,6 +47,24 @@ SECTOR_ETFS = {
 }
 
 
+NY = ZoneInfo("America/New_York")
+
+
+def us_session(now: datetime | None = None) -> str:
+    """US equity session by the clock (exchange holidays aren't modeled): PRE, REGULAR, POST or CLOSED."""
+    t = (now or datetime.now(timezone.utc)).astimezone(NY)
+    if t.weekday() >= 5:
+        return "CLOSED"
+    minutes = t.hour * 60 + t.minute
+    if 4 * 60 <= minutes < 9 * 60 + 30:
+        return "PRE"
+    if 9 * 60 + 30 <= minutes < 16 * 60:
+        return "REGULAR"
+    if 16 * 60 <= minutes < 20 * 60:
+        return "POST"
+    return "CLOSED"
+
+
 class DataProvider(Protocol):
     def history(self, ticker: str, period: str = "5y") -> pd.DataFrame: ...
     def fundamentals(self, ticker: str) -> dict: ...
@@ -55,6 +74,13 @@ class DataProvider(Protocol):
             "news": [{"title", "publisher", "url", "published": datetime}],
             "rating_changes": [{"date": datetime, "firm", "action", "from_grade", "to_grade"}]}
         action is one of up / down / init / main / reit."""
+        ...
+
+    def quote(self, ticker: str) -> dict:
+        """Latest price including extended hours:
+            {"market_state": PRE | REGULAR | POST | CLOSED, "regular_price": float,
+             "ext_session": "pre" | "post" | None, "ext_price": float | None,
+             "ext_change": float | None (fraction vs regular_price), "ext_time": datetime | None}"""
         ...
 
     def research(self, ticker: str) -> dict:
@@ -137,6 +163,36 @@ class YahooProvider:
 
     def research(self, ticker: str) -> dict:
         return _yahoo_research(self._yf, ticker)
+
+    def quote(self, ticker: str) -> dict:
+        t = self._yf.Ticker(ticker)
+        info = t.info or {}
+        state = str(info.get("marketState") or us_session()).upper()
+        state = {"PREPRE": "CLOSED", "POSTPOST": "CLOSED"}.get(state, state)
+        regular = _f(info.get("regularMarketPrice"))
+        session = price = when = None
+        # pre-market quotes are only meaningful before the open; post-market ones persist until the next pre-market
+        if state == "PRE" and _f(info.get("preMarketPrice")):
+            session, price, when = "pre", _f(info["preMarketPrice"]), info.get("preMarketTime")
+        elif state in ("POST", "CLOSED") and _f(info.get("postMarketPrice")):
+            session, price, when = "post", _f(info["postMarketPrice"]), info.get("postMarketTime")
+        if price is None and state != "REGULAR":
+            session, price, when = self._extended_from_bars(t, state)
+        return {"market_state": state, "regular_price": regular, "ext_session": session, "ext_price": price,
+                "ext_change": price / regular - 1 if price and regular else None,
+                "ext_time": datetime.fromtimestamp(when, tz=timezone.utc) if isinstance(when, (int, float)) else when}
+
+    @staticmethod
+    def _extended_from_bars(t, state: str):
+        """Fallback when the quote lacks extended prices: last 5-minute bar outside regular hours."""
+        bars = t.history(period="5d", interval="5m", prepost=True)
+        if bars.empty:
+            return None, None, None
+        last = bars.index[-1].to_pydatetime()
+        session = us_session(last)
+        if session not in ("PRE", "POST"):
+            return None, None, None
+        return session.lower(), float(bars["Close"].iloc[-1]), last
 
 
 def _yahoo_research(yf, ticker: str) -> dict:
@@ -314,6 +370,16 @@ class DemoProvider:
         return {"earnings": earnings, "quarterly": quarterly, "annual": annual, "insiders": insiders,
                 "peers": [p for p in ["AAPL", "MSFT", "NVDA", "GOOGL", "AMD"] if p != ticker][:4]}
 
+    def quote(self, ticker: str) -> dict:
+        rng = self._rng(ticker + ":q")
+        regular = float(self.history(ticker)["Close"].iloc[-1])
+        state = us_session()
+        session = {"PRE": "pre", "POST": "post", "CLOSED": "post"}.get(state)
+        move = float(rng.choice([rng.normal(0, 0.01), rng.normal(0, 0.01), rng.choice([-0.08, 0.07])]))
+        price = regular * (1 + move) if session else None
+        return {"market_state": state, "regular_price": regular, "ext_session": session, "ext_price": price,
+                "ext_change": move if session else None, "ext_time": datetime.now(timezone.utc) if session else None}
+
     _HEADLINES = [
         ("{t} beats estimates and raises full-year guidance", 1),
         ("{t} wins multi-year government contract", 1),
@@ -343,7 +409,7 @@ class CachedProvider:
     """Shares fetches across threads and scans. Fundamentals and events change slowly,
     so they're kept longer, which also keeps the Yahoo request count down."""
 
-    TTL = {"history": 300, "fundamentals": 6 * 3600, "events": 3600, "research": 12 * 3600}
+    TTL = {"history": 300, "fundamentals": 6 * 3600, "events": 3600, "research": 12 * 3600, "quote": 60}
 
     def __init__(self, inner: DataProvider):
         self.inner = inner
@@ -379,6 +445,9 @@ class CachedProvider:
 
     def research(self, ticker: str) -> dict:
         return self._get("research", ticker)
+
+    def quote(self, ticker: str) -> dict:
+        return self._get("quote", ticker)
 
 
 def get_provider(name: str) -> DataProvider:

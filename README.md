@@ -70,6 +70,11 @@ The dashboard also shows the market as RISK-ON / CAUTION / RISK-OFF, based on SP
 - **Each stock** gets a plain-English summary: why it has its verdict, what changed since the last scan, and what to watch next (earnings, key levels, the 200-day trigger, fair value, stops).
 - **The Radar tab** opens with a portfolio-level mission brief.
 
+**Extended hours:** each sweep also reads the latest pre-market or after-hours price. It comes from Yahoo's quote, or from 5-minute bars that include extended hours when the quote lacks it.
+Cards show `PRE` or `AH` next to the regular close, and the header shows the current session.
+A move of 3% or more outside regular hours raises a signal; 5% or more on a stock you hold raises an alert (often an earnings reaction).
+Scores and indicators still use regular-session prices.
+
 **Position checks:** stop-loss vs cost, halfway-to-stop warning, target price reached, concentration.
 
 **Verdicts:** `OPPORTUNITY - ADD`, `STRONG HOLD`, `HOLD`, `TRIM / REVIEW`, `RISK - REVIEW`.

@@ -183,6 +183,12 @@ def card(snap: dict) -> str:
     day = t.get("day_change")
     day_html = "" if nan(day) else (
         f' <small><i class="mc-g" style="color:{OPP if day >= 0 else RISK}">{"▲" if day >= 0 else "▼"}</i>{pct(day, digits=1)}</small>')
+    q = p.get("quote") or {}
+    if not nan(q.get("ext_price")) and not nan(q.get("ext_change")):
+        ch = q["ext_change"]
+        day_html += (f' <small style="color:{MUTED}">· {"PRE" if q.get("ext_session") == "pre" else "AH"}</small> '
+                     f'{q["ext_price"]:.2f} <small><i class="mc-g" style="color:{OPP if ch >= 0 else RISK}">'
+                     f'{"▲" if ch >= 0 else "▼"}</i>{pct(ch, digits=1)}</small>')
     meta = []
     trend = t.get("trend")
     if trend:
@@ -298,3 +304,6 @@ def overview_card(o: dict, ticker: str, acquired: bool = False) -> str:
             f'<div class="big" style="--c:{GRADE_COLOR[o["overall"]]}">{o["overall"]}<small>OVERALL</small></div></div>'
             f'<p>{escape(o["intro"])}{site}</p>{about}<div class="mc-gr">{grades}</div>{lists}'
             f'<p style="color:{MUTED};margin-bottom:0">{escape(o["standing"])}</p></div>')
+
+
+SESSION_LABEL = {"REGULAR": "market open", "PRE": "pre-market", "POST": "after hours", "CLOSED": "market closed"}
