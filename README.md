@@ -96,9 +96,10 @@ Fleet changes are saved in the app's database. On Streamlit Cloud that database 
 ## Alerts
 
 Signals of severity 2 or higher are saved to `data/stockwatch.db` and sent out. The same alert for the same ticker won't repeat within `alert_cooldown_hours`.
-Alerts always print to the console. Set these environment variables to also send them by Telegram or email:
+Alerts always print to the console. Set these environment variables to also send them as a phone push (ntfy), by Telegram, or by email:
 
 ```bash
+export NTFY_TOPIC=stockwatch-your-secret-topic
 export TELEGRAM_BOT_TOKEN=...  TELEGRAM_CHAT_ID=...
 export SMTP_HOST=smtp.gmail.com SMTP_PORT=587 SMTP_USER=you@gmail.com SMTP_PASSWORD=app-password ALERT_EMAIL_TO=you@gmail.com
 ```
@@ -109,14 +110,24 @@ To scan 24/7, run the scanner as a service (systemd, `tmux`, or a small cloud VM
 
 You don't need a computer that stays on. This setup uses two free services:
 
-### 1. Alerts on your phone (Telegram + GitHub Actions)
-1. In Telegram, message **@BotFather** and send `/newbot`. Follow the steps and copy the **bot token** it gives you.
-2. Send any message to your new bot. Then open `https://api.telegram.org/bot<TOKEN>/getUpdates` and copy the `chat` → `id` number.
-3. In GitHub, open the repo → **Settings → Secrets and variables → Actions → New repository secret**. Add three secrets:
-   - `TELEGRAM_BOT_TOKEN`: the bot token
-   - `TELEGRAM_CHAT_ID`: the chat id
-   - `STOCKWATCH_PORTFOLIO`: the full text of your `portfolio.yaml` (paste it in)
-4. Go to **Actions → StockWatch scan → Run workflow** to test it. After that it runs every 15 minutes during US market hours and messages you when something new happens.
+### 1. Push notifications (ntfy + GitHub Actions)
+The dashboard only scans while it's open. For alerts while your phone is in your pocket, a GitHub Actions job scans every 15 minutes on weekdays from 4am to 8pm New York time (pre-market through after-hours) and sends one grouped push per sweep.
+
+1. Install the free **ntfy** app (iOS or Android). Tap **+** and subscribe to a topic name that's hard to guess, e.g. `stockwatch-<random letters>`. Anyone who knows the name can read the alerts, so treat it like a password.
+2. In GitHub, open the repo → **Settings → Secrets and variables → Actions → New repository secret**. Add:
+   - `NTFY_TOPIC`: the topic name from step 1
+   - `STOCKWATCH_PORTFOLIO`: your holdings YAML (the same text as in the Streamlit secret)
+3. Optional: under the **Variables** tab, add `DASHBOARD_URL` with your Streamlit app link, so tapping a notification opens the dashboard.
+4. Test it: **Actions → StockWatch scan → Run workflow**. The schedule runs on its own after that.
+
+Push priority follows severity. Urgent risks (stop hit, thesis breakdown) arrive as high-priority notifications; opportunities arrive as normal ones. The job does nothing until `NTFY_TOPIC` (or Telegram) is set.
+
+**Things to know:**
+- **Tickers added in the dashboard aren't scanned by the job.** It reads only the `STOCKWATCH_PORTFOLIO` secret, so keep that secret up to date (the Fleet tab shows the text to paste).
+- **Don't also set `NTFY_TOPIC` in Streamlit,** or you'll get duplicate pushes when you sweep from the app.
+- **GitHub pauses scheduled jobs after 60 days with no repo activity.** Re-enable it from the Actions tab.
+
+Telegram works the same way: set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` instead of (or as well as) `NTFY_TOPIC`.
 
 ### 2. Dashboard on your phone (Streamlit Community Cloud)
 1. Sign in at **share.streamlit.io** with GitHub. Click **Create app** and pick this repo, the branch, and `dashboard.py`.

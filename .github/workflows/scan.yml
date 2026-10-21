@@ -1,9 +1,11 @@
 name: StockWatch scan
 
 on:
-  # Manual only for now. To scan automatically, add the secrets from the README and uncomment:
-  # schedule:
-  #   - cron: "*/15 13-21 * * 1-5"   # every 15 min, Mon-Fri, ~US market hours (UTC)
+  schedule:
+    # every 15 min on weekdays, 4am-8pm New York (pre-market through after-hours), covering EDT and EST.
+    # GitHub may delay scheduled runs by a few minutes.
+    - cron: "*/15 8-23 * * 1-5"
+    - cron: "*/15 0-1 * * 2-6"
   workflow_dispatch: {}
 
 concurrency:
@@ -13,23 +15,42 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    env:
+      STOCKWATCH_PORTFOLIO: ${{ secrets.STOCKWATCH_PORTFOLIO }}
+      NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+      NTFY_SERVER: ${{ vars.NTFY_SERVER }}
+      DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      # nothing to do until a notification channel is configured, so don't burn a runner on it
+      - name: Check configuration
+        id: cfg
+        run: |
+          if [ -z "$NTFY_TOPIC" ] && [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+            echo "No NTFY_TOPIC or TELEGRAM_BOT_TOKEN secret set - skipping scan."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.cfg.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+      - if: steps.cfg.outputs.enabled == 'true'
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt
+      - if: steps.cfg.outputs.enabled == 'true'
+        run: pip install -r requirements.txt
       # keep the alert history between runs so the same alert isn't re-sent every 15 min
-      - uses: actions/cache@v4
+      - if: steps.cfg.outputs.enabled == 'true'
+        uses: actions/cache@v4
         with:
           path: data/stockwatch.db
           key: stockwatch-db-${{ github.run_id }}
           restore-keys: stockwatch-db-
-      - name: Scan and send alerts
-        env:
-          STOCKWATCH_PORTFOLIO: ${{ secrets.STOCKWATCH_PORTFOLIO }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - if: steps.cfg.outputs.enabled == 'true'
+        name: Scan and notify
         run: python -m stockwatch.scanner --once

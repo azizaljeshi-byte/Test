@@ -1,5 +1,6 @@
 """Alert delivery. Configure channels with environment variables:
 
+  NTFY_TOPIC (+ optional NTFY_SERVER, NTFY_TOKEN, DASHBOARD_URL) -> phone push via the ntfy app
   TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID       -> Telegram message
   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, ALERT_EMAIL_TO -> email
 Console output is always on.
@@ -14,6 +15,8 @@ import urllib.request
 from email.message import EmailMessage
 
 from .signals import RISK, Signal
+
+MAX_PUSH_LINES = 15
 
 log = logging.getLogger(__name__)
 
@@ -50,13 +53,43 @@ def _email(text: str) -> None:
         smtp.send_message(msg)
 
 
-def send(lines: list[str]) -> None:
-    if not lines:
+def _ntfy(alerts: list[tuple[str, float, str, Signal]]) -> None:
+    topic = os.getenv("NTFY_TOPIC")
+    if not topic:
         return
-    text = "\n".join(lines)
+    risks = [a for a in alerts if a[3].kind == RISK]
+    urgent = any(a[3].severity >= 3 for a in risks)
+    tickers = list(dict.fromkeys(a[0] for a in alerts))
+    # one push per sweep: a first scan can produce dozens of alerts
+    lines = [format_alert(*a) for a in alerts[:MAX_PUSH_LINES]]
+    if len(alerts) > MAX_PUSH_LINES:
+        lines.append(f"+{len(alerts) - MAX_PUSH_LINES} more in the dashboard log")
+    headers = {
+        # HTTP headers must be latin-1, so the title stays plain ASCII
+        "Title": f"StockWatch: {len(alerts)} alert{'s' if len(alerts) != 1 else ''} - {', '.join(tickers[:5])}"
+                 + ("..." if len(tickers) > 5 else ""),
+        "Priority": "5" if urgent else "4" if risks else "3",
+        "Tags": "rotating_light" if urgent else "warning" if risks else "chart_with_upwards_trend",
+    }
+    if os.getenv("DASHBOARD_URL"):
+        headers["Click"] = os.environ["DASHBOARD_URL"]
+    if os.getenv("NTFY_TOKEN"):
+        headers["Authorization"] = f"Bearer {os.environ['NTFY_TOKEN']}"
+    server = os.getenv("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
+    req = urllib.request.Request(f"{server}/{topic}", data="\n".join(lines).encode(), headers=headers)
+    urllib.request.urlopen(req, timeout=10).read()
+
+
+def send(alerts: list[tuple[str, float, str, Signal]]) -> None:
+    """alerts: (ticker, price, verdict, signal) for each new alert in this sweep."""
+    if not alerts:
+        return
+    alerts = sorted(alerts, key=lambda a: (-a[3].severity, a[3].kind != RISK))
+    text = "\n".join(format_alert(*a) for a in alerts)
     print(text, flush=True)
-    for channel in (_telegram, _email):
+    for name, deliver in (("ntfy", lambda: _ntfy(alerts)), ("telegram", lambda: _telegram(text)),
+                          ("email", lambda: _email(text))):
         try:
-            channel(text)
+            deliver()
         except Exception as e:
-            log.warning("%s delivery failed: %s", channel.__name__.strip("_"), e)
+            log.warning("%s delivery failed: %s", name, e)

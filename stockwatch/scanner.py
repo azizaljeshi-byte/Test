@@ -16,16 +16,16 @@ log = logging.getLogger("stockwatch")
 
 def run_once(portfolio, provider, store: Store) -> list[Evaluation]:
     evals = scan(portfolio, provider)
-    lines = []
+    alerts = []
     for e in evals:
         store.save_snapshot(e)
         if e.error:
             log.warning("%s: %s", e.ticker, e.error)
             continue
-        for s in store.record_alerts(e, portfolio.settings.alert_cooldown_hours):
-            lines.append(notify.format_alert(e.ticker, e.price, e.verdict, s))
-    notify.send(lines)
-    log.info("scanned %d tickers, %d new alerts", len(evals), len(lines))
+        alerts += [(e.ticker, e.price, e.verdict, s)
+                   for s in store.record_alerts(e, portfolio.settings.alert_cooldown_hours)]
+    notify.send(alerts)
+    log.info("scanned %d tickers, %d new alerts", len(evals), len(alerts))
     return evals
 
 

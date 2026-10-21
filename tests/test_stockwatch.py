@@ -404,3 +404,51 @@ def test_extended_hours_signal_thresholds():
     assert s.kind == "risk" and s.severity == 2 and s.message.startswith("After hours: -7.0%")
     s = _extended_hours({"ext_change": 0.06, "ext_price": 10.6, "ext_session": "pre"}, True)[0]
     assert s.kind == "opportunity" and s.severity == 1 and "Pre-market" in s.message
+
+
+# ---- push notifications
+
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+from stockwatch import notify
+from stockwatch.signals import Signal
+
+
+def test_ntfy_sends_one_grouped_push(monkeypatch):
+    received = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            received.append((self.path, dict(self.headers), self.rfile.read(int(self.headers["Content-Length"]))))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.handle_request, daemon=True).start()
+    monkeypatch.setenv("NTFY_SERVER", f"http://127.0.0.1:{srv.server_port}")
+    monkeypatch.setenv("NTFY_TOPIC", "sw-test")
+    monkeypatch.setenv("DASHBOARD_URL", "https://example.streamlit.app")
+    for var in ("TELEGRAM_BOT_TOKEN", "SMTP_HOST"):
+        monkeypatch.delenv(var, raising=False)
+    alerts = [("AAA", 10.0, "HOLD", Signal("opportunity", "t", "x", "Golden cross", 2))]
+    alerts += [(f"T{i}", 5.0, "RISK - REVIEW", Signal("risk", "p", "stop_loss", "Hit stop", 3)) for i in range(20)]
+    notify.send(alerts)
+    srv.server_close()
+
+    path, headers, body = received[0]
+    lines = body.decode().splitlines()
+    assert len(received) == 1 and path == "/sw-test"
+    assert headers["Priority"] == "5" and headers["Tags"] == "rotating_light"
+    assert headers["Title"].startswith("StockWatch: 21 alerts - T0") and headers["Click"].endswith("streamlit.app")
+    assert lines[0].startswith("🔴 T0") and lines[-1] == "+6 more in the dashboard log"   # urgent first, capped
+
+
+def test_send_survives_channel_failure(monkeypatch, capsys):
+    monkeypatch.setenv("NTFY_SERVER", "http://127.0.0.1:9")  # nothing listens here
+    monkeypatch.setenv("NTFY_TOPIC", "sw-test")
+    notify.send([("AAA", 1.0, "HOLD", Signal("risk", "t", "x", "msg", 2))])
+    assert "AAA" in capsys.readouterr().out
