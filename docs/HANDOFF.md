@@ -2,7 +2,7 @@
 
 This summarises the whole project so far, for picking it up in a new conversation. It describes the state as of
 commit `b232d30` on branch `claude/stock-dashboard-alerts-rr9r83` (also the repo's default branch): 28 commits,
-about 6,700 lines of Python, 82 passing tests. The README has the user-facing setup guide; this file covers what's
+about 6,700 lines of Python, 83 passing tests. The README has the user-facing setup guide; this file covers what's
 built, why, and what to watch out for.
 
 ## 1. What it is
@@ -110,6 +110,11 @@ against each other. On top of that, every stock gets a plain-English briefing an
     - **The list:** the old cards are now one row per stock, act-now first. Details still shows the full card.
       - **The call on top** (`ui.action`), from the plan stance: BUY NOW / BUY ON DIP / BUY ON BREAKOUT / BUY MORE / WAIT / HOLD / SELL SOME / SELL / PASS.
       - **No selling a watchlist name:** a sell or trim on a watchlist name reads PASS.
+      - **Don't sell into a bounce** (`ui.reassess`): a SELL or SELL SOME becomes **REASSESS** in two cases. The decision then moves to the close, with one level to watch.
+        - **Stop retaken:** the trailing stop that triggered the sell is back below the live price (pre/after-hours prices count).
+        - **Strong rebound:** the stock is up 3% or more today.
+        - **On Details:** a "Reassess before selling" banner, so both pages give the same answer.
+        - **Unchanged:** the plan is shown as "IF IT FAILS". The engine verdict and the phone pushes don't change.
       - **Below the call:** the price, why it sits where it does, and the plan. The "OWNED · T1" tag shows only on holdings.
 18. **Diagnostics** (Log → System diagnostics).
     - **Status shown:** code version, New York time and session, data source, ticker list source, and whether the Finnhub fallback is on.
@@ -135,7 +140,7 @@ against each other. On top of that, every stock gets a plain-English briefing an
 | `stockwatch/config.py` | portfolio loading: Google Sheet, then `STOCKWATCH_PORTFOLIO` secret, then `portfolio.yaml`, then `portfolio.example.yaml` |
 | `stockwatch/ui.py` | all CSS and HTML builders (cards, panels, tables, ladders) |
 | `.github/workflows/scan.yml` | scheduled scan and push job, plus the daily S&P job |
-| `tests/test_stockwatch.py` | 82 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses |
+| `tests/test_stockwatch.py` | 83 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses |
 
 **Data flow:** the provider fetches (cached), `engine.evaluate` builds an `Evaluation` (scores, signals, research,
 plan), `store.save_snapshot` writes JSON to SQLite, and the dashboard reads only the store. Alerts of severity 2 or
@@ -174,7 +179,7 @@ back empty are cached until their TTL runs out, so **reboot the app after adding
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                                   # 82 tests, no network needed
+python -m pytest -q                                   # 83 tests, no network needed
 STOCKWATCH_DEMO=1 streamlit run dashboard.py          # offline UI with synthetic data
 python -m stockwatch.scanner --once --demo            # one sweep from the CLI
 python -m stockwatch.market --demo                    # S&P scan from the CLI

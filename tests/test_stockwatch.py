@@ -1226,3 +1226,35 @@ def test_peek_history_never_waits_and_keeps_the_last_good_copy():
     with pytest.raises(RuntimeError):
         cp.history("SPY")                                           # Yahoo now refuses
     assert list(cp.peek_history("SPY")["Close"]) == [1.0, 2.0]      # the page still has the last good copy
+
+
+def _sell(price=1.00, live=None, live_change=None, trail=None, tripped=False, stance="REDUCE / EXIT", watch=False):
+    sigs = [{"kind": "risk", "severity": 3, "code": "atr_trailing_stop", "message": "Below ATR trailing stop"}] if tripped else \
+           [{"kind": "risk", "severity": 3, "code": "cash_burn", "message": "Burning cash"}]
+    s = _rsnap("SPAI", "RISK - REVIEW", price, watch=watch, signals=sigs,
+               plan={"stance": stance, "stop": 0.80, "targets": [{"price": 1.2}, {"price": 1.4}]})
+    s["payload"]["technical"] = {"trailing_stop": trail, "day_change": 0.0}
+    if live is not None:
+        s["payload"]["quote"] = {"market_state": "REGULAR", "live_price": live, "live_change": live_change}
+    return s
+
+
+def test_a_sell_into_a_bounce_waits_for_the_close():
+    calm = _sell(live=0.99, live_change=-0.01, trail=1.05, tripped=True)
+    assert ui.action(calm)[0] == "SELL" and ui.reassess(calm) is None
+    bounce = _sell(live=1.03, live_change=0.05, trail=1.05, tripped=True)         # SPAI +5%, still under the stop
+    assert ui.action(bounce)[0] == "REASSESS"
+    assert "Up 5.0% today" in ui.reassess(bounce) and "closes below the trailing stop (1.05)" in ui.reassess(bounce)
+    retaken = _sell(live=1.07, live_change=0.02, trail=1.05, tripped=True)        # back above the stop that fired
+    assert ui.reassess(retaken).startswith("Back above its trailing stop (1.05) at 1.07")
+    thesis = _sell(live=1.06, live_change=0.06)                                    # sell for business reasons
+    assert ui.action(thesis)[0] == "REASSESS" and "before acting" in ui.reassess(thesis)
+    assert ui.reassess(_sell(live=1.06, live_change=0.06, stance="TRIM")) is not None   # SELL SOME too
+    assert ui.reassess(_sell(live=1.06, live_change=0.06, watch=True)) is None    # PASS on a watchlist name: nothing to sell
+    assert ui.reassess(_sell(live=float("nan"), live_change=0.06)) is None        # no price: no claim
+    closed = _sell(price=1.04, trail=1.05, tripped=True)
+    closed["payload"]["technical"]["day_change"] = 0.04
+    assert "in the last session" in ui.reassess(closed) and "next close" in ui.reassess(closed)
+    row = ui.row(bounce)
+    assert "↻ REASSESS" in row and "DON'T RUSH" in row and "IF IT FAILS" in row
+    assert "Reassess before selling" in ui.reassess_note(bounce) and ui.reassess_note(calm) == ""

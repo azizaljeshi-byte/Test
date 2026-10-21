@@ -516,7 +516,55 @@ VERDICT_ACTIONS = {"OPPORTUNITY - ADD": "ADD", "BUY SETUP": "BUY NOW", "TRIM / R
                    "AVOID": "NO TRADE"}
 
 
+REBOUND = 0.03   # a sell call on a stock up this much today waits for the close instead of selling into the bounce
+
+
+def _now(snap: dict) -> tuple[float | None, float | None, bool]:
+    """(latest price including pre/after-hours, today's move, whether that's a live session)."""
+    p = snap["payload"]
+    q, day = p.get("quote") or {}, (p.get("technical") or {}).get("day_change")
+    state = q.get("market_state")
+    if state == "REGULAR" and not nan(q.get("live_price")):
+        return q["live_price"], q.get("live_change"), True
+    if state in ("PRE", "POST") and not nan(q.get("ext_price")) and not q.get("ext_stale"):
+        ch = q.get("ext_change")
+        if state == "POST" and not (nan(ch) or nan(day)):
+            ch = (1 + day) * (1 + ch) - 1          # the regular session's move plus the after-hours one
+        return q["ext_price"], ch, True
+    return snap["price"], day, False
+
+
+def reassess(snap: dict) -> str | None:
+    """Why a sell call should wait, or None. Two cases: the trailing stop that triggered the sell has been
+    retaken, or the stock is bouncing hard today. Either way the decision moves to the close, with one level."""
+    if _action(snap)[0] not in ("SELL", "SELL SOME"):
+        return None
+    price, move, live = _now(snap)
+    if nan(price):
+        return None
+    p = snap["payload"]
+    trail = (p.get("technical") or {}).get("trailing_stop")
+    tripped = not nan(trail) and any(x.get("code") == "atr_trailing_stop" for x in p.get("signals") or [])
+    moved = "" if nan(move) else f", {pct(move, digits=1)} {'today' if live else 'in the last session'}"
+    close = "near the close" if live else "at the next close"
+    if tripped and price >= trail:
+        return (f"Back above its trailing stop ({trail:.2f}) at {price:.2f}{moved}. Re-check {close} "
+                f"and sell only if it closes below {trail:.2f}.")
+    if not nan(move) and move >= REBOUND:
+        rule = f" and sell if it closes below the trailing stop ({trail:.2f})" if tripped else " before acting"
+        return f"Up {move * 100:.1f}% {'today' if live else 'in the last session'}. Re-check {close}{rule}."
+    return None
+
+
 def action(snap: dict) -> tuple[str, str, str]:
+    """(call, glyph, color) for the list and preview: the plan's call, except that a sell on a stock that is
+    recovering right now reads REASSESS (see `reassess`), so the app never says 'sell now' into a bounce."""
+    if reassess(snap):
+        return "REASSESS", "↻", WARN
+    return _action(snap)
+
+
+def _action(snap: dict) -> tuple[str, str, str]:
     """(call, glyph, color): buy / wait / hold / sell in plain words, from the same plan the verdict produced.
     Nothing to sell on a watchlist name, so a sell there reads PASS."""
     p = snap["payload"]
@@ -537,8 +585,11 @@ def row(snap: dict, was: str | None = None) -> str:
     price_now, day_html = _price(snap)
     r, why = ring(snap)
     top = p["signals"][0] if p["signals"] else None
+    wait = reassess(snap)
     if p.get("error"):
         why_html = f'<span style="color:{MUTED}">signal lost: {escape(p["error"][:90])}</span>'
+    elif wait:
+        why_html = f'<b class="rg" style="color:{WARN}">DON\'T RUSH</b> {escape(wait)}'
     elif r < 3 or not top:
         why_html = f'<b class="rg r{r}">{RING_LABEL[r]}</b> {escape(why) if r < 3 else ""}'
     else:
@@ -554,7 +605,15 @@ def row(snap: dict, was: str | None = None) -> str:
             f'<div class="mc-row"><div class="id"><b class="k"></b><span class="mc-tk">{escape(snap["ticker"])}</span>'
             f'<span class="nm">{escape(name)}</span></div></div>'
             f'<div class="px">{num(price_now)}{day_html}</div><div class="why">{why_html}</div>'
-            + (f'<div class="pl"><b>PLAN</b>{escape(plan)}</div>' if plan else "") + '</div></a>')
+            + (f'<div class="pl"><b>{"IF IT FAILS" if wait else "PLAN"}</b>{escape(plan)}</div>' if plan else "") + '</div></a>')
+
+
+def reassess_note(snap: dict) -> str:
+    """The Details page's version: a banner above the plan, so Details and the radar give the same answer."""
+    wait = reassess(snap)
+    return (f'<div class="mc-ev" style="--c:{WARN}"><div class="t">↻ Reassess before selling</div>'
+            f'<div style="font-size:.86rem;line-height:1.5;margin-top:.2rem;color:var(--ink)">{escape(wait)} The sell plan below '
+            f'still applies if it fails.</div></div>') if wait else ""
 
 
 def rows(snaps: list[dict], changed: dict[str, str] | None = None) -> str:
