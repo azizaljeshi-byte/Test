@@ -714,6 +714,7 @@ class CachedProvider:
         self.inner = inner
         self._lock = threading.Lock()
         self._cache: dict[tuple, tuple[float, Future]] = {}
+        self._last: dict[tuple, pd.DataFrame] = {}   # last good price history, for pages that mustn't wait
 
     def _get(self, kind: str, *args):
         key = (kind, *args)
@@ -726,7 +727,11 @@ class CachedProvider:
                 self._cache[key] = (time.monotonic(), fut)
         if owner:
             try:
-                fut.set_result(getattr(self.inner, kind)(*args))
+                value = getattr(self.inner, kind)(*args)
+                if kind == "history":
+                    with self._lock:
+                        self._last[key] = value
+                fut.set_result(value)
             except Exception as e:
                 with self._lock:  # don't remember failures
                     self._cache.pop(key, None)
@@ -735,6 +740,12 @@ class CachedProvider:
 
     def history(self, ticker: str, period: str = "5y") -> pd.DataFrame:
         return self._get("history", ticker, period)
+
+    def peek_history(self, ticker: str, period: str = "5y") -> pd.DataFrame | None:
+        """The last good history however old, without fetching or waiting: the page must never queue
+        behind the tracker's Yahoo calls. None until something has fetched it."""
+        with self._lock:
+            return self._last.get(("history", ticker, period))
 
     def fundamentals(self, ticker: str) -> dict:
         return self._get("fundamentals", ticker)

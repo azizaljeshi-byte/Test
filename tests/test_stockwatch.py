@@ -1207,3 +1207,22 @@ def test_tapping_a_dot_previews_it_without_a_reload():
     assert "#pv-BRK_B:checked~.mc-pvs #pvc-BRK_B{display:block}" in html    # CSS shows the matching preview
     assert "checked>" not in html and 'checked="' not in html              # React would lock a pre-checked radio
     assert html.count('class="mc-pv"') == 2 and "Open full details" in html and 'for="pv-none"' in html
+
+
+def test_peek_history_never_waits_and_keeps_the_last_good_copy():
+    calls = []
+
+    class Inner:
+        def history(self, ticker, period="5y"):
+            calls.append(ticker)
+            if len(calls) > 1:
+                raise RuntimeError("401 Invalid Crumb")
+            return pd.DataFrame({"Close": [1.0, 2.0]})
+
+    cp = CachedProvider(Inner())
+    assert cp.peek_history("SPY") is None and calls == []          # nothing fetched yet: no claim, no fetch
+    cp.history("SPY")
+    cp._cache.clear()                                               # TTL ran out
+    with pytest.raises(RuntimeError):
+        cp.history("SPY")                                           # Yahoo now refuses
+    assert list(cp.peek_history("SPY")["Close"]) == [1.0, 2.0]      # the page still has the last good copy

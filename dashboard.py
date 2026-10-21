@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -69,8 +70,29 @@ def tracker(name: str, code_version: str) -> live.Tracker:
 tracking = tracker("demo" if os.getenv("STOCKWATCH_DEMO") else base.settings.data_provider, CODE_VERSION)
 
 
+def _in_background(fn, *args, name: str):
+    """Long work never runs inside the page: the page would sit blank while it waits on Yahoo."""
+    def run():
+        try:
+            fn(*args)
+        except Exception:
+            live.log.exception("%s failed", name)
+    threading.Thread(target=run, name=name, daemon=True).start()
+
+
+def _history_now(ticker: str):
+    """Price history for a chart: the tracker's last copy if there is one, so opening Details doesn't queue for Yahoo."""
+    peek = data.peek_history(ticker) if hasattr(data, "peek_history") else None
+    return peek if peek is not None else data.history(ticker)
+
+
 def scan_now():
-    live.sweep(data, store)
+    # on_click: queue a sweep on its own thread (SWEEP_LOCK keeps it from overlapping the tracker's)
+    if live.SWEEP_LOCK.locked():
+        st.session_state.sweep_note = "A sweep is already running. This page updates when it lands."
+        return
+    _in_background(live.sweep, data, name="stockwatch-sweep-now")
+    st.session_state.sweep_note = "Sweep started. This page updates when it lands."
 
 
 snaps = [s for s in store.latest_snapshots() if s["ticker"] in tickers]
@@ -96,10 +118,9 @@ if base.sheet_error:
 
 def controls():
     c1, c2 = st.columns([1, 1.6])
-    if c1.button("⟳ Sweep now", width="stretch"):
-        with st.spinner("Sweeping targets..."):
-            scan_now()
-        st.rerun()
+    c1.button("⟳ Sweep now", width="stretch", on_click=scan_now)
+    if note := st.session_state.pop("sweep_note", None):
+        st.toast(note)
     status = tracking.status()
     if not status["alive"]:
         c2.caption("⚠ Live tracking stopped. Reboot the app to restart it.")
@@ -137,18 +158,28 @@ _watch_for_updates()
 
 if not snaps:
     controls()
-    st.info("No telemetry yet. Hit **⟳ Sweep now** to run the first scan.")
+    st.info("The first scan is running in the background. This page fills in by itself when it lands "
+            "(a few minutes for a long list)." if live.SWEEP_LOCK.locked()
+            else "No telemetry yet. Hit **⟳ Sweep now** to run the first scan.")
     st.stop()
 
 # ---------------------------------------------------------------- status tiles
 reg = None
+# the tracker fetches the benchmark every sweep; read its last copy rather than queue behind it for Yahoo
+bench = (data.peek_history(portfolio.settings.benchmark) if hasattr(data, "peek_history")
+         else data.history(portfolio.settings.benchmark))
+if bench is None:
+    _in_background(data.history, portfolio.settings.benchmark, name="stockwatch-benchmark")
 try:
-    reg = market_regime(data.history(portfolio.settings.benchmark))
+    if bench is None:
+        raise LookupError("benchmark loading")
+    reg = market_regime(bench)
     reg_color = {"RISK-ON": ui.OPP, "RISK-OFF": ui.RISK}.get(reg["state"], ui.WARN)
     market_tile = ("Market", reg["state"], f"{session} · SPY {ui.pct(reg['day_change'], digits=1)} · "
                    f"{ui.pct(reg['vs_200d'])} vs 200d", reg_color)
 except Exception:
-    market_tile = ("Market", "NO SIGNAL", "benchmark unavailable", ui.MUTED)
+    market_tile = (("Market", "LOADING", "fetching SPY prices in the background", ui.MUTED) if bench is None
+                   else ("Market", "NO SIGNAL", "benchmark unavailable", ui.MUTED))
 
 urgent = [s for s in snaps if any(x["kind"] == "risk" and x["severity"] >= 3 for x in s["payload"]["signals"])]
 opps = [s for s in snaps if s["verdict"] in ("OPPORTUNITY - ADD", "BUY SETUP")]
@@ -292,7 +323,7 @@ if view == "target":
     lv = (research.get("valuation") or {}).get("levels") or {}
 
     try:
-        ind = technical.indicators(data.history(ticker)).iloc[-180:]
+        ind = technical.indicators(_history_now(ticker)).iloc[-180:]
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.74, 0.26], vertical_spacing=0.04)
         fig.add_trace(go.Candlestick(x=ind.index, open=ind.Open, high=ind.High, low=ind.Low, close=ind.Close,
                                      name="Price", increasing_line_color=ui.OPP, decreasing_line_color=ui.RISK,

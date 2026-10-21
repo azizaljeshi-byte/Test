@@ -2,7 +2,7 @@
 
 This summarises the whole project so far, for picking it up in a new conversation. It describes the state as of
 commit `b232d30` on branch `claude/stock-dashboard-alerts-rr9r83` (also the repo's default branch): 28 commits,
-about 6,700 lines of Python, 81 passing tests. The README has the user-facing setup guide; this file covers what's
+about 6,700 lines of Python, 82 passing tests. The README has the user-facing setup guide; this file covers what's
 built, why, and what to watch out for.
 
 ## 1. What it is
@@ -135,7 +135,7 @@ against each other. On top of that, every stock gets a plain-English briefing an
 | `stockwatch/config.py` | portfolio loading: Google Sheet, then `STOCKWATCH_PORTFOLIO` secret, then `portfolio.yaml`, then `portfolio.example.yaml` |
 | `stockwatch/ui.py` | all CSS and HTML builders (cards, panels, tables, ladders) |
 | `.github/workflows/scan.yml` | scheduled scan and push job, plus the daily S&P job |
-| `tests/test_stockwatch.py` | 81 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses |
+| `tests/test_stockwatch.py` | 82 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses |
 
 **Data flow:** the provider fetches (cached), `engine.evaluate` builds an `Evaluation` (scores, signals, research,
 plan), `store.save_snapshot` writes JSON to SQLite, and the dashboard reads only the store. Alerts of severity 2 or
@@ -174,7 +174,7 @@ back empty are cached until their TTL runs out, so **reboot the app after adding
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                                   # 81 tests, no network needed
+python -m pytest -q                                   # 82 tests, no network needed
 STOCKWATCH_DEMO=1 streamlit run dashboard.py          # offline UI with synthetic data
 python -m stockwatch.scanner --once --demo            # one sweep from the CLI
 python -m stockwatch.market --demo                    # S&P scan from the CLI
@@ -191,7 +191,7 @@ Playwright screenshots at phone width (390px).
 - **Streamlit reruns.**
   - **Keep button results:** the page auto-reloads when the tracker lands results, so long actions and button results must be captured in `on_click` callbacks or session state, or run on the tracker thread.
   - **Key caches on the code:** `cache_resource` objects are keyed on `CODE_VERSION`, so deploys don't keep running old classes.
-  - **Stop the page from waiting:** heavy work belongs in the background tracker, and the page only reads the store. Use fragments for parts that redraw often (the Radar filter list).
+  - **Stop the page from waiting:** heavy work belongs in the background tracker, and the page only reads the store. The page never queues for Yahoo: the Market tile and Details chart read the tracker's last copy (`CachedProvider.peek_history`), and Sweep now starts a background thread. With Yahoo throttled after a reboot, an inline fetch left the page blank for minutes. Use fragments for parts that redraw often (the Radar filter list).
 - **Respect the free limits:** Yahoo throttled to 3 requests in flight, SEC to 4, Finnhub paced under 60 a minute, plus caching. Bulk downloads for many tickers.
 - **The plans are mechanical** (structure plus ATR), refined by the stock's own history. They're a decision aid, not advice, and the app says so.
 
