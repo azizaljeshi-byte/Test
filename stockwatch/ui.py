@@ -108,7 +108,19 @@ a.mc-a:hover .mc-card { border-color:var(--c); transform:translateY(-1px); box-s
 .mc-scope .spoke { position:absolute; left:50%; top:50%; width:1px; height:46.5%; background:var(--line); transform-origin:top center; }
 .mc-scope .sec { position:absolute; font-family:var(--mono); font-size:.62rem; letter-spacing:.1em; }
 .mc-scope .blip { position:absolute; width:32px; height:30px; margin:-8px 0 0 -16px; display:flex; flex-direction:column;
-  align-items:center; gap:1px; text-decoration:none !important; z-index:2; }
+  align-items:center; gap:1px; z-index:2; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+.mc-pvr { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+.mc-pvs .hint { text-align:center; color:var(--muted); font-size:.78rem; margin:.1rem 0 .6rem; }
+.mc-pvr:not(#pv-none):checked ~ .mc-pvs .hint { display:none; }
+.mc-pv { display:none; margin:.2rem 0 .9rem; animation: pv-in .18s ease-out; }
+.mc-pv .mc-li { border-color:var(--a); box-shadow:0 10px 30px -18px var(--a); border-radius:16px 16px 0 0; }
+.mc-pv .foot { display:flex; justify-content:space-between; align-items:center; border:1px solid var(--a); border-top:0;
+  border-radius:0 0 16px 16px; background:var(--panel2); }
+.mc-pv .foot label, .mc-pv .foot a { min-height:44px; display:flex; align-items:center; padding:0 .95rem; font-size:.86rem;
+  cursor:pointer; text-decoration:none; }
+.mc-pv .foot label { color:var(--muted); }
+.mc-pv .foot a { color:var(--info); font-weight:600; }
+@keyframes pv-in { from { opacity:0; transform:translateY(-4px); } }
 .mc-scope .blip b { width:9px; height:9px; border-radius:50%; box-sizing:border-box; border:2px solid var(--c); color:var(--c); }
 .mc-scope .blip.own b { background:var(--c); }
 .mc-scope .blip span { font-family:var(--mono); font-size:.55rem; line-height:1; color:var(--soft); white-space:nowrap; }
@@ -440,7 +452,8 @@ def sectors(snaps: list[dict]) -> dict[str, tuple[float, float]]:
 
 
 def radar(snaps: list[dict], shown: set[str] | None = None) -> str:
-    """The scope: one dot per stock, tapping opens its Details. Stocks outside the filter fade instead of vanishing."""
+    """The scope: one dot per stock. Tapping a dot previews it under the scope (hidden radios + CSS, no reload);
+    the preview links to Details. Stocks outside the filter fade instead of vanishing."""
     groups: dict[tuple[str, int], list[dict]] = {}
     for s in sorted(snaps, key=lambda x: x["ticker"]):
         groups.setdefault((sector(s["verdict"]), ring(s)[0]), []).append(s)
@@ -459,19 +472,38 @@ def radar(snaps: list[dict], shown: set[str] | None = None) -> str:
             cls = "blip" + (" own" if not s["payload"]["watchlist"] else "") + (" urgent" if urgent else "") \
                 + (" far" if r == 3 else "") + (" dim" if shown is not None and s["ticker"] not in shown else "")
             tk = escape(s["ticker"])
-            dots.append(f'<a class="{cls}" href="?view=target&t={tk}" target="_self" style="left:{x:.1f}%;top:{y:.1f}%;--c:{color}" '
-                        f'title="{tk}: {escape(s["verdict"].lower())}, {escape(ring(s)[1])}" aria-label="{tk}"><b></b><span>{tk}</span></a>')
+            dots.append(f'<label class="{cls}" for="pv-{_slug(s["ticker"])}" style="left:{x:.1f}%;top:{y:.1f}%;--c:{color}" '
+                        f'title="{tk}: {escape(s["verdict"].lower())}, {escape(ring(s)[1])}"><b></b><span>{tk}</span></label>')
     spokes = "".join(f'<i class="spoke" style="transform:rotate({a + 180:.1f}deg)"></i>' for a, _ in wedges.values())
     o, h = wedges["opp"][1], wedges["hold"][1]
     tint = (f"conic-gradient(from {wedges['opp'][0]:.1f}deg, rgba(61,255,168,.07) 0 {o:.1f}deg, "
             f"rgba(54,197,240,.045) {o:.1f}deg {o + h:.1f}deg, rgba(255,77,122,.08) {o + h:.1f}deg 360deg)")
-    return (f'<div class="mc-scope"><div class="disc" style="background:{tint}"><div class="sw"></div></div>'
+    ids = [_slug(x["ticker"]) for x in snaps]
+    # no `checked` attribute: Streamlit renders through React, which locks a radio that has one
+    radios = '<input type="radio" name="mc-pv" id="pv-none" class="mc-pvr" aria-label="Close preview">' + "".join(
+        f'<input type="radio" name="mc-pv" id="pv-{i}" class="mc-pvr" aria-label="Preview {escape(x["ticker"])}">'
+        for i, x in zip(ids, snaps))
+    rules = "".join(f"#pv-{i}:checked~.mc-pvs #pvc-{i}{{display:block}}#pv-{i}:checked~.mc-scope label[for=pv-{i}]{{z-index:3}}"
+                    f"#pv-{i}:checked~.mc-scope label[for=pv-{i}] b{{outline:2px solid var(--ink);outline-offset:3px}}"
+                    f"#pv-{i}:checked~.mc-scope label[for=pv-{i}] span{{display:block;color:var(--ink);margin-top:5px}}" for i in ids)
+    previews = "".join(
+        f'<div class="mc-pv" id="pvc-{i}">{row(x)}<div class="foot"><label for="pv-none">✕ Close</label>'
+        f'<a href="?view=target&t={escape(x["ticker"])}" target="_self">Open full details →</a></div></div>'
+        for i, x in zip(ids, snaps))
+    return (f'<div class="mc-radar-wrap"><style>{rules}</style>{radios}'
+            f'<div class="mc-scope"><div class="disc" style="background:{tint}"><div class="sw"></div></div>'
             '<div class="ring r2"></div><div class="ring r1"></div>'
             f'{spokes}<span class="sec" style="left:50%;top:0;transform:translateX(-50%);color:{OPP}">▲ BUY ZONE</span>'
             f'<span class="sec" style="left:0;bottom:0;color:{RISK}">▼ RISK</span>'
             f'<span class="sec" style="right:0;bottom:0;color:{INFO}">● HOLD / WATCH</span>{"".join(dots)}</div>'
             '<div class="mc-legend mc-rl"><span><b class="k own"></b>Owned</span><span><b class="k"></b>Watchlist</span>'
-            '<span>Middle: act now</span><span>Dashed ring: getting close</span><span>Edge: nothing to do</span></div>')
+            '<span>Middle: act now</span><span>Dashed ring: getting close</span><span>Edge: nothing to do</span></div>'
+            f'<div class="mc-pvs"><div class="hint">Tap a dot for a quick look.</div>{previews}</div></div>')
+
+
+def _slug(ticker: str) -> str:
+    """A ticker as a safe HTML id (BRK.B -> BRK_B)."""
+    return re.sub(r"[^A-Za-z0-9]", "_", ticker)
 
 
 ACTIONS = {  # plan stance -> the plain call at the top of a list row, its glyph and color

@@ -153,7 +153,7 @@ Watchlist verdicts: `BUY SETUP`, `WATCH`, `AVOID`.
 ## Dashboard
 
 Dark "mission control" theme, designed for phones first. Tap any stock (a card, a ticker in the brief, an S&P scan result) to open its details page. The views are:
-- **Radar:** a scope with one dot per stock. Direction is the verdict (buy zone at the top, risk bottom-left, hold/watch bottom-right); the closer to the middle, the sooner it needs you. Filled dots are owned, hollow ones watchlist; tap a dot for Details. Below it, a list with a plain call on top of each stock (buy now, buy on dip, wait, hold, sell some, sell, pass), then price, why and plan, act-now first. Filter by risk, opportunity, held or watchlist.
+- **Radar:** a scope with one dot per stock. Direction is the verdict (buy zone at the top, risk bottom-left, hold/watch bottom-right); the closer to the middle, the sooner it needs you. Filled dots are owned, hollow ones watchlist; tap a dot for a quick preview, with a link to its Details. Below it, a list with a plain call on top of each stock (buy now, buy on dip, wait, hold, sell some, sell, pass), then price, why and plan, act-now first. Filter by risk, opportunity, held or watchlist.
 - **Details:** chart, every signal, readouts, SEC filings, analyst moves and news for one stock.
 - **S&P 500:** the opportunity scan.
 - **⚡ Turbo:** a quick decision on any ticker, without adding it to your list.

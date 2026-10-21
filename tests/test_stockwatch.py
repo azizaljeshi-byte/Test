@@ -1197,3 +1197,13 @@ def test_list_call_is_plain_buy_or_sell_and_never_sells_a_watchlist_name():
     assert ui.action(_rsnap(verdict="HOLD"))[0] == "HOLD"
     err = _rsnap(verdict="ERROR")
     assert ui.action(err)[0] == "NO SIGNAL"
+
+
+def test_tapping_a_dot_previews_it_without_a_reload():
+    snaps = [_rsnap("BRK.B", "HOLD"), _rsnap("AAA", "BUY SETUP", watch=True)]
+    html = ui.radar(snaps)
+    assert '<label class="blip own far" for="pv-BRK_B"' in html            # the dot toggles a hidden radio
+    assert 'id="pv-BRK_B"' in html and 'id="pvc-BRK_B"' in html            # tickers become safe ids
+    assert "#pv-BRK_B:checked~.mc-pvs #pvc-BRK_B{display:block}" in html    # CSS shows the matching preview
+    assert "checked>" not in html and 'checked="' not in html              # React would lock a pre-checked radio
+    assert html.count('class="mc-pv"') == 2 and "Open full details" in html and 'for="pv-none"' in html
