@@ -450,8 +450,10 @@ SESSION_LABEL = {"REGULAR": "market open", "PRE": "pre-market", "POST": "after h
 
 
 STANCE_COLOR = {"BUY NOW": OPP, "BUY ON PULLBACK": OPP, "BUY THE BREAKOUT": OPP, "ADD": OPP,
-                "WAIT FOR CONFIRMATION": INFO, "HOLD": INFO, "TRIM": WARN, "REDUCE / EXIT": RISK, "NO TRADE": RISK}
-BIAS_GLYPH = {"bullish": ("▲ bullish", OPP), "bearish": ("▼ bearish", RISK), "neutral": ("◆ neutral", INFO)}
+                "WAIT FOR CONFIRMATION": INFO, "HOLD": INFO, "TRIM": WARN, "TRIM / PROTECT": WARN,
+                "REDUCE / EXIT": RISK, "NO TRADE": RISK}
+BIAS_GLYPH = {"bullish": ("▲ bullish", OPP), "bearish": ("▼ bearish", RISK), "neutral": ("◆ neutral", INFO),
+              "mixed": ("◆ short-term down · long-term up", WARN)}
 
 
 def plan_line(plan: dict | None) -> str:
@@ -497,7 +499,7 @@ def trade_plan(plan: dict, sizing: dict | None, risk_pct: float, portfolio_value
     def rel(v):
         return f"{v:.2f} <small style='color:{MUTED}'>({(v / price - 1) * 100:+.1f}%)</small>"
 
-    zone_label = {"ADD": "Add zone", "HOLD": "Add on dips", "TRIM": "Re-buy zone", "WAIT FOR CONFIRMATION": "Entry zone",
+    zone_label = {"ADD": "Add zone", "HOLD": "Add on dips", "TRIM": "Re-buy zone", "TRIM / PROTECT": "Re-buy zone", "WAIT FOR CONFIRMATION": "Entry zone",
                   "REDUCE / EXIT": "Support zone", "NO TRADE": "Support zone"}.get(plan["stance"], "Entry zone")
     rows = [] if exit_only else [(zone_label, f"{plan['entry_low']:.2f} - {plan['entry_high']:.2f}")]
     if plan.get("trigger"):

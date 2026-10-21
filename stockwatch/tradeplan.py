@@ -155,7 +155,7 @@ def build(hist: pd.DataFrame, tech: dict, fund: dict, fs: float, verdict: str, t
                    else "revisit when the risk signals clear")
         exits = ["No position to manage. Don't buy while the risk signals stand.", f"Then: {trigger}."]
 
-    return {"stance": stance, "bias": bias, "entry_low": low, "entry_high": high, "entry": entry,
+    return {"stance": stance, "bias": bias, "sma20": sma20, "entry_low": low, "entry_high": high, "entry": entry,
             "trigger": trigger, "stop": stop, "stop_basis": stop_basis, "risk_per_share": risk,
             "targets": [{"price": t1[0], "label": t1[1], "r": (t1[0] - entry) / risk if risk > 0 else None},
                         {"price": t2[0], "label": t2[1], "r": (t2[0] - entry) / risk if risk > 0 else None}],
@@ -189,6 +189,8 @@ def summary(plan: dict) -> str:
         return f"no trade: {plan['trigger']}"
     if plan["stance"] == "REDUCE / EXIT":
         return f"reduce / exit · if keeping some, sell below {plan['stop']:.2f}"
+    if plan["stance"] == "TRIM / PROTECT":
+        return f"trim / protect · keep the rest above {plan['stop']:.2f} · target {t1:.2f}"
     return f"{plan['stance'].lower()} · stop {plan['stop']:.2f} · target {t1:.2f}"
 
 
@@ -280,4 +282,37 @@ def refine(plan: dict, history: dict | None, street: dict | None, events: dict |
         plan["notes"].append("The street is negative and cutting estimates; the chart setup alone isn't enough.")
         plan["stance"] = "WAIT FOR CONFIRMATION"
         plan["trigger"] = plan.get("trigger") or "estimate revisions turning up"
+    return plan
+
+
+SHORT_TERM_RISKS = {"atr_trailing_stop"}   # momentum breaks, as opposed to thesis or cost-basis problems
+
+
+def reconcile(plan: dict, signals: list) -> dict:
+    """One answer when the short-term risk rules and the bigger picture disagree.
+
+    A trailing-stop hit on a stock whose trend and fundamentals are still positive means trim
+    and protect, not exit; a serious problem (thesis breakdown, cost-basis stop) stays an exit
+    but the plan says plainly that risk control is overriding a positive longer-term view."""
+    if not plan or plan.get("stance") != "REDUCE / EXIT" or plan.get("bias") != "bullish":
+        return plan
+    urgent = [s for s in signals if s.kind == "risk" and s.severity >= 3]
+    reasons = "; ".join(s.message for s in urgent[:2]) or "the risk signals"
+    t1, t2 = (t["price"] for t in plan["targets"])
+    plan = {**plan, "bias": "mixed", "exits": list(plan["exits"]), "notes": list(plan.get("notes", []))}
+    if urgent and all(s.code in SHORT_TERM_RISKS for s in urgent):
+        plan["stance"] = "TRIM / PROTECT"
+        plan["outlook"] = (f"Short term and long term disagree. Short-term momentum broke ({reasons}), but the bigger "
+                           f"picture is still positive: trend and fundamentals agree, with a base case back toward "
+                           f"{t1:.2f} and then {t2:.2f}. So protect, don't abandon: take some off and keep the rest "
+                           f"under a firm stop at {plan['stop']:.2f}.")
+        plan["exits"] = [
+            "Trim a third to a half now: short-term momentum has broken.",
+            f"Keep the rest with a stop at {plan['stop']:.2f} (on a daily close).",
+            f"Add back on a close above the 20-day average ({plan['sma20']:.2f}), which shows the pullback is over.",
+            f"Take more off near {t1:.2f}, and the rest near {t2:.2f}.",
+        ] + [e for e in plan["exits"] if e.startswith("Time stop")]
+    else:
+        plan["outlook"] = (f"The longer-term picture looks positive, but {reasons}. That's a risk-control exit: "
+                           f"protecting capital comes before the upside case. Rebuild only once these clear.")
     return plan

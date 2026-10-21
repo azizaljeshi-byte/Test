@@ -282,6 +282,7 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
                                      (plan["targets"][0]["price"] - entry) / entry, h.tier)
             plan = tradeplan.refine(plan, history, research.get("street"), events, h.tier, not h.is_watchlist,
                                     tech, plan_fs)
+            plan = tradeplan.reconcile(plan, signals)
         ev.plan = plan
     except Exception as e:
         log.warning("trade plan failed for %s: %s", h.ticker, e)

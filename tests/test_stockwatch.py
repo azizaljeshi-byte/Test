@@ -1029,3 +1029,18 @@ def test_turbo_momentum_vwap_and_relative_volume():
     assert m["price"] == 104.0 and m["day_change"] == pytest.approx(0.04)
     assert 101.9 < m["vwap"] < 102.1 and m["vs_vwap"] > 0
     assert m["rel_volume"] == pytest.approx(1.0, rel=0.02)
+
+
+def test_reconcile_trailing_stop_on_a_bullish_stock_means_trim_not_exit():
+    plan = _plan(UPTREND_DIP, "RISK - REVIEW", watchlist=False)
+    plan = {**plan, "bias": "bullish"}
+    assert plan["stance"] == "REDUCE / EXIT"
+    stop_hit = [Signal("risk", "technical", "atr_trailing_stop", "Below ATR trailing stop 109", 3)]
+    r = tradeplan.reconcile(plan, stop_hit)
+    assert r["stance"] == "TRIM / PROTECT" and r["bias"] == "mixed"
+    assert r["exits"][0].startswith("Trim a third to a half") and "Short term and long term disagree" in r["outlook"]
+    assert tradeplan.summary(r).startswith("trim / protect")
+    thesis = [Signal("risk", "combined", "thesis_breakdown", "Weak fundamentals confirmed by breakdown", 3)]
+    r2 = tradeplan.reconcile(plan, stop_hit + thesis)
+    assert r2["stance"] == "REDUCE / EXIT" and r2["bias"] == "mixed" and "risk-control exit" in r2["outlook"]
+    assert tradeplan.reconcile({**plan, "bias": "bearish"}, stop_hit)["stance"] == "REDUCE / EXIT"
