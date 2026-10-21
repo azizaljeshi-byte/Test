@@ -49,10 +49,29 @@ Missing data is skipped, not penalized.
 - Trailing-stop hit on a strong stock still above its 200-day → downgraded to a **pullback** warning.
 - Tier 1 stock with a fundamental score under 45 → **core fundamentals weak**.
 
+**Relative strength** (`stockwatch/relative.py`): 1- and 3-month performance against SPY and the stock's sector ETF (XLK, XLV, ...).
+Leading the market is a plus. Lagging SPY or the sector by more than 15% is flagged.
+The dashboard also shows the market as RISK-ON / CAUTION / RISK-OFF, based on SPY's trend.
+
+**Catalysts** (`stockwatch/catalysts.py`):
+- **Earnings:** a warning 7 days before a report, and a note at 14 days.
+- **Analyst moves:** upgrades, downgrades and Buy initiations from the last 10 days.
+- **News:** headlines from the last 72 hours are checked for keywords. "Offering", "fraud" and "delisting" count as serious; "beats" and "raises guidance" count as positive. This is keyword matching, so treat it as a prompt to read the headline, not as sentiment analysis.
+
 **Position checks:** stop-loss vs cost, halfway-to-stop warning, target price reached, concentration.
 
 **Verdicts:** `OPPORTUNITY - ADD`, `STRONG HOLD`, `HOLD`, `TRIM / REVIEW`, `RISK - REVIEW`.
 Watchlist verdicts: `BUY SETUP`, `WATCH`, `AVOID`.
+
+## Dashboard
+
+Dark "mission control" theme, designed for phones first. It has four tabs:
+- **Radar:** one card per stock, most urgent first. Filter by risk, opportunity, held or watchlist.
+- **Target:** chart, every signal, readouts, analyst moves and news for one stock.
+- **Log:** the alert history.
+- **Fleet:** add tickers (several at once, separated by commas) with a tier and share count, or remove them.
+
+Fleet changes are saved in the app's database. On Streamlit Cloud that database is wiped on reboot or redeploy, so the Fleet tab shows YAML you can paste into the `STOCKWATCH_PORTFOLIO` secret to keep your changes.
 
 ## Alerts
 

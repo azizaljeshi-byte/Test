@@ -6,7 +6,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .config import ROOT
+from .config import ROOT, Holding, Portfolio
 from .engine import Evaluation
 from .signals import Signal
 
@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS alerts (
     code TEXT, severity INTEGER, message TEXT, price REAL
 );
 CREATE INDEX IF NOT EXISTS ix_alert_key ON alerts(ticker, code, created_at);
+CREATE TABLE IF NOT EXISTS ticker_overrides (
+    ticker TEXT PRIMARY KEY, tier INTEGER, shares REAL, removed INTEGER DEFAULT 0, updated_at TEXT
+);
 """
 
 
@@ -35,7 +38,7 @@ class Store:
 
     def save_snapshot(self, e: Evaluation) -> None:
         payload = {"technical": e.technical, "fundamental": e.fundamental, "position": e.position,
-                   "signals": [s.to_dict() for s in e.signals], "name": e.name, "error": e.error,
+                   "signals": [s.to_dict() for s in e.signals], "events": e.events, "name": e.name, "error": e.error,
                    "watchlist": e.watchlist}
         self.conn.execute(
             "INSERT INTO snapshots (scanned_at, ticker, tier, price, technical_score, fundamental_score,"
@@ -79,3 +82,32 @@ class Store:
             "SELECT scanned_at, price, technical_score, fundamental_score, composite, verdict"
             " FROM snapshots WHERE ticker=? ORDER BY id DESC LIMIT ?", (ticker, limit))
         return [dict(r) for r in rows][::-1]
+
+    # ---- tickers added / removed from the dashboard, layered over portfolio.yaml
+
+    def upsert_ticker(self, ticker: str, tier: int, shares: float = 0.0) -> None:
+        self.conn.execute(
+            "INSERT INTO ticker_overrides (ticker, tier, shares, removed, updated_at) VALUES (?,?,?,0,?)"
+            " ON CONFLICT(ticker) DO UPDATE SET tier=excluded.tier, shares=excluded.shares, removed=0,"
+            " updated_at=excluded.updated_at",
+            (ticker.upper(), tier, shares, datetime.now(timezone.utc).isoformat(timespec="seconds")))
+        self.conn.commit()
+
+    def remove_ticker(self, ticker: str) -> None:
+        self.conn.execute(
+            "INSERT INTO ticker_overrides (ticker, removed, updated_at) VALUES (?,1,?)"
+            " ON CONFLICT(ticker) DO UPDATE SET removed=1, updated_at=excluded.updated_at",
+            (ticker.upper(), datetime.now(timezone.utc).isoformat(timespec="seconds")))
+        self.conn.commit()
+
+    def apply_overrides(self, portfolio: Portfolio) -> Portfolio:
+        by_ticker = {h.ticker: h for h in portfolio.holdings}
+        for r in self.conn.execute("SELECT * FROM ticker_overrides ORDER BY updated_at"):
+            if r["removed"]:
+                by_ticker.pop(r["ticker"], None)
+            else:
+                prev = by_ticker.get(r["ticker"])
+                by_ticker[r["ticker"]] = Holding(r["ticker"], int(r["tier"]), float(r["shares"] or 0),
+                                                 prev.cost_basis if prev else None,
+                                                 prev.target_price if prev else None)
+        return Portfolio(list(by_ticker.values()), portfolio.tiers, portfolio.settings, portfolio.source)

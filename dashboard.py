@@ -1,27 +1,25 @@
-"""StockWatch dashboard: streamlit run dashboard.py"""
+"""StockWatch Mission Control: streamlit run dashboard.py"""
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timezone
+from html import escape
 
-import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import technical
-from stockwatch.config import load_portfolio
+from stockwatch import technical, ui
+from stockwatch.config import load_portfolio, to_yaml
 from stockwatch.data import get_provider
+from stockwatch.engine import evaluate
+from stockwatch.relative import market_regime
 from stockwatch.scanner import run_once
 from stockwatch.store import Store
 
-st.set_page_config(page_title="StockWatch", page_icon="📈", layout="wide")
-
-VERDICT_COLORS = {
-    "OPPORTUNITY - ADD": "#1a7f37", "BUY SETUP": "#1a7f37", "STRONG HOLD": "#2da44e",
-    "HOLD": "#6e7781", "WATCH": "#6e7781", "TRIM / REVIEW": "#bf8700",
-    "RISK - REVIEW": "#cf222e", "AVOID": "#cf222e", "ERROR": "#8250df",
-}
+st.set_page_config(page_title="StockWatch · Mission Control", page_icon="🛸", layout="wide")
+st.markdown(ui.CSS, unsafe_allow_html=True)
 
 
 @st.cache_resource
@@ -29,176 +27,196 @@ def get_store() -> Store:
     return Store()
 
 
-def provider_name(portfolio) -> str:
-    return "demo" if os.getenv("STOCKWATCH_DEMO") else portfolio.settings.data_provider
+@st.cache_resource
+def provider(name: str):
+    return get_provider(name)
 
 
-portfolio = load_portfolio()
+base = load_portfolio()
 store = get_store()
+data = provider("demo" if os.getenv("STOCKWATCH_DEMO") else base.settings.data_provider)
+portfolio = store.apply_overrides(base)
+tickers = {h.ticker for h in portfolio.holdings}
 
-with st.sidebar:
-    st.title("📈 StockWatch")
-    source = portfolio.source.name if portfolio.source else "STOCKWATCH_PORTFOLIO secret"
-    st.caption(f"Portfolio: `{source}` · data: `{provider_name(portfolio)}`")
-    auto = st.toggle("Auto-scan while open", value=False,
-                     help="Re-runs the scan on an interval. For 24/7 monitoring run the scanner process instead.")
-    interval = st.number_input("Interval (minutes)", 1, 240, portfolio.settings.scan_interval_minutes)
-    if st.button("🔄 Scan now", use_container_width=True, type="primary"):
-        with st.spinner("Scanning..."):
-            run_once(portfolio, get_provider(provider_name(portfolio)), store)
-    tier_filter = st.multiselect("Tiers", [1, 2], default=[1, 2])
-    show_watch = st.checkbox("Include watchlist", value=True)
+
+def scan_now():
+    run_once(portfolio, data, store)
+    st.session_state.last_auto = time.time()
+
+
+snaps = [s for s in store.latest_snapshots() if s["ticker"] in tickers]
+last_scan = max((s["scanned_at"] for s in snaps), default=None)
+st.markdown(ui.header(f"{len(tickers)} targets · last sweep {last_scan[5:16].replace('T', ' ') + ' UTC' if last_scan else 'never'}"),
+            unsafe_allow_html=True)
+
+# ---------------------------------------------------------------- controls
+c1, c2, c3 = st.columns([1.2, 1.3, 1])
+if c1.button("⟳ Sweep now", use_container_width=True):
+    with st.spinner("Sweeping targets..."):
+        scan_now()
+    st.rerun()
+auto = c2.toggle("Auto-sweep", value=False, help="Re-scans on an interval while this page is open.")
+interval = c3.selectbox("Every", [5, 15, 30, 60], index=1, format_func=lambda m: f"{m} min", label_visibility="collapsed")
 
 if auto:
-    @st.fragment(run_every=f"{int(interval)}m")
-    def _auto_scan():
-        run_once(portfolio, get_provider(provider_name(portfolio)), store)
-    _auto_scan()
+    @st.fragment(run_every="60s")
+    def _auto():
+        if time.time() - st.session_state.get("last_auto", 0) >= interval * 60:
+            scan_now()
+            st.rerun()
+    _auto()
 
-snaps = store.latest_snapshots()
 if not snaps:
-    st.info("No scans yet. Click **Scan now** in the sidebar, or run `python -m stockwatch.scanner`.")
+    st.info("No telemetry yet. Hit **⟳ Sweep now** to run the first scan.")
     st.stop()
 
-snaps = [s for s in snaps if s["tier"] in tier_filter and (show_watch or not s["payload"]["watchlist"])]
-last_scan = max(s["scanned_at"] for s in snaps) if snaps else "-"
+# ---------------------------------------------------------------- status tiles
+try:
+    reg = market_regime(data.history(portfolio.settings.benchmark))
+    reg_color = {"RISK-ON": ui.OPP, "RISK-OFF": ui.RISK}.get(reg["state"], ui.WARN)
+    market_tile = ("Market", reg["state"], f"SPY {ui.pct(reg['day_change'], digits=1)} today · {ui.pct(reg['vs_200d'])} vs 200d", reg_color)
+except Exception:
+    market_tile = ("Market", "NO SIGNAL", "benchmark unavailable", ui.MUTED)
 
-# ---------------------------------------------------------------- summary
-held = [s for s in snaps if not s["payload"]["watchlist"] and not s["payload"]["error"]]
-total_value = sum(s["payload"]["position"].get("value", 0) for s in held)
-cost = sum((s["payload"]["position"].get("cost_basis") or 0) * s["payload"]["position"]["shares"] for s in held)
-n_risk = sum(any(x["kind"] == "risk" and x["severity"] >= 3 for x in s["payload"]["signals"]) for s in snaps)
-n_opp = sum(s["verdict"] in ("OPPORTUNITY - ADD", "BUY SETUP") for s in snaps)
+urgent = [s for s in snaps if any(x["kind"] == "risk" and x["severity"] >= 3 for x in s["payload"]["signals"])]
+opps = [s for s in snaps if s["verdict"] in ("OPPORTUNITY - ADD", "BUY SETUP")]
+soon = [s for s in snaps if (s["payload"].get("events") or {}).get("days_to_earnings") is not None
+        and s["payload"]["events"]["days_to_earnings"] <= 7]
+held = [s for s in snaps if not s["payload"]["watchlist"]]
+st.markdown(ui.tiles([
+    market_tile,
+    ("Red alerts", str(len(urgent)), " ".join(s["ticker"] for s in urgent[:4]) or "all clear", ui.RISK if urgent else ui.MUTED),
+    ("Opportunities", str(len(opps)), " ".join(s["ticker"] for s in opps[:4]) or "none in range", ui.OPP if opps else ui.MUTED),
+    ("Earnings ≤7d", str(len(soon)), " ".join(s["ticker"] for s in soon[:4]) or "quiet week", ui.WARN if soon else ui.MUTED),
+]), unsafe_allow_html=True)
 
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Portfolio value", f"${total_value:,.0f}",
-          f"{total_value / cost - 1:+.1%} vs cost" if cost else None)
-c2.metric("Positions / watchlist", f"{len(held)} / {sum(s['payload']['watchlist'] for s in snaps)}")
-c3.metric("🟢 Opportunities", n_opp)
-c4.metric("🔴 Urgent risks", n_risk)
-c5.metric("Last scan (UTC)", last_scan[11:16] if len(last_scan) > 11 else last_scan, last_scan[:10], delta_color="off")
+radar, target, log, fleet = st.tabs(["◉ Radar", "◎ Target", "≡ Log", "⊕ Fleet"])
 
-# ---------------------------------------------------------------- table
-def fmt_pct(v):
-    return None if v is None or pd.isna(v) else v * 100
+# ---------------------------------------------------------------- radar
+with radar:
+    view = st.pills("Filter", ["All", "▼ Risk", "▲ Opportunity", "Held", "Watch"], default="All",
+                    label_visibility="collapsed")
+    shown = sorted(snaps, key=ui.urgency)
+    if view == "▼ Risk":
+        shown = [s for s in shown if any(x["kind"] == "risk" and x["severity"] >= 2 for x in s["payload"]["signals"])]
+    elif view == "▲ Opportunity":
+        shown = [s for s in shown if any(x["kind"] == "opportunity" and x["severity"] >= 2 for x in s["payload"]["signals"])]
+    elif view == "Held":
+        shown = [s for s in shown if not s["payload"]["watchlist"]]
+    elif view == "Watch":
+        shown = [s for s in shown if s["payload"]["watchlist"]]
+    st.markdown(ui.cards(shown) if shown else f'<div class="mc-d">no targets match</div>', unsafe_allow_html=True)
 
-rows = []
-for s in snaps:
-    p = s["payload"]
-    t, f, pos = p["technical"], p["fundamental"], p["position"]
-    top = next(iter(p["signals"]), None)
-    rows.append({
-        "Ticker": s["ticker"], "Tier": s["tier"], "Type": "Watch" if p["watchlist"] else "Held",
-        "Verdict": s["verdict"], "Price": s["price"],
-        "Composite": s["composite"], "Fundamental": s["fundamental_score"], "Technical": s["technical_score"],
-        "Trend": t.get("trend"), "RSI": t.get("rsi"),
-        "P/L %": fmt_pct(pos.get("pnl_pct")), "Weight %": pos.get("weight_pct"),
-        "1M %": fmt_pct(t.get("ret_1m")), "Fwd P/E": f.get("pe"),
-        "Rev growth %": fmt_pct(f.get("revenue_growth")), "Top signal": top["message"] if top else "",
-    })
-df = pd.DataFrame(rows)
-
-def color_verdict(v):
-    return f"background-color: {VERDICT_COLORS.get(v, '#6e7781')}; color: white; font-weight: 600"
-
-st.subheader("Holdings & watchlist")
-score_cfg = dict(min_value=0, max_value=100, format="%.0f")
-st.dataframe(
-    df.style.map(color_verdict, subset=["Verdict"]),
-    hide_index=True, use_container_width=True,
-    column_config={
-        "Price": st.column_config.NumberColumn(format="%.2f"),
-        "Composite": st.column_config.ProgressColumn(**score_cfg),
-        "Fundamental": st.column_config.ProgressColumn(**score_cfg),
-        "Technical": st.column_config.ProgressColumn(**score_cfg),
-        "RSI": st.column_config.NumberColumn(format="%.0f"),
-        "P/L %": st.column_config.NumberColumn(format="%+.1f"),
-        "Weight %": st.column_config.NumberColumn(format="%.1f"),
-        "1M %": st.column_config.NumberColumn(format="%+.1f"),
-        "Fwd P/E": st.column_config.NumberColumn(format="%.1f"),
-        "Rev growth %": st.column_config.NumberColumn(format="%+.1f"),
-    },
-)
-
-# ---------------------------------------------------------------- detail + alerts
-left, right = st.columns([3, 2])
-
-with left:
-    st.subheader("Stock detail")
-    ticker = st.selectbox("Ticker", [s["ticker"] for s in snaps])
+# ---------------------------------------------------------------- target detail
+with target:
+    order = [s["ticker"] for s in sorted(snaps, key=ui.urgency)]
+    ticker = st.selectbox("Lock target", order)
     snap = next(s for s in snaps if s["ticker"] == ticker)
     p = snap["payload"]
-    st.markdown(f"**{p.get('name') or ticker}** · Tier {snap['tier']} · "
-                f"<span style='color:{VERDICT_COLORS.get(snap['verdict'])};font-weight:700'>{snap['verdict']}</span>",
-                unsafe_allow_html=True)
+    t, f, ev = p["technical"], p["fundamental"], p.get("events") or {}
+    st.markdown(ui.cards([snap]), unsafe_allow_html=True)
+    if p.get("name"):
+        st.caption(p["name"])
 
     try:
-        hist = get_provider(provider_name(portfolio)).history(ticker).iloc[-260:]
-        ind = technical.indicators(hist)
-        fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.6, 0.2, 0.2], vertical_spacing=0.03)
+        ind = technical.indicators(data.history(ticker)).iloc[-180:]
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.74, 0.26], vertical_spacing=0.04)
         fig.add_trace(go.Candlestick(x=ind.index, open=ind.Open, high=ind.High, low=ind.Low, close=ind.Close,
-                                     name="Price", showlegend=False), 1, 1)
-        for col, color in (("SMA50", "#0969da"), ("SMA200", "#bf8700")):
-            fig.add_trace(go.Scatter(x=ind.index, y=ind[col], name=col, line=dict(width=1.4, color=color)), 1, 1)
-        fig.add_trace(go.Scatter(x=ind.index, y=ind.BB_upper, line=dict(width=0.6, color="#8c959f"),
-                                 name="Bollinger", showlegend=False), 1, 1)
-        fig.add_trace(go.Scatter(x=ind.index, y=ind.BB_lower, line=dict(width=0.6, color="#8c959f"),
-                                 fill="tonexty", fillcolor="rgba(140,149,159,0.08)", showlegend=False), 1, 1)
-        pos = p["position"]
-        if pos.get("cost_basis"):
-            fig.add_hline(y=pos["cost_basis"], line_dash="dot", line_color="#6e7781",
-                          annotation_text="cost", row=1, col=1)
-        if pos.get("stop_price"):
-            fig.add_hline(y=pos["stop_price"], line_dash="dash", line_color="#cf222e",
-                          annotation_text="stop", row=1, col=1)
-        fig.add_trace(go.Scatter(x=ind.index, y=ind.RSI, name="RSI", line=dict(color="#8250df")), 2, 1)
-        fig.add_hrect(y0=30, y1=70, fillcolor="rgba(130,80,223,0.06)", line_width=0, row=2, col=1)
-        fig.add_trace(go.Bar(x=ind.index, y=ind.MACD - ind.MACD_signal, name="MACD hist",
-                             marker_color=["#2da44e" if v >= 0 else "#cf222e" for v in ind.MACD - ind.MACD_signal]),
-                      3, 1)
-        fig.update_layout(height=560, margin=dict(l=0, r=0, t=10, b=0), xaxis_rangeslider_visible=False,
-                          legend=dict(orientation="h", y=1.02))
-        st.plotly_chart(fig, use_container_width=True)
+                                     name="Price", increasing_line_color=ui.OPP, decreasing_line_color=ui.RISK,
+                                     increasing_fillcolor=ui.OPP, decreasing_fillcolor=ui.RISK), 1, 1)
+        fig.add_trace(go.Scatter(x=ind.index, y=ind.SMA50, name="50-day", line=dict(width=2, color=ui.INFO)), 1, 1)
+        fig.add_trace(go.Scatter(x=ind.index, y=ind.SMA200, name="200-day", line=dict(width=2, color=ui.WARN)), 1, 1)
+        fig.add_trace(go.Scatter(x=ind.index, y=ind.RSI, name="RSI", line=dict(width=2, color=ui.INFO),
+                                 showlegend=False), 2, 1)
+        fig.add_hrect(y0=30, y1=70, fillcolor="rgba(54,197,240,0.06)", line_width=0, row=2, col=1)
+        grid = "rgba(95,135,150,0.15)"
+        fig.update_layout(height=430, margin=dict(l=0, r=0, t=24, b=0), xaxis_rangeslider_visible=False,
+                          paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", hovermode="x unified",
+                          font=dict(family="Share Tech Mono, monospace", color=ui.INK, size=11),
+                          legend=dict(orientation="h", y=1.06, x=0, bgcolor="rgba(0,0,0,0)"))
+        fig.update_xaxes(gridcolor=grid, zeroline=False)
+        fig.update_yaxes(gridcolor=grid, zeroline=False)
+        fig.update_yaxes(title_text="RSI", range=[0, 100], row=2, col=1)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     except Exception as e:
-        st.warning(f"Could not load chart: {e}")
+        st.warning(f"Chart offline: {e}")
 
-    f, t = p["fundamental"], p["technical"]
-    a, b = st.columns(2)
-    with a:
-        st.markdown("**Fundamental pillars**")
-        for k in ("valuation", "growth", "quality", "balance"):
-            v = f.get(f"pillar_{k}")
-            st.progress(int(v) if v is not None else 0, text=f"{k.title()}: {'n/a' if v is None else f'{v:.0f}'}")
-    with b:
-        st.markdown("**Technical snapshot**")
-        st.write(f"Trend **{t.get('trend')}** · RSI **{t.get('rsi', 0):.0f}**")
-        st.write(f"50d {t.get('sma50', 0):.2f} · 200d {t.get('sma200', 0):.2f}")
-        st.write(f"52w range {t.get('low_52w', 0):.2f} – {t.get('high_52w', 0):.2f} "
-                 f"({t.get('drawdown_52w', 0):+.0%} from high)")
+    st.markdown('<div class="mc-section">Signals</div>', unsafe_allow_html=True)
+    st.markdown("".join(f'<div class="mc-log">{ui.signal_glyph(s["kind"])}{"!" * s["severity"]} {escape(s["message"])} '
+                        f'<small>· {s["source"]}</small></div>' for s in p["signals"])
+                or '<div class="mc-d">no signals</div>', unsafe_allow_html=True)
 
-    st.markdown("**Active signals**")
-    if not p["signals"]:
-        st.caption("Nothing notable.")
-    for sig in p["signals"]:
-        icon = "🟢" if sig["kind"] == "opportunity" else "🔴"
-        st.markdown(f"{icon} {'❗' * sig['severity']} *{sig['source']}* — {sig['message']}")
+    st.markdown('<div class="mc-section">Readouts</div>', unsafe_allow_html=True)
+    kv = [
+        ("Trend", (t.get("trend") or "—").upper()), ("RSI", ui.num(t.get("rsi"), ".0f")),
+        ("vs SPY 1M", ui.pct(t.get("rs_spy_1m"))), ("vs SPY 3M", ui.pct(t.get("rs_spy_3m"))),
+        (f"vs {t.get('sector_etf') or 'sector'} 3M", ui.pct(t.get("rs_sector_3m"))),
+        ("From 52w high", ui.pct(t.get("drawdown_52w"))), ("50-day", ui.num(t.get("sma50"))),
+        ("200-day", ui.num(t.get("sma200"))), ("Fwd P/E", ui.num(f.get("pe"), ".1f")), ("PEG", ui.num(f.get("peg"))),
+        ("Rev growth", ui.pct(f.get("revenue_growth"))), ("Op margin", ui.pct(f.get("operating_margin"), signed=False)),
+        ("Debt/Equity", ui.num(f.get("debt_to_equity"), ".1f")), ("Analyst upside", ui.pct(f.get("analyst_upside"))),
+        ("Valuation", ui.num(f.get("pillar_valuation"), ".0f")), ("Growth", ui.num(f.get("pillar_growth"), ".0f")),
+        ("Quality", ui.num(f.get("pillar_quality"), ".0f")), ("Balance", ui.num(f.get("pillar_balance"), ".0f")),
+        ("Earnings", f"{ev['earnings_date']} (T-{ev['days_to_earnings']}d)" if ev.get("earnings_date") else "—"),
+    ]
+    st.markdown('<div class="mc-kv">' + "".join(f"<div><span>{escape(k)}</span>{escape(v)}</div>" for k, v in kv)
+                + "</div>", unsafe_allow_html=True)
 
-    hist_scores = pd.DataFrame(store.history(ticker))
-    if len(hist_scores) > 1:
-        st.markdown("**Score history**")
-        st.line_chart(hist_scores.set_index("scanned_at")[["composite", "fundamental_score", "technical_score"]])
+    if ev.get("rating_changes"):
+        st.markdown('<div class="mc-section">Analyst moves</div>', unsafe_allow_html=True)
+        st.markdown("".join(
+            f'<div class="mc-log"><small>{escape(str(r["date"]))}</small> {escape(str(r.get("firm") or "?"))} · '
+            f'{escape(str(r.get("action") or "").upper())} {escape(str(r.get("from_grade") or ""))} → '
+            f'{escape(str(r.get("to_grade") or ""))}</div>' for r in ev["rating_changes"]), unsafe_allow_html=True)
 
-with right:
-    st.subheader("Alert feed")
-    alerts = pd.DataFrame(store.recent_alerts())
-    if alerts.empty:
-        st.caption("No alerts yet.")
-    else:
-        kind = st.radio("Show", ["All", "Opportunities", "Risks"], horizontal=True)
-        if kind != "All":
-            alerts = alerts[alerts.kind == ("opportunity" if kind == "Opportunities" else "risk")]
-        for _, a_ in alerts.head(60).iterrows():
-            icon = "🟢" if a_.kind == "opportunity" else "🔴"
-            st.markdown(f"{icon} **{a_.ticker}** @ {a_.price:.2f} — {a_.message}  \n"
-                        f"<small style='color:#6e7781'>{a_.created_at.replace('T', ' ')} · {a_.source}</small>",
-                        unsafe_allow_html=True)
+    if ev.get("news"):
+        st.markdown('<div class="mc-section">Incoming transmissions</div>', unsafe_allow_html=True)
+        st.markdown("".join(
+            f'<div class="mc-log mc-news"><small>{escape(n["published"][5:16].replace("T", " "))} · '
+            f'{escape(n.get("publisher") or "")}</small><br>'
+            + (f'<a href="{escape(n["url"])}" target="_blank">{escape(n["title"])}</a>' if n.get("url") else escape(n["title"]))
+            + "</div>" for n in ev["news"]), unsafe_allow_html=True)
+
+# ---------------------------------------------------------------- alert log
+with log:
+    alerts = [a for a in store.recent_alerts(150) if a["ticker"] in tickers]
+    if not alerts:
+        st.markdown('<div class="mc-d">no transmissions yet</div>', unsafe_allow_html=True)
+    st.markdown("".join(
+        f'<div class="mc-log"><small>{a["created_at"][5:16].replace("T", " ")}</small> '
+        f'{ui.signal_glyph(a["kind"])}<b>{escape(a["ticker"])}</b> @ {a["price"]:.2f} — {escape(a["message"])}</div>'
+        for a in alerts), unsafe_allow_html=True)
+
+# ---------------------------------------------------------------- fleet management
+with fleet:
+    st.markdown('<div class="mc-section">Add targets</div>', unsafe_allow_html=True)
+    with st.form("add", clear_on_submit=True, border=False):
+        raw = st.text_input("Tickers", placeholder="e.g. PLTR, AMZN, TSM")
+        a, b = st.columns(2)
+        tier = a.radio("Tier", [1, 2], horizontal=True, format_func=lambda x: f"T{x} {'core' if x == 1 else 'tactical'}")
+        shares = b.number_input("Shares (0 = watchlist)", min_value=0.0, value=0.0, step=1.0)
+        submitted = st.form_submit_button("⊕ Add to fleet", use_container_width=True)
+    if submitted and raw.strip():
+        for sym in [x.strip().upper() for x in raw.replace(" ", ",").split(",") if x.strip()]:
+            try:
+                data.history(sym)  # confirms the symbol exists before saving it
+            except Exception:
+                st.error(f"{sym}: no market data found - check the symbol")
+                continue
+            store.upsert_ticker(sym, tier, shares)
+            h = next(h for h in store.apply_overrides(base).holdings if h.ticker == sym)
+            store.save_snapshot(evaluate(h, portfolio, data))
+            st.success(f"{sym} locked on radar")
+        st.rerun()
+
+    st.markdown('<div class="mc-section">Remove targets</div>', unsafe_allow_html=True)
+    drop = st.multiselect("Remove", sorted(tickers), label_visibility="collapsed", placeholder="Pick tickers to remove")
+    if st.button("✕ Remove selected", disabled=not drop):
+        for sym in drop:
+            store.remove_ticker(sym)
+        st.rerun()
+
+    st.markdown('<div class="mc-section">Make it permanent</div>', unsafe_allow_html=True)
+    st.caption("Changes here are saved in the app's database, which Streamlit Cloud wipes on a reboot or redeploy. "
+               "To keep them, paste this into the app's STOCKWATCH_PORTFOLIO secret (between the triple quotes).")
+    st.code(to_yaml(portfolio), language="yaml")

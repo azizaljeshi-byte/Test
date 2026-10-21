@@ -91,3 +91,18 @@ def load_portfolio(path: str | Path | None = None) -> Portfolio:
 
     settings = Settings(**(raw.get("settings") or {}))
     return Portfolio(holdings=holdings, tiers=tiers, settings=settings, source=path)
+
+
+def to_yaml(portfolio: Portfolio) -> str:
+    """Holdings as YAML, e.g. to paste into the STOCKWATCH_PORTFOLIO secret."""
+    rows = []
+    for h in sorted(portfolio.holdings, key=lambda h: (h.is_watchlist, h.tier, h.ticker)):
+        row = {"ticker": h.ticker, "tier": h.tier}
+        if h.shares:
+            row["shares"] = h.shares
+        if h.cost_basis:
+            row["cost_basis"] = h.cost_basis
+        if h.target_price:
+            row["target_price"] = h.target_price
+        rows.append(row)
+    return yaml.safe_dump({"holdings": rows}, sort_keys=False, default_flow_style=None)

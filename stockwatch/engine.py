@@ -6,9 +6,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from . import fundamental, technical
+from . import catalysts, fundamental, relative, technical
 from .config import Holding, Portfolio
-from .data import DataProvider
+from .data import SECTOR_ETFS, DataProvider
 from .signals import OPPORTUNITY, RISK, Signal
 
 log = logging.getLogger(__name__)
@@ -28,6 +28,7 @@ class Evaluation:
     technical: dict
     fundamental: dict
     position: dict = field(default_factory=dict)
+    events: dict = field(default_factory=dict)
     name: str | None = None
     error: str | None = None
     scanned_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
@@ -117,6 +118,15 @@ def _verdict(ev: Evaluation) -> str:
     return "HOLD"
 
 
+def _optional(fn, *args):
+    """Supporting data (benchmarks, news) is nice to have; never fail the evaluation over it."""
+    try:
+        return fn(*args)
+    except Exception as e:
+        log.info("%s%s unavailable: %s", getattr(fn, "__name__", fn), args, e)
+        return None
+
+
 def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider) -> Evaluation:
     rules = portfolio.rules(h.tier)
     try:
@@ -133,12 +143,24 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider) -> Evalua
         log.exception("evaluation failed for %s", h.ticker)
         return Evaluation(h.ticker, h.tier, h.is_watchlist, float("nan"), 0, 0, 0, "ERROR", [], {}, {}, error=str(e))
 
+    # relative strength nudges the technical score; benchmarks are cached across tickers
+    sector_etf = SECTOR_ETFS.get(f.get("sector") or "")
+    rs_adj, rs, rs_sig = relative.analyze(
+        hist, _optional(provider.history, portfolio.settings.benchmark),
+        _optional(provider.history, sector_etf) if sector_etf else None, sector_etf, h.tier)
+    ts = float(min(100, max(0, ts + rs_adj)))
+    tech.update(rs)
+
+    raw_events = _optional(provider.events, h.ticker) or {}
+    events, event_sig = catalysts.analyze(raw_events, owned=not h.is_watchlist, tier=h.tier)
+
     composite = rules.fundamental_weight * fs + rules.technical_weight * ts
     pos, pos_sig = _position(h, price, tech, rules)
-    signals = tech_sig + fund_sig + _confluence(fs, tech, tech_sig, h.tier) + pos_sig
+    signals = (tech_sig + rs_sig + fund_sig + _confluence(fs, tech, tech_sig, h.tier)
+               + event_sig + pos_sig)
     signals.sort(key=lambda s: (-s.severity, s.kind))
     ev = Evaluation(h.ticker, h.tier, h.is_watchlist, price, round(ts, 1), round(fs, 1),
-                    round(composite, 1), "", signals, tech, fund, pos, name=f.get("name"))
+                    round(composite, 1), "", signals, tech, fund, pos, events, name=f.get("name"))
     ev.verdict = _verdict(ev)
     return ev
 

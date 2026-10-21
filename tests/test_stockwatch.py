@@ -33,6 +33,9 @@ class FixedProvider:
     def fundamentals(self, ticker):
         return self.f
 
+    def events(self, ticker):
+        return {}
+
 
 STRONG_FUNDAMENTALS = dict(pe_forward=15, peg=0.9, revenue_growth=0.25, earnings_growth=0.3,
                            operating_margin=0.3, roe=0.3, free_cash_flow=1e9, debt_to_equity=0.2,
@@ -140,3 +143,95 @@ def test_portfolio_from_env(monkeypatch):
 def test_recent_listing_not_penalized_for_missing_averages():
     score, m, _ = technical.analyze(frame(np.linspace(20, 30, 60)))
     assert np.isnan(m["sma200"]) and score > 50  # was 40 when missing averages counted as bearish
+
+
+# ---- relative strength, catalysts, caching, fleet overrides
+
+from datetime import date, datetime, timedelta, timezone
+
+from stockwatch import catalysts, relative
+from stockwatch.config import to_yaml
+from stockwatch.data import CachedProvider
+
+
+def test_relative_strength_leading_and_lagging():
+    market = frame(np.linspace(100, 110, 300))
+    _, m, sig = relative.analyze(frame(np.geomspace(100, 400, 300)), market, None, None, tier=1)
+    assert m["rs_spy_3m"] > 0.10 and "leading_market" in {s.code for s in sig}
+    adj, m, sig = relative.analyze(frame(np.linspace(200, 100, 300)), market, market, "XLK", tier=1)
+    codes = {s.code: s for s in sig}
+    assert adj < 0 and codes["lagging_market"].severity == 2 and "lagging_sector" in codes
+
+
+def test_market_regime():
+    assert relative.market_regime(frame(np.linspace(100, 150, 300)))["state"] == "RISK-ON"
+    assert relative.market_regime(frame(np.linspace(150, 100, 300)))["state"] == "RISK-OFF"
+
+
+def test_catalysts_earnings_ratings_news():
+    now = datetime.now(timezone.utc)
+    events = {
+        "earnings_date": date(2026, 1, 8),
+        "rating_changes": [
+            {"date": now - timedelta(days=2), "firm": "MS", "action": "down", "from_grade": "Buy", "to_grade": "Hold"},
+            {"date": now - timedelta(days=60), "firm": "GS", "action": "up", "from_grade": "Hold", "to_grade": "Buy"},
+        ],
+        "news": [
+            {"title": "Company announces stock offering", "published": now - timedelta(hours=5)},
+            {"title": "Company beats estimates", "published": now - timedelta(hours=6)},
+            {"title": "Company faces lawsuit", "published": now - timedelta(days=10)},
+        ],
+    }
+    m, sig = catalysts.analyze(events, owned=True, tier=2, today=date(2026, 1, 5))
+    codes = {s.code: s for s in sig}
+    assert m["days_to_earnings"] == 3 and codes["earnings_soon"].severity == 2
+    assert "downgrade" in codes and "upgrade" not in codes        # old upgrade is outside the window
+    assert codes["news_negative"].severity == 2 and "offering" in codes["news_negative"].message
+    assert "news_positive" in codes
+
+
+def test_catalysts_handles_naive_dates_and_empty():
+    m, sig = catalysts.analyze({}, owned=False, tier=1)
+    assert sig == [] and m["earnings_date"] is None
+    naive = {"rating_changes": [{"date": datetime.now() - timedelta(days=1), "firm": "X", "action": "up"}]}
+    assert catalysts.analyze(naive, owned=True, tier=1)[1][0].code == "upgrade"
+
+
+def test_cached_provider_dedupes_and_does_not_cache_errors():
+    calls = []
+
+    class Inner(DemoProvider):
+        def history(self, ticker, period="2y"):
+            calls.append(ticker)
+            if ticker == "BAD":
+                raise ValueError("boom")
+            return super().history(ticker, period)
+
+    cp = CachedProvider(Inner())
+    cp.history("SPY"), cp.history("SPY")
+    assert calls.count("SPY") == 1
+    for _ in range(2):
+        with pytest.raises(ValueError):
+            cp.history("BAD")
+    assert calls.count("BAD") == 2
+
+
+def test_fleet_overrides_layer_over_config(tmp_path):
+    store = Store(tmp_path / "t.db")
+    base = make_portfolio(Holding("AAA", 1, 10, 50.0), Holding("BBB", 2, 5))
+    store.upsert_ticker("ccc", 2, 0)
+    store.upsert_ticker("AAA", 2, 20)
+    store.remove_ticker("BBB")
+    p = store.apply_overrides(base)
+    by = {h.ticker: h for h in p.holdings}
+    assert set(by) == {"AAA", "CCC"}
+    assert by["AAA"].tier == 2 and by["AAA"].shares == 20 and by["AAA"].cost_basis == 50.0
+    store.upsert_ticker("BBB", 1, 0)  # re-adding a removed ticker brings it back
+    assert "BBB" in {h.ticker for h in store.apply_overrides(base).holdings}
+
+
+def test_to_yaml_round_trips(tmp_path, monkeypatch):
+    p = make_portfolio(Holding("AAA", 1, 10, 50.0), Holding("WWW", 2, 0))
+    monkeypatch.setenv("STOCKWATCH_PORTFOLIO", to_yaml(p))
+    back = {h.ticker: h for h in load_portfolio().holdings}
+    assert back["AAA"].cost_basis == 50.0 and back["WWW"].is_watchlist

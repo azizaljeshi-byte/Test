@@ -38,14 +38,15 @@ def main(argv=None):
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    portfolio = load_portfolio(args.portfolio)
-    provider = get_provider("demo" if args.demo else portfolio.settings.data_provider)
+    base = load_portfolio(args.portfolio)
+    provider = get_provider("demo" if args.demo else base.settings.data_provider)
     store = Store()
-    interval = args.interval or portfolio.settings.scan_interval_minutes
+    interval = args.interval or base.settings.scan_interval_minutes
 
     while True:
         try:
-            run_once(portfolio, provider, store)
+            # re-read each loop so tickers added from the dashboard are picked up
+            run_once(store.apply_overrides(base), provider, store)
         except Exception:
             log.exception("scan failed")
         if args.once:
