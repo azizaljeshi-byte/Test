@@ -377,20 +377,22 @@ def test_us_session_by_new_york_clock():
 
 
 def _fake_yahoo(info, bars=None):
+    """bars: a DataFrame for every history() call, or a dict of interval -> DataFrame."""
     class T:
         def __init__(self, sym):
             self.info = info
 
         def history(self, **kw):
-            return bars if bars is not None else pd.DataFrame()
+            b = bars.get(kw.get("interval")) if isinstance(bars, dict) else bars
+            return b if b is not None else pd.DataFrame()
 
     yp = YahooProvider.__new__(YahooProvider)
     yp._yf = type("yf", (), {"Ticker": T})
+    yp._industry = {}
     return yp
 
 
 ORIGINAL_SESSION = us_session
-CLOSE_T, LAST_NIGHT, THIS_MORNING = 1761076800, 1761091200, 1761127200   # 4pm ET close, 8pm ET, next morning
 
 
 def _clock(monkeypatch, session):
@@ -399,37 +401,45 @@ def _clock(monkeypatch, session):
     monkeypatch.setattr(data_mod, "us_session", lambda now=None: session if now is None else ORIGINAL_SESSION(now))
 
 
-def test_yahoo_quote_follows_the_clock_not_yahoos_state(monkeypatch):
+def _bars(*points):
+    idx = pd.DatetimeIndex([pd.Timestamp(t, tz="America/New_York") for t, _ in points])
+    return pd.DataFrame({"Close": [c for _, c in points]}, index=idx)
+
+
+def test_quote_reads_premarket_from_minute_bars(monkeypatch):
     _clock(monkeypatch, "PRE")
-    # pre-market while Yahoo still says CLOSED: the newest trade (pre) wins over last night's after-hours
-    q = _fake_yahoo({"marketState": "CLOSED", "regularMarketPrice": 50.0, "regularMarketTime": CLOSE_T,
-                     "preMarketPrice": 51.0, "preMarketTime": THIS_MORNING,
-                     "postMarketPrice": 49.0, "postMarketTime": LAST_NIGHT}).quote("X")
-    assert q["ext_session"] == "pre" and q["ext_price"] == 51.0 and q["market_state"] == "PRE"
-    # only last night's after-hours price and no pre-market bars: shown, but flagged as last night's
-    q = _fake_yahoo({"marketState": "CLOSED", "regularMarketPrice": 50.0, "regularMarketTime": CLOSE_T,
-                     "postMarketPrice": 49.0, "postMarketTime": LAST_NIGHT}).quote("X")
-    assert q["ext_session"] == "post" and q["ext_stale"] and q["yahoo_state"] == "CLOSED"
-    # a pre-market trade in the minute bars beats last night's quote
-    idx = pd.DatetimeIndex([pd.Timestamp("2026-10-21 15:59", tz="America/New_York"),
-                            pd.Timestamp("2026-10-22 06:05", tz="America/New_York")])
-    bars = pd.DataFrame({"Close": [50.0, 52.0]}, index=idx)
-    q = _fake_yahoo({"marketState": "CLOSED", "regularMarketPrice": 50.0, "regularMarketTime": CLOSE_T,
-                     "postMarketPrice": 49.0, "postMarketTime": LAST_NIGHT}, bars).quote("X")
-    assert q["ext_session"] == "pre" and q["ext_price"] == 52.0 and q["source"] == "1m bars" and not q["ext_stale"]
-    # during regular hours there's no extended price to show
-    _clock(monkeypatch, "REGULAR")
-    live = _fake_yahoo({"marketState": "REGULAR", "regularMarketPrice": 50.0, "postMarketPrice": 49.0}).quote("X")
-    assert live["ext_price"] is None
+    bars = _bars(("2026-10-21 15:59", 50.0), ("2026-10-21 19:00", 49.0), ("2026-10-22 06:05", 52.0))
+    q = _fake_yahoo({}, bars).quote("X")   # no quote fields at all, like when Yahoo blocks the token
+    assert q["ext_session"] == "pre" and q["ext_price"] == 52.0 and q["source"] == "1m bars"
+    assert abs(q["ext_change"] - 0.04) < 1e-9 and not q["ext_stale"] and q["market_state"] == "PRE"
 
 
-def test_yahoo_quote_falls_back_to_extended_bars(monkeypatch):
+def test_quote_flags_last_nights_after_hours_and_quiet_mornings(monkeypatch):
+    _clock(monkeypatch, "PRE")
+    q = _fake_yahoo({}, _bars(("2026-10-21 15:59", 50.0), ("2026-10-21 19:00", 49.0))).quote("X")
+    assert q["ext_session"] == "post" and q["ext_stale"]
+    quiet = _fake_yahoo({}, _bars(("2026-10-21 15:59", 50.0))).quote("X")
+    assert quiet["ext_price"] is None and "no extended-hours trades" in quiet["error"]
+
+
+def test_quote_falls_back_to_5m_bars_and_reports_failures(monkeypatch):
     _clock(monkeypatch, "POST")
-    idx = pd.DatetimeIndex([pd.Timestamp("2026-10-21 15:59", tz="America/New_York"),
-                            pd.Timestamp("2026-10-21 19:55", tz="America/New_York")])
-    bars = pd.DataFrame({"Close": [100.0, 105.0]}, index=idx)
-    q = _fake_yahoo({"regularMarketPrice": 100.0}, bars).quote("X")
-    assert q["ext_session"] == "post" and abs(q["ext_change"] - 0.05) < 1e-9
+    q = _fake_yahoo({}, {"1m": None, "5m": _bars(("2026-10-21 15:55", 100.0), ("2026-10-21 19:55", 105.0))}).quote("X")
+    assert q["ext_session"] == "post" and q["source"] == "5m bars" and abs(q["ext_change"] - 0.05) < 1e-9
+    assert "1m bars: no bars returned" in q["error"]
+    broken = _fake_yahoo({}, None).quote("X")
+    assert broken["ext_price"] is None and "5m bars: no bars returned" in broken["error"]
+    _clock(monkeypatch, "REGULAR")
+    live = _fake_yahoo({}, _bars(("2026-10-21 10:00", 100.0))).quote("X")
+    assert live["ext_price"] is None and live["error"] is None
+
+
+def test_yahoo_fundamentals_refuse_empty_responses():
+    with pytest.raises(RuntimeError, match="rate-limited"):
+        _fake_yahoo({"shortName": "X"}).fundamentals("X")
+    yp = _fake_yahoo({"shortName": "X", "marketCap": 1e9, "trailingPE": 20, "revenueGrowth": 0.1,
+                      "industryKey": "semis"})
+    assert yp.fundamentals("X")["pe_trailing"] == 20 and yp._industry["X"] == "semis"
 
 
 def test_extended_hours_signal_thresholds():
@@ -771,3 +781,22 @@ def test_news_tone_and_today_count():
                                        {"title": "X holds annual meeting", "published": now - timedelta(hours=1)}]},
                              owned=True, tier=1)
     assert [n["tone"] for n in m["news"]] == ["positive", "negative", "neutral"] and m["news_today"] == 2
+
+
+def test_sec_dilution_ignores_stock_splits():
+    today = date(2026, 10, 21)
+    split = {"filings": [], "shares": [{"end": "2026-09-30", "value": 4.3e9}, {"end": "2025-09-30", "value": 4.4e8}]}
+    m, sig = sec.analyze(split, today=today)
+    assert m["split"] == 10 and "dilution" not in {s.code for s in sig} and abs(m["shares_change_1y"] + 0.0227) < 1e-3
+    diluted = {"filings": [], "shares": [{"end": "2026-09-30", "value": 2.6e8}, {"end": "2025-09-30", "value": 1e8}]}
+    m, sig = sec.analyze(diluted, today=today)
+    assert "split" not in m and {s.code: s for s in sig}["dilution"].severity == 2
+
+
+def test_unavailable_fundamentals_are_unknown_not_bad():
+    close = np.geomspace(150, 60, 300)
+    ev = evaluate(Holding("X", 1, 10), make_portfolio(), FixedProvider(frame(close), {"debt_to_equity": 5.0}))
+    codes = {s.code for s in ev.signals}
+    assert ev.fundamental["available"] is False and ev.composite == ev.technical_score
+    assert "fundamentals_unavailable" in codes
+    assert not {"thesis_breakdown", "core_fundamentals_weak"} & codes

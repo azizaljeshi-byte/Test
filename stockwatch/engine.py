@@ -13,6 +13,8 @@ from .signals import OPPORTUNITY, RISK, Signal
 
 log = logging.getLogger(__name__)
 
+MIN_FUND_COVERAGE = 30   # fundamental points available (3+ measures) before the score is trusted
+
 PROFILE_KEYS = ("name", "sector", "industry", "summary", "website", "employees", "country", "market_cap")
 
 
@@ -137,7 +139,8 @@ def _technical_shift(hist, ts: float, fs: float, atr_mult: float, owned: bool) -
     delta = ts - before
     if abs(delta) < SHIFT_POINTS:
         return []
-    fund = (f"fundamentals unchanged and still solid ({fs:.0f}) - more likely a price move than a thesis change"
+    fund = ("fundamentals currently unavailable" if fs is None else
+            f"fundamentals unchanged and still solid ({fs:.0f}) - more likely a price move than a thesis change"
             if fs >= 55 else f"with fundamentals already weak ({fs:.0f})")
     if delta < 0:
         return [Signal(RISK, "technical", "technical_breakdown",
@@ -185,7 +188,8 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
         log.exception("evaluation failed for %s", h.ticker)
         return Evaluation(h.ticker, h.tier, h.is_watchlist, float("nan"), 0, 0, 0, "ERROR", [], {}, {}, error=str(e))
 
-    shift_sig = _technical_shift(hist, ts, fs, rules.trailing_atr_mult, not h.is_watchlist)
+    shift_sig = _technical_shift(hist, ts, fs if (fund.get("coverage") or 0) >= MIN_FUND_COVERAGE else None,
+                                 rules.trailing_atr_mult, not h.is_watchlist)
 
     # relative strength nudges the technical score; benchmarks are cached across tickers
     sector_etf = SECTOR_ETFS.get(f.get("sector") or "")
@@ -234,9 +238,18 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
         except Exception as e:
             log.warning("SEC analysis failed for %s: %s", h.ticker, e)
 
-    composite = rules.fundamental_weight * fs + rules.technical_weight * ts
+    # too few fundamental measures (usually a blocked Yahoo request) means "unknown", not "bad"
+    fund["available"] = (fund.get("coverage") or 0) >= MIN_FUND_COVERAGE
+    if fund["available"]:
+        composite = rules.fundamental_weight * fs + rules.technical_weight * ts
+        confluence = _confluence(fs, tech, tech_sig, h.tier)
+    else:
+        composite = ts
+        confluence = [Signal(RISK, "fundamental", "fundamentals_unavailable",
+                             "Fundamentals unavailable right now (Yahoo didn't return them); "
+                             "this verdict is based on price action only", 1)]
     pos, pos_sig = _position(h, price, tech, rules)
-    signals = (tech_sig + rs_sig + fund_sig + _confluence(fs, tech, tech_sig, h.tier)
+    signals = (tech_sig + rs_sig + fund_sig + confluence
                + shift_sig + event_sig + deep_sig + ext_sig + pos_sig)
     signals.sort(key=lambda s: (-s.severity, s.kind))
     ev = Evaluation(h.ticker, h.tier, h.is_watchlist, price, round(ts, 1), round(fs, 1),
@@ -245,14 +258,15 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
     ev.verdict = _verdict(ev)
     try:
         val = research.get("valuation") or {}
-        plan = tradeplan.build(hist, tech, fund, fs, ev.verdict, h.tier, h.is_watchlist, val.get("levels"),
+        plan_fs = fs if fund["available"] else 50.0   # unknown fundamentals count as neutral, not weak
+        plan = tradeplan.build(hist, tech, fund, plan_fs, ev.verdict, h.tier, h.is_watchlist, val.get("levels"),
                                val.get("fair_value"), events, quote)
         if plan:
             entry = plan["entry"]
             history = analogs.replay(hist, (entry - plan["stop"]) / entry,
                                      (plan["targets"][0]["price"] - entry) / entry, h.tier)
             plan = tradeplan.refine(plan, history, research.get("street"), events, h.tier, not h.is_watchlist,
-                                    tech, fs)
+                                    tech, plan_fs)
         ev.plan = plan
     except Exception as e:
         log.warning("trade plan failed for %s: %s", h.ticker, e)

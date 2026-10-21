@@ -101,6 +101,27 @@ class DataProvider(Protocol):
         ...
 
 
+# Yahoo rate-limits its token ("crumb") when many requests arrive at once, after which quote,
+# fundamentals and analyst requests fail with 401s. Keep only a few requests in flight.
+_YAHOO_SLOTS = threading.BoundedSemaphore(3)
+
+
+def _yahoo(fn):
+    """Throttle a Yahoo call and retry yfinance's 'database is locked' cache error, which
+    happens when several threads open its timezone cache at once."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        for attempt in range(4):
+            with _YAHOO_SLOTS:
+                try:
+                    return fn(*args, **kwargs)
+                except Exception as e:
+                    if "database is locked" not in str(e) or attempt == 3:
+                        raise
+            time.sleep(0.4 * (attempt + 1))
+    return wrapper
+
+
 class YahooProvider:
     """Free data via yfinance. Fine for personal use; not an official feed."""
 
@@ -126,7 +147,9 @@ class YahooProvider:
     def __init__(self):
         import yfinance  # imported lazily so the demo provider works without it
         self._yf = yfinance
+        self._industry: dict[str, str] = {}   # filled by fundamentals(), saves research() an extra lookup
 
+    @_yahoo
     def history(self, ticker: str, period: str = "5y") -> pd.DataFrame:
         df = self._yf.Ticker(ticker).history(period=period, auto_adjust=True)
         if df.empty:
@@ -134,15 +157,22 @@ class YahooProvider:
         df.index = pd.to_datetime(df.index).tz_localize(None)
         return df[["Open", "High", "Low", "Close", "Volume"]]
 
+    @_yahoo
     def fundamentals(self, ticker: str) -> dict:
         info = self._yf.Ticker(ticker).info or {}
         out = {k: info.get(src) for k, src in self._MAP.items()}
+        if sum(v is not None for v in out.values()) < 4:
+            # a blocked request comes back nearly empty; raising keeps it from being cached as real data
+            raise RuntimeError(f"Yahoo returned no fundamentals for {ticker} (likely rate-limited)")
+        if out.get("industry_key"):
+            self._industry[ticker.upper()] = out["industry_key"]
         if out["peg"] is None:
             out["peg"] = info.get("pegRatio")
         if out["debt_to_equity"] is not None:
             out["debt_to_equity"] = out["debt_to_equity"] / 100.0  # Yahoo reports percent
         return out
 
+    @_yahoo
     def events(self, ticker: str) -> dict:
         t = self._yf.Ticker(ticker)
         out = {"earnings_date": None, "news": [], "rating_changes": []}
@@ -169,78 +199,64 @@ class YahooProvider:
             log.info("rating changes failed for %s: %s", ticker, e)
         return out
 
+    @_yahoo
     def research(self, ticker: str) -> dict:
-        return _yahoo_research(self._yf, ticker)
+        return _yahoo_research(self._yf, ticker, self._industry.get(ticker.upper()))
 
+    @_yahoo
     def quote(self, ticker: str) -> dict:
-        """Latest extended-hours price.
+        """Latest extended-hours price from minute bars that include pre/post-market trading.
 
-        The session comes from the New York clock, not Yahoo's marketState, which can lag (it has
-        reported CLOSED well into pre-market). Among the pre-market and after-hours prices in the
-        quote, the newest trade after the regular close wins; during pre-market, minute bars are
-        checked when the quote has no pre-market trade yet."""
+        This uses Yahoo's chart data, which works without the token that Yahoo rate-limits; the
+        quote endpoint (marketState, preMarketPrice) fails with 401s once the token is throttled.
+        The session comes from the New York clock."""
         t = self._yf.Ticker(ticker)
         clock = us_session()
-        errors = []
-        try:
-            info = t.info or {}
-        except Exception as e:
-            info, errors = {}, [f"quote: {e}"]
-        regular = _f(info.get("regularMarketPrice"))
-        reg_t = _when(info.get("regularMarketTime"))
-        picks = []
-        for sess, price_key, time_key in (("pre", "preMarketPrice", "preMarketTime"),
-                                          ("post", "postMarketPrice", "postMarketTime")):
-            price, when = _f(info.get(price_key)), _when(info.get(time_key))
-            if price and (when is None or reg_t is None or when >= reg_t):
-                picks.append((when or datetime.min.replace(tzinfo=timezone.utc), sess, price))
-        session = price = when = None
-        source = "quote"
-        if picks:
-            when, session, price = max(picks)
-        if clock != "REGULAR" and (price is None or (clock == "PRE" and session != "pre")):
-            for period, interval in (("1d", "1m"), ("5d", "5m")):
-                try:
-                    b_sess, b_price, b_when, last_regular = self._extended_from_bars(t, period, interval)
-                except Exception as e:
-                    errors.append(f"{interval} bars: {e}")
-                    continue
-                if b_price is not None and (price is None or b_when > when):
-                    session, price, when, source = b_sess, b_price, b_when, f"{interval} bars"
-                    regular = regular or last_regular
-                if b_price is not None:
-                    break
+        errors, session, price, when, regular, source = [], None, None, None, None, None
+        for period, interval in (("2d", "1m"), ("5d", "5m")):
+            try:
+                b_sess, b_price, b_when, last_regular = self._extended_from_bars(t, period, interval)
+            except Exception as e:
+                errors.append(f"{interval} bars: {e}")
+                continue
+            regular = regular or last_regular
+            if b_price is not None:
+                session, price, when, source = b_sess, b_price, b_when, f"{interval} bars"
+                break
+            if last_regular is not None:
+                break  # bars came back fine; there just isn't an extended-hours trade after the close
         if clock == "REGULAR":
             session = price = when = None   # the regular price is the live price
         if price is None and clock != "REGULAR" and not errors:
-            errors.append("no extended-hours trades reported yet")
-        return {"market_state": clock, "yahoo_state": info.get("marketState"), "regular_price": regular,
-                "ext_session": session, "ext_price": price,
-                "ext_change": price / regular - 1 if price and regular else None,
-                "ext_time": when if when and when.year > 1970 else None,
+            errors.append("no extended-hours trades since the last close")
+        return {"market_state": clock, "regular_price": regular, "ext_session": session, "ext_price": price,
+                "ext_change": price / regular - 1 if price and regular else None, "ext_time": when,
                 # an after-hours price shown during pre-market is last night's
                 "ext_stale": bool(session == "post" and clock == "PRE"),
-                "source": source if price is not None else None, "error": "; ".join(errors) or None,
+                "source": source, "error": "; ".join(errors) or None,
                 "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
 
     @staticmethod
     def _extended_from_bars(t, period: str, interval: str):
-        """Last bar outside regular hours, plus the last regular-session close to compare it with."""
+        """Last bar outside regular hours after the latest regular-session bar, plus that regular close."""
         bars = t.history(period=period, interval=interval, prepost=True)
         if bars.empty:
-            return None, None, None, None
+            raise ValueError("no bars returned")
+        bars = bars.dropna(subset=["Close"])
         idx = bars.index if bars.index.tz is not None else bars.index.tz_localize("UTC")
         sessions = [us_session(ts.to_pydatetime()) for ts in idx]
         regular = [i for i, sess in enumerate(sessions) if sess == "REGULAR"]
         last_regular = float(bars["Close"].iloc[regular[-1]]) if regular else None
         if sessions[-1] not in ("PRE", "POST"):
             return None, None, None, last_regular
-        return sessions[-1].lower(), float(bars["Close"].iloc[-1]), idx[-1].to_pydatetime().astimezone(timezone.utc), last_regular
+        return (sessions[-1].lower(), float(bars["Close"].iloc[-1]),
+                idx[-1].to_pydatetime().astimezone(timezone.utc), last_regular)
 
     def filings(self, ticker: str) -> dict:
         from . import sec
         return sec.fetch(ticker)
 
+    @_yahoo
     def street(self, ticker: str) -> dict:
         return _yahoo_street(self._yf, ticker)
 
@@ -262,6 +278,7 @@ class YahooProvider:
                     continue
         return out
 
+    @_yahoo
     def raw_quote(self, ticker: str) -> dict:
         """Uncached raw quote fields, for the dashboard's diagnostics panel."""
         info = self._yf.Ticker(ticker).info or {}
@@ -337,7 +354,7 @@ def _yahoo_street(yf, ticker: str) -> dict:
     return out
 
 
-def _yahoo_research(yf, ticker: str) -> dict:
+def _yahoo_research(yf, ticker: str, industry_key: str | None = None) -> dict:
     t = yf.Ticker(ticker)
     out: dict = {"earnings": [], "quarterly": [], "annual": [], "insiders": [], "peers": []}
 
@@ -373,9 +390,9 @@ def _yahoo_research(yf, ticker: str) -> dict:
                                         "value": _f(r.get("Value"))})
 
     def peers():
-        key = (t.info or {}).get("industryKey")
+        key = industry_key or (t.info or {}).get("industryKey")
         if key:
-            out["peers"] = [p for p in _industry_leaders(yf, key) if p.upper() != ticker.upper()][:6]
+            out["peers"] = [p for p in _industry_leaders(yf, key) if p.upper() != ticker.upper()][:4]
 
     attempt("earnings history", earnings)
     attempt("quarterly statements", lambda: statements("quarterly", "quarterly", {
@@ -392,15 +409,6 @@ def _industry_leaders(yf, key: str) -> tuple[str, ...]:
     """Industry membership barely changes, so one lookup per industry per process is plenty."""
     top = yf.Industry(key).top_companies
     return tuple(p for p in top.index.tolist() if p) if top is not None else ()
-
-
-def _when(v) -> datetime | None:
-    """Yahoo quote times arrive as epoch seconds (occasionally as formatted text, which isn't comparable)."""
-    if isinstance(v, (int, float)) and v > 0:
-        return datetime.fromtimestamp(v, tz=timezone.utc)
-    if isinstance(v, datetime):
-        return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
-    return None
 
 
 def _f(v) -> float | None:

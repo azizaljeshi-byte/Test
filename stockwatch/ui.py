@@ -236,8 +236,10 @@ def signal_glyph(kind: str) -> str:
     return f'<i class="mc-g" style="color:{OPP if kind == "opportunity" else RISK}">{"▲" if kind == "opportunity" else "▼"}</i>'
 
 
-def _bar(label: str, v: float) -> str:
-    v = 0 if nan(v) else max(0, min(100, v))
+def _bar(label: str, v: float | None) -> str:
+    if nan(v):
+        return f'<div class="mc-bar"><span>{label}</span><i></i><span>—</span></div>'
+    v = max(0, min(100, v))
     return f'<div class="mc-bar"><span>{label}</span><i><u style="width:{v:.0f}%"></u></i><span>{v:.0f}</span></div>'
 
 
@@ -288,7 +290,8 @@ def card(snap: dict) -> str:
             f'<span class="mc-name">{escape(name)}</span></div>'
             f'<span class="mc-chip" style="--c:{color}"><b>{glyph}</b> {escape(snap["verdict"])}</span></div>'
             f'<div class="mc-px">{num(snap["price"])}{day_html}</div>'
-            f'{_bar("FUND", snap["fundamental_score"])}{_bar("TECH", snap["technical_score"])}{_bar("Σ ALL", snap["composite"])}'
+            f'{_bar("FUND", snap["fundamental_score"] if p.get("fundamental", {}).get("available", True) else None)}'
+            f'{_bar("TECH", snap["technical_score"])}{_bar("Σ ALL", snap["composite"])}'
             f'<div class="mc-meta">{"".join(f"<span>{m}</span>" for m in meta)}</div>{sig}{plan_line(p.get("plan"))}</div></a>')
 
 

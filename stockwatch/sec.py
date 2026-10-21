@@ -128,6 +128,15 @@ def describe(f: dict) -> str:
     return f"{f['form']}: {names.get(f['form'], f.get('description') or 'filing')}"
 
 
+COMMON_SPLITS = (2, 3, 4, 5, 6, 8, 10, 15, 20, 25, 30, 40, 50)
+
+
+def _split_ratio(growth: float) -> int | None:
+    """A share-count jump that lands on a common split ratio (allowing a little real dilution on
+    top) is treated as a split. Real dilution rarely produces an exact multiple."""
+    return next((r for r in COMMON_SPLITS if r * 0.97 <= growth <= r * 1.05), None)
+
+
 def analyze(data: dict, market_cap: float | None = None, today: date | None = None) -> tuple[dict, list[Signal]]:
     today = today or date.today()
     out: list[Signal] = []
@@ -169,6 +178,11 @@ def analyze(data: dict, market_cap: float | None = None, today: date | None = No
         if year_ago and year_ago["value"]:
             ch = latest["value"] / year_ago["value"] - 1
             m["shares_change_1y"] = ch
+            split = _split_ratio(latest["value"] / year_ago["value"])
+            if split:
+                # SEC share counts aren't split-adjusted: a 10-for-1 split looks like +900%
+                m["split"] = split
+                m["shares_change_1y"] = ch = latest["value"] / (year_ago["value"] * split) - 1
             if ch >= 0.10:
                 out.append(Signal(RISK, "sec", "dilution", f"Share count up {ch:.0%} in a year - holders are being diluted", 2))
             elif ch >= 0.05:

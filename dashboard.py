@@ -435,10 +435,12 @@ if view == "log":
             ("Ticker list", "Google Sheet" if base.sheet_url else "secret / YAML + app edits"),
             ("Tickers", len(tickers)),
         ]) + "</div>", unsafe_allow_html=True)
-        st.caption("Extended-hours quote status per stock (from the last refresh):")
-        st.markdown(ui.table(["Ticker", "Session", "Yahoo says", "Ext price", "Type", "Source", "Fetched (UTC)", "Problem"], [
-            [x["ticker"], q.get("market_state") or "—", q.get("yahoo_state") or "—", ui.num(q.get("ext_price")),
+        st.caption("Extended-hours prices come from minute bars, which keep working when Yahoo rate-limits the app. "
+                   "'Blocked' fundamentals mean Yahoo refused the request; they're retried on the next sweep.")
+        st.markdown(ui.table(["Ticker", "Session", "Ext price", "Type", "Source", "Fundamentals", "Fetched (UTC)", "Problem"], [
+            [x["ticker"], q.get("market_state") or "—", ui.num(q.get("ext_price")),
              (q.get("ext_session") or "—") + (" (last night)" if q.get("ext_stale") else ""), q.get("source") or "—",
+             "ok" if (x["payload"].get("fundamental") or {}).get("available", True) else "blocked",
              (q.get("fetched_at") or "—")[11:19], (q.get("error") or "")[:60]]
             for x in snaps for q in [x["payload"].get("quote") or {}]]), unsafe_allow_html=True)
         probe = st.text_input("Test a live quote", value=next(iter(sorted(tickers)), "AAPL"), key="probe").strip().upper()

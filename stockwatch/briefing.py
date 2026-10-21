@@ -45,7 +45,11 @@ def stock(snap: dict, prev: dict | None = None) -> dict:
     pillars = {k: f.get(f"pillar_{k}") for k in ("valuation", "growth", "quality", "balance")}
     pillars = {k: v for k, v in pillars.items() if _ok(v)}
     fs = snap["fundamental_score"]
-    line = f"Fundamentals are {_band(fs)} ({fs:.0f}/100)"
+    if f.get("available") is False:
+        line = "Fundamentals are unavailable right now (Yahoo didn't return them), so this read is price action only"
+        pillars = {}
+    else:
+        line = f"Fundamentals are {_band(fs)} ({fs:.0f}/100)"
     if len(pillars) >= 2:
         best, worst = max(pillars, key=pillars.get), min(pillars, key=pillars.get)
         line += f": best on {best} ({pillars[best]:.0f}), weakest on {worst} ({pillars[worst]:.0f})"
