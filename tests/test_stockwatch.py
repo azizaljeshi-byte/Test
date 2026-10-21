@@ -907,3 +907,25 @@ def test_card_shows_live_price_during_regular_hours():
     assert "104.50" in html and "+4.5%" in html and "LIVE 15:42" in html and ">100.00" not in html
     snap["payload"]["quote"] = {"market_state": "CLOSED"}
     assert "100.00" in ui.card(snap) and "LIVE" not in ui.card(snap)
+
+
+def test_bulk_quotes_split_one_download_per_ticker(monkeypatch):
+    _clock(monkeypatch, "PRE")
+    one = _bars(("2026-10-21 15:59", 50.0), ("2026-10-22 06:05", 52.0))
+    two = _bars(("2026-10-21 15:59", 10.0))
+    df = pd.concat({"AAA": one, "BBB": two}, axis=1)
+    calls = []
+
+    class YF:
+        @staticmethod
+        def download(tickers, **kw):
+            calls.append((tuple(tickers), kw["interval"], kw["prepost"]))
+            return df
+
+    yp = YahooProvider.__new__(YahooProvider)
+    yp._yf, yp._industry = YF, {}
+    q = yp.bulk_quotes(["AAA", "BBB", "CCC"])
+    assert calls == [(("AAA", "BBB", "CCC"), "1m", True)]                       # one request for all
+    assert q["AAA"]["ext_session"] == "pre" and abs(q["AAA"]["ext_change"] - 0.04) < 1e-9
+    assert q["BBB"]["ext_price"] is None and "no extended-hours trades" in q["BBB"]["error"]
+    assert q["CCC"]["error"] == "not in the bulk download"

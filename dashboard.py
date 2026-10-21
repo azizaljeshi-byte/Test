@@ -66,13 +66,15 @@ def scan_now():
     st.session_state.last_auto = time.time()
 
 
-# whenever the market is trading, keep prices fresh without waiting for a full sweep
-if us_session() != "CLOSED" and tickers:
+# whenever the market is trading, freshen prices once when the page opens; after that the 2-minute
+# background refresh keeps them current, so taps and filters never wait on a price download
+if us_session() != "CLOSED" and tickers and not st.session_state.get("prices_checked"):
+    st.session_state.prices_checked = True
     fetched = [((x["payload"].get("quote") or {}).get("fetched_at") or "") for x in store.latest_snapshots()
                if x["ticker"] in tickers]
-    stale_before = datetime.now(NY).astimezone().timestamp() - 180
+    stale_before = time.time() - 180
     if fetched and any(not f or datetime.fromisoformat(f).timestamp() < stale_before for f in fetched):
-        with st.spinner("Updating pre-market / after-hours prices..."):
+        with st.spinner("Updating live prices..."):
             refresh_quotes(portfolio, data, store)
 
 snaps = [s for s in store.latest_snapshots() if s["ticker"] in tickers]
@@ -185,8 +187,9 @@ if view != current:
 # ---------------------------------------------------------------- radar
 prevs = {s["ticker"]: store.previous_snapshot(s["ticker"]) for s in snaps}
 
-if view == "radar":
-    st.markdown(ui.mission_brief(briefing.portfolio(snaps, prevs, reg), tickers), unsafe_allow_html=True)
+@st.fragment
+def radar_list(snaps: list[dict]):
+    """Filter + cards. A fragment, so tapping a filter redraws only this part of the page."""
     # filters follow the verdict shown on each card, so every card in a filter shows that status
     groups = {
         "Risk": lambda x: x["verdict"] in ("RISK - REVIEW", "TRIM / REVIEW", "AVOID"),
@@ -203,7 +206,13 @@ if view == "radar":
     shown = sorted(snaps, key=ui.urgency)
     if choice in groups:
         shown = [x for x in shown if groups[choice](x)]
-    st.markdown(ui.cards(shown) if shown else '<div class="mc-d">no targets match</div>', unsafe_allow_html=True)
+    st.markdown(ui.cards(shown) if shown else '<div class="mc-d">No stocks with this status right now.</div>',
+                unsafe_allow_html=True)
+
+
+if view == "radar":
+    st.markdown(ui.mission_brief(briefing.portfolio(snaps, prevs, reg), tickers), unsafe_allow_html=True)
+    radar_list(snaps)
 
 # ---------------------------------------------------------------- target detail
 if view == "target":

@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from . import notify
@@ -32,17 +31,20 @@ def run_once(portfolio, provider, store: Store) -> list[Evaluation]:
 
 
 def refresh_quotes(portfolio, provider, store: Store) -> int:
-    """Fast path for pre-market / after-hours: refresh only the extended-hours quotes."""
-    def one(h):
-        try:
-            return h.ticker, provider.quote(h.ticker)
-        except Exception as e:
-            return h.ticker, {"error": str(e), "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        quotes = list(pool.map(one, portfolio.holdings))
-    for ticker, q in quotes:
+    """Fast path between sweeps: refresh only the live / extended-hours quotes, in one bulk request
+    when the provider supports it."""
+    tickers = [h.ticker for h in portfolio.holdings]
+    try:
+        if hasattr(provider, "bulk_quotes"):
+            quotes = provider.bulk_quotes(tickers)
+        else:
+            quotes = {t: provider.quote(t) for t in tickers}
+    except Exception as e:
+        stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        quotes = {t: {"error": str(e), "fetched_at": stamp} for t in tickers}
+    for ticker, q in quotes.items():
         store.update_quote(ticker, q)
-    return sum(1 for _, q in quotes if q.get("ext_price") is not None)
+    return sum(1 for q in quotes.values() if q.get("ext_price") is not None or q.get("live_price") is not None)
 
 
 def main(argv=None):

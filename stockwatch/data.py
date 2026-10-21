@@ -212,57 +212,31 @@ class YahooProvider:
         data, which works without the token that Yahoo rate-limits. The session comes from
         the New York clock."""
         t = self._yf.Ticker(ticker)
-        clock = us_session()
-        errors, bars, source = [], None, None
-        for period, interval in (("5d", "1m"), ("5d", "5m")):
+        errors = []
+        for interval in ("1m", "5m"):
             try:
-                bars = self._bar_summary(t, period, interval)
-                source = f"{interval} bars"
-                break
+                bars = t.history(period="5d", interval=interval, prepost=True)
+                if bars.empty:
+                    raise ValueError("no bars returned")
+                return _quote_from_bars(bars, f"{interval} bars", errors)
             except Exception as e:
                 errors.append(f"{interval} bars: {e}")
-        out = {"market_state": clock, "ext_session": None, "ext_price": None, "ext_change": None, "ext_time": None,
-               "ext_stale": False, "live_price": None, "live_change": None, "live_time": None,
-               "regular_price": None, "source": source if bars else None,
-               "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-        if bars:
-            out["regular_price"] = bars["last_regular"]
-            if clock == "REGULAR" and bars["last_session"] == "REGULAR":
-                out["live_price"], out["live_time"] = bars["last_close"], bars["last_time"]
-                if bars["prev_regular"]:
-                    out["live_change"] = bars["last_close"] / bars["prev_regular"] - 1
-            elif clock != "REGULAR" and bars["last_session"] in ("PRE", "POST"):
-                sess = bars["last_session"].lower()
-                out.update(ext_session=sess, ext_price=bars["last_close"], ext_time=bars["last_time"],
-                           ext_stale=sess == "post" and clock == "PRE")
-                if bars["last_regular"]:
-                    out["ext_change"] = bars["last_close"] / bars["last_regular"] - 1
-            elif clock != "REGULAR":
-                errors.append("no extended-hours trades since the last close")
-        out["error"] = "; ".join(errors) or None
-        return out
+        return _quote_from_bars(None, None, errors)
 
-    @staticmethod
-    def _bar_summary(t, period: str, interval: str) -> dict:
-        """Latest bar and its session, the latest regular-session close, and the regular close
-        of the trading day before it (for today's change)."""
-        bars = t.history(period=period, interval=interval, prepost=True)
-        if bars.empty:
-            raise ValueError("no bars returned")
-        bars = bars.dropna(subset=["Close"])
-        idx = bars.index if bars.index.tz is not None else bars.index.tz_localize("UTC")
-        sessions = [us_session(ts.to_pydatetime()) for ts in idx]
-        regular = [i for i, sess in enumerate(sessions) if sess == "REGULAR"]
-        last_regular = prev_regular = None
-        if regular:
-            last_i = regular[-1]
-            last_regular = float(bars["Close"].iloc[last_i])
-            day = idx[last_i].tz_convert(NY).date()
-            earlier = [i for i in regular if idx[i].tz_convert(NY).date() < day]
-            prev_regular = float(bars["Close"].iloc[earlier[-1]]) if earlier else None
-        return {"last_close": float(bars["Close"].iloc[-1]), "last_session": sessions[-1],
-                "last_time": idx[-1].to_pydatetime().astimezone(timezone.utc),
-                "last_regular": last_regular, "prev_regular": prev_regular}
+    @_yahoo
+    def bulk_quotes(self, tickers: list[str]) -> dict[str, dict]:
+        """Quotes for many tickers from one download, so a refresh takes seconds, not minutes."""
+        df = self._yf.download(list(tickers), period="5d", interval="1m", prepost=True, group_by="ticker",
+                               threads=True, progress=False, auto_adjust=False)
+        out = {}
+        for t in tickers:
+            try:
+                sub = df[t] if len(tickers) > 1 else df
+                out[t] = _quote_from_bars(sub if not sub.dropna(how="all").empty else None, "1m bars",
+                                          [] if not sub.dropna(how="all").empty else ["no bars returned"])
+            except KeyError:
+                out[t] = _quote_from_bars(None, None, ["not in the bulk download"])
+        return out
 
     def filings(self, ticker: str) -> dict:
         from . import sec
@@ -427,6 +401,58 @@ def _industry_leaders(yf, key: str) -> tuple[str, ...]:
     return tuple(p for p in top.index.tolist() if p) if top is not None else ()
 
 
+def _bar_summary(bars: pd.DataFrame) -> dict:
+    """Latest bar and its session, the latest regular-session close, and the regular close
+    of the trading day before it (for today's change)."""
+    bars = bars.dropna(subset=["Close"])
+    if bars.empty:
+        raise ValueError("no bars returned")
+    idx = bars.index if bars.index.tz is not None else bars.index.tz_localize("UTC")
+    sessions = [us_session(ts.to_pydatetime()) for ts in idx]
+    regular = [i for i, sess in enumerate(sessions) if sess == "REGULAR"]
+    last_regular = prev_regular = None
+    if regular:
+        last_i = regular[-1]
+        last_regular = float(bars["Close"].iloc[last_i])
+        day = idx[last_i].tz_convert(NY).date()
+        earlier = [i for i in regular if idx[i].tz_convert(NY).date() < day]
+        prev_regular = float(bars["Close"].iloc[earlier[-1]]) if earlier else None
+    return {"last_close": float(bars["Close"].iloc[-1]), "last_session": sessions[-1],
+            "last_time": idx[-1].to_pydatetime().astimezone(timezone.utc),
+            "last_regular": last_regular, "prev_regular": prev_regular}
+
+
+def _quote_from_bars(bars: pd.DataFrame | None, source: str | None, errors: list[str]) -> dict:
+    clock = us_session()
+    out = {"market_state": clock, "ext_session": None, "ext_price": None, "ext_change": None, "ext_time": None,
+           "ext_stale": False, "live_price": None, "live_change": None, "live_time": None,
+           "regular_price": None, "source": None,
+           "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    summary = None
+    if bars is not None:
+        try:
+            summary = _bar_summary(bars)
+            out["source"] = source
+        except Exception as e:
+            errors = errors + [f"{source}: {e}"]
+    if summary:
+        out["regular_price"] = summary["last_regular"]
+        if clock == "REGULAR" and summary["last_session"] == "REGULAR":
+            out["live_price"], out["live_time"] = summary["last_close"], summary["last_time"]
+            if summary["prev_regular"]:
+                out["live_change"] = summary["last_close"] / summary["prev_regular"] - 1
+        elif clock != "REGULAR" and summary["last_session"] in ("PRE", "POST"):
+            sess = summary["last_session"].lower()
+            out.update(ext_session=sess, ext_price=summary["last_close"], ext_time=summary["last_time"],
+                       ext_stale=sess == "post" and clock == "PRE")
+            if summary["last_regular"]:
+                out["ext_change"] = summary["last_close"] / summary["last_regular"] - 1
+        elif clock != "REGULAR":
+            errors = errors + ["no extended-hours trades since the last close"]
+    out["error"] = "; ".join(errors) or None
+    return out
+
+
 def _f(v) -> float | None:
     try:
         v = float(v)
@@ -564,6 +590,9 @@ class DemoProvider:
         from . import sec
         return sec.demo(ticker)
 
+    def bulk_quotes(self, tickers: list[str]) -> dict[str, dict]:
+        return {t: self.quote(t) for t in tickers}
+
     def bulk_history(self, tickers: tuple[str, ...], period: str = "2y") -> dict[str, pd.DataFrame]:
         return {t: self.history(t).iloc[-504:] for t in tickers}
 
@@ -667,6 +696,12 @@ class CachedProvider:
 
     def quote(self, ticker: str) -> dict:
         return self._get("quote", ticker)
+
+    def bulk_quotes(self, tickers: list[str]) -> dict[str, dict]:
+        """Not cached: it's the explicit 'refresh prices now' path."""
+        if hasattr(self.inner, "bulk_quotes"):
+            return self.inner.bulk_quotes(list(tickers))
+        return {t: self.quote(t) for t in tickers}
 
     def filings(self, ticker: str) -> dict:
         return self._get("filings", ticker)
