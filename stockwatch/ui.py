@@ -87,7 +87,7 @@ a.mc-a:hover .mc-card { border-color:var(--c); transform:translateY(-1px); box-s
 .mc-chip b { color:var(--c); font-weight:600; }
 .mc-px { font-family:var(--mono); font-size:.92rem; color:var(--ink); margin:.45rem 0 .45rem; }
 .mc-px small { color:var(--muted); font-size:.74rem; }
-.mc-bar { display:grid; grid-template-columns:3.4rem 1fr 1.8rem; align-items:center; gap:.45rem; font-size:.66rem;
+.mc-bar { display:grid; grid-template-columns:4.2rem 1fr 1.8rem; align-items:center; gap:.45rem; font-size:.66rem;
   color:var(--muted); margin:.16rem 0; font-family:var(--mono); }
 .mc-bar i { display:block; height:5px; border-radius:3px; background:rgba(54,197,240,.12); overflow:hidden; }
 .mc-bar i u { display:block; height:100%; border-radius:3px; background:linear-gradient(90deg, rgba(54,197,240,.55), var(--info)); }
@@ -271,7 +271,7 @@ def card(snap: dict) -> str:
     if not nan(t.get("rsi")):
         meta.append(f"RSI <b>{t['rsi']:.0f}</b>")
     if ev.get("days_to_earnings") is not None:
-        meta.append(f"EARNINGS <b>T-{ev['days_to_earnings']}D</b>")
+        meta.append(f"EARNINGS <b>{'~' if ev.get('earnings_estimated') else ''}T-{ev['days_to_earnings']}D</b>")
     if ev.get("news_today"):
         meta.append(f"NEWS TODAY <b>{ev['news_today']}</b>")
     if p["position"].get("weight_pct"):
@@ -290,7 +290,7 @@ def card(snap: dict) -> str:
             f'<span class="mc-name">{escape(name)}</span></div>'
             f'<span class="mc-chip" style="--c:{color}"><b>{glyph}</b> {escape(snap["verdict"])}</span></div>'
             f'<div class="mc-px">{num(snap["price"])}{day_html}</div>'
-            f'{_bar("FUND", snap["fundamental_score"] if p.get("fundamental", {}).get("available", True) else None)}'
+            f'{_bar("FUND·SEC" if p.get("fundamental", {}).get("source") == "SEC filings" else "FUND", snap["fundamental_score"] if p.get("fundamental", {}).get("available", True) else None)}'
             f'{_bar("TECH", snap["technical_score"])}{_bar("Σ ALL", snap["composite"])}'
             f'<div class="mc-meta">{"".join(f"<span>{m}</span>" for m in meta)}</div>{sig}{plan_line(p.get("plan"))}</div></a>')
 

@@ -49,7 +49,7 @@ def stock(snap: dict, prev: dict | None = None) -> dict:
         line = "Fundamentals are unavailable right now (Yahoo didn't return them), so this read is price action only"
         pillars = {}
     else:
-        line = f"Fundamentals are {_band(fs)} ({fs:.0f}/100)"
+        line = f"Fundamentals are {_band(fs)} ({fs:.0f}/100" + (", from SEC filings" if f.get("source") == "SEC filings" else "") + ")"
     if len(pillars) >= 2:
         best, worst = max(pillars, key=pillars.get), min(pillars, key=pillars.get)
         line += f": best on {best} ({pillars[best]:.0f}), weakest on {worst} ({pillars[worst]:.0f})"
@@ -104,7 +104,8 @@ def stock(snap: dict, prev: dict | None = None) -> dict:
         watch.append(f"{label} it is trading at {q['ext_price']:.2f} ({q['ext_change'] * 100:+.1f}% vs the last close); "
                      "the scores above use regular-session prices.")
     if ev.get("earnings_date"):
-        line = f"Earnings on {ev['earnings_date']} ({ev['days_to_earnings']} days)"
+        line = (f"Earnings around {ev['earnings_date']} (~{ev['days_to_earnings']} days, estimated from past filings)"
+                if ev.get("earnings_estimated") else f"Earnings on {ev['earnings_date']} ({ev['days_to_earnings']} days)")
         if _ok(earn.get("avg_move")):
             line += f"; it has moved about {earn['avg_move'] * 100:.0f}% on recent report days"
         if earn.get("reported"):

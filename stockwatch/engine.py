@@ -184,6 +184,13 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
             log.warning("fundamentals failed for %s: %s", h.ticker, e)
             f = {}
         fs, fund, fund_sig = fundamental.analyze(f, price)
+        if (fund.get("coverage") or 0) < MIN_FUND_COVERAGE:
+            # Yahoo refused or returned too little: compute fundamentals from the company's SEC filings
+            facts = _optional(provider.sec_facts, h.ticker) if hasattr(provider, "sec_facts") else None
+            if facts:
+                f = {**sec.derive(facts, price), **{k: v for k, v in f.items() if v is not None}}
+                fs, fund, fund_sig = fundamental.analyze(f, price)
+                fund["source"] = "SEC filings"
     except Exception as e:
         log.exception("evaluation failed for %s", h.ticker)
         return Evaluation(h.ticker, h.tier, h.is_watchlist, float("nan"), 0, 0, 0, "ERROR", [], {}, {}, error=str(e))
@@ -203,8 +210,14 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
     quote = _optional(provider.quote, h.ticker) or {}
     ext_sig = _extended_hours(quote, h.is_watchlist)
 
+    raw_sec = None if light else _optional(provider.filings, h.ticker)
     raw_events = _optional(provider.events, h.ticker) or {}
+    if not raw_events.get("earnings_date") and raw_sec:
+        estimate = sec.estimate_next_earnings(raw_sec.get("filings") or [])
+        if estimate:
+            raw_events = {**raw_events, "earnings_date": estimate, "earnings_estimated": True}
     events, event_sig = catalysts.analyze(raw_events, owned=not h.is_watchlist, tier=h.tier)
+    events["earnings_estimated"] = bool(raw_events.get("earnings_estimated"))
 
     # deep research is informational: it adds signals but doesn't move the scores
     raw = {} if light else (_optional(provider.research, h.ticker) or {})
@@ -230,7 +243,6 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
         except Exception as e:
             log.warning("street analysis failed for %s: %s", h.ticker, e)
 
-    raw_sec = None if light else _optional(provider.filings, h.ticker)
     if raw_sec:
         try:
             research["sec"], sec_sig = sec.analyze(raw_sec, f.get("market_cap"))
@@ -246,7 +258,7 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
     else:
         composite = ts
         confluence = [Signal(RISK, "fundamental", "fundamentals_unavailable",
-                             "Fundamentals unavailable right now (Yahoo didn't return them); "
+                             "Fundamentals unavailable right now (neither Yahoo nor SEC filings returned enough); "
                              "this verdict is based on price action only", 1)]
     pos, pos_sig = _position(h, price, tech, rules)
     signals = (tech_sig + rs_sig + fund_sig + confluence

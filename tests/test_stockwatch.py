@@ -800,3 +800,77 @@ def test_unavailable_fundamentals_are_unknown_not_bad():
     assert ev.fundamental["available"] is False and ev.composite == ev.technical_score
     assert "fundamentals_unavailable" in codes
     assert not {"thesis_breakdown", "core_fundamentals_weak"} & codes
+
+
+# ---- fundamentals from SEC filings (fallback when Yahoo refuses)
+
+def _fact(start, end, val, form="10-Q", filed=None):
+    return {"start": start, "end": end, "val": val, "form": form, "filed": filed or end}
+
+
+SEC_COMPANY = {"entityName": "Example Corp", "facts": {
+    "dei": {"EntityCommonStockSharesOutstanding": {"units": {"shares": [
+        {"end": "2026-07-25", "val": 100e6, "form": "10-Q", "filed": "2026-08-01"}]}}},
+    "us-gaap": {
+        # fiscal year = calendar year; latest filing is the Q2 10-Q (6-month YTD and 3-month figures)
+        "Revenues": {"units": {"USD": [
+            _fact("2024-01-01", "2024-12-31", 800e6, "10-K"), _fact("2025-01-01", "2025-12-31", 1000e6, "10-K"),
+            _fact("2025-01-01", "2025-06-30", 450e6), _fact("2025-04-01", "2025-06-30", 230e6),
+            _fact("2026-01-01", "2026-06-30", 600e6), _fact("2026-04-01", "2026-06-30", 310e6)]}},
+        "NetIncomeLoss": {"units": {"USD": [
+            _fact("2025-01-01", "2025-12-31", 100e6, "10-K"), _fact("2025-01-01", "2025-06-30", 40e6),
+            _fact("2026-01-01", "2026-06-30", 60e6)]}},
+        "OperatingIncomeLoss": {"units": {"USD": [
+            _fact("2025-01-01", "2025-12-31", 150e6, "10-K"), _fact("2025-01-01", "2025-06-30", 60e6),
+            _fact("2026-01-01", "2026-06-30", 90e6)]}},
+        "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": [
+            _fact("2025-01-01", "2025-12-31", 200e6, "10-K"), _fact("2025-01-01", "2025-06-30", 90e6),
+            _fact("2026-01-01", "2026-06-30", 110e6)]}},
+        "PaymentsToAcquirePropertyPlantAndEquipment": {"units": {"USD": [
+            _fact("2025-01-01", "2025-12-31", 50e6, "10-K"), _fact("2025-01-01", "2025-06-30", 20e6),
+            _fact("2026-01-01", "2026-06-30", 30e6)]}},
+        "StockholdersEquity": {"units": {"USD": [{"end": "2026-06-30", "val": 500e6, "form": "10-Q", "filed": "2026-08-01"}]}},
+        "AssetsCurrent": {"units": {"USD": [{"end": "2026-06-30", "val": 300e6, "form": "10-Q"}]}},
+        "LiabilitiesCurrent": {"units": {"USD": [{"end": "2026-06-30", "val": 150e6, "form": "10-Q"}]}},
+        "LongTermDebtNoncurrent": {"units": {"USD": [{"end": "2026-06-30", "val": 200e6, "form": "10-Q"}]}},
+    }}}
+
+
+def test_sec_facts_trailing_twelve_months_and_growth(monkeypatch):
+    monkeypatch.setattr(sec, "cik_for", lambda t: 123)
+    monkeypatch.setattr(sec, "_get", lambda url: SEC_COMPANY)
+    f = sec.fetch_facts("EXM")
+    assert f["revenue"] == pytest.approx(1150e6)               # 600 YTD + 1000 FY - 450 prior YTD
+    assert f["revenue_growth"] == pytest.approx(600 / 450 - 1)
+    assert f["net_income"] == pytest.approx(120e6) and f["net_income_growth"] == pytest.approx(0.5)
+    assert f["operating_cash_flow"] == pytest.approx(220e6) and f["capex"] == pytest.approx(60e6)
+    assert f["shares"] == 100e6 and f["equity"] == 500e6
+    d = sec.derive(f, price=24.0)
+    assert d["market_cap"] == pytest.approx(2.4e9) and d["pe_trailing"] == pytest.approx(20.0)
+    assert d["operating_margin"] == pytest.approx(180e6 / 1150e6)   # 90 YTD + 150 FY - 60 prior YTD and d["free_cash_flow"] == pytest.approx(160e6)
+    assert d["debt_to_equity"] == pytest.approx(0.4) and d["current_ratio"] == pytest.approx(2.0)
+    assert d["roe"] == pytest.approx(0.24) and d["source"] == "SEC filings"
+
+
+def test_engine_falls_back_to_sec_fundamentals_when_yahoo_refuses(monkeypatch):
+    monkeypatch.setattr(sec, "cik_for", lambda t: 123)
+    monkeypatch.setattr(sec, "_get", lambda url: SEC_COMPANY)
+
+    class Blocked(FixedProvider):
+        def fundamentals(self, ticker):
+            raise RuntimeError("Yahoo returned no fundamentals (likely rate-limited)")
+
+        def sec_facts(self, ticker):
+            return sec.fetch_facts(ticker)
+
+    ev = evaluate(Holding("EXM", 1, 10), make_portfolio(), Blocked(frame(np.linspace(20, 24, 300)), {}))
+    assert ev.fundamental["available"] and ev.fundamental["source"] == "SEC filings"
+    assert ev.composite != ev.technical_score and "fundamentals_unavailable" not in {s.code for s in ev.signals}
+
+
+def test_estimate_next_earnings_from_results_filings():
+    filings = [{"form": "8-K", "date": "2025-10-28", "items": "2.02,9.01"},
+               {"form": "8-K", "date": "2026-07-29", "items": "2.02"},
+               {"form": "8-K", "date": "2026-08-05", "items": "5.02"}]
+    assert sec.estimate_next_earnings(filings, today=date(2026, 10, 21)) == date(2026, 10, 27)
+    assert sec.estimate_next_earnings([], today=date(2026, 10, 21)) is None

@@ -278,6 +278,10 @@ class YahooProvider:
                     continue
         return out
 
+    def sec_facts(self, ticker: str) -> dict:
+        from . import sec
+        return sec.fetch_facts(ticker)
+
     @_yahoo
     def raw_quote(self, ticker: str) -> dict:
         """Uncached raw quote fields, for the dashboard's diagnostics panel."""
@@ -607,7 +611,8 @@ class CachedProvider:
     so they're kept longer, which also keeps the Yahoo request count down."""
 
     TTL = {"history": 300, "fundamentals": 6 * 3600, "events": 3600, "research": 12 * 3600, "quote": 60,
-           "filings": 3 * 3600, "bulk_history": 900, "street": 3 * 3600}
+           "filings": 3 * 3600, "bulk_history": 900, "street": 3 * 3600,
+           "sec_facts": 24 * 3600}
 
     def __init__(self, inner: DataProvider):
         self.inner = inner
@@ -655,6 +660,11 @@ class CachedProvider:
 
     def street(self, ticker: str) -> dict:
         return self._get("street", ticker)
+
+    def sec_facts(self, ticker: str) -> dict:
+        if not hasattr(self.inner, "sec_facts"):
+            raise NotImplementedError
+        return self._get("sec_facts", ticker)
 
 
 def get_provider(name: str) -> DataProvider:
