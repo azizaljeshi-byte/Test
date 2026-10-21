@@ -58,6 +58,18 @@ The dashboard also shows the market as RISK-ON / CAUTION / RISK-OFF, based on SP
 - **Analyst moves:** upgrades, downgrades and Buy initiations from the last 10 days.
 - **News:** headlines from the last 72 hours are checked for keywords. "Offering", "fraud" and "delisting" count as serious; "beats" and "raises guidance" count as positive. This is keyword matching, so treat it as a prompt to read the headline, not as sentiment analysis.
 
+**Deep research** (`stockwatch/deepdive.py`). This adds information and low-urgency signals but doesn't change the scores.
+- **Earnings track record:** the last 4 quarters' EPS against estimates, the current beat streak, and how the stock moved on each report day. The free data has no report dates, so the report day is estimated as the heaviest-volume session after each quarter closed. Also shows the revenue and margin trend over the last 5 quarters.
+- **Smart money:** insider buying and selling over 90 days (open-market trades only), insider and institutional ownership, short interest as a % of float, days to cover, and the change since last month.
+- **Valuation in context:**
+  - P/E compared with the stock's own year-end history and with its industry leaders.
+  - A fair-value range from three methods: analyst targets, own-history P/E and peer P/E. Methods that land implausibly far from the price are dropped, which usually means a stock split distorted the EPS history.
+  - Nearest support and resistance, taken from swing highs and lows over the last year.
+
+**Briefings** (`stockwatch/briefing.py`):
+- **Each stock** gets a plain-English summary: why it has its verdict, what changed since the last scan, and what to watch next (earnings, key levels, the 200-day trigger, fair value, stops).
+- **The Radar tab** opens with a portfolio-level mission brief.
+
 **Position checks:** stop-loss vs cost, halfway-to-stop warning, target price reached, concentration.
 
 **Verdicts:** `OPPORTUNITY - ADD`, `STRONG HOLD`, `HOLD`, `TRIM / REVIEW`, `RISK - REVIEW`.

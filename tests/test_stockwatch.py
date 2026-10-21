@@ -27,13 +27,16 @@ class FixedProvider:
     def __init__(self, df, fundamentals):
         self.df, self.f = df, fundamentals
 
-    def history(self, ticker, period="2y"):
+    def history(self, ticker, period="5y"):
         return self.df
 
     def fundamentals(self, ticker):
         return self.f
 
     def events(self, ticker):
+        return {}
+
+    def research(self, ticker):
         return {}
 
 
@@ -100,7 +103,7 @@ def test_watchlist_has_no_position_signals():
 
 def test_scan_concentration_and_errors():
     class Broken(DemoProvider):
-        def history(self, ticker, period="2y"):
+        def history(self, ticker, period="5y"):
             if ticker == "BAD":
                 raise ValueError("no data")
             return super().history(ticker, period)
@@ -201,7 +204,7 @@ def test_cached_provider_dedupes_and_does_not_cache_errors():
     calls = []
 
     class Inner(DemoProvider):
-        def history(self, ticker, period="2y"):
+        def history(self, ticker, period="5y"):
             calls.append(ticker)
             if ticker == "BAD":
                 raise ValueError("boom")
@@ -235,3 +238,91 @@ def test_to_yaml_round_trips(tmp_path, monkeypatch):
     monkeypatch.setenv("STOCKWATCH_PORTFOLIO", to_yaml(p))
     back = {h.ticker: h for h in load_portfolio().holdings}
     assert back["AAA"].cost_basis == 50.0 and back["WWW"].is_watchlist
+
+
+# ---- deep research and briefings
+
+from stockwatch import briefing, deepdive
+
+
+def test_earnings_track_streaks_trends_and_reaction():
+    idx = pd.bdate_range("2025-01-01", periods=400)
+    vol = np.full(400, 1e6)
+    close = np.linspace(100, 120, 400)
+    spike = idx.get_loc(idx[idx >= pd.Timestamp("2025-10-28")][0])
+    vol[spike] = 9e6
+    close[spike:] *= 1.08
+    hist = pd.DataFrame({"Open": close, "High": close, "Low": close, "Close": close, "Volume": vol}, index=idx)
+    q = [date(2025, 9, 30), date(2025, 6, 30), date(2025, 3, 31), date(2024, 12, 31)]
+    research = {
+        "earnings": [{"quarter": d, "eps_actual": 1.1, "eps_estimate": 1.0, "surprise_pct": 0.1} for d in q],
+        "quarterly": [{"period": d, "revenue": r, "gross_profit": r * 0.5, "operating_income": r * om, "net_income": 0}
+                      for d, r, om in zip(q + [date(2024, 9, 30)], [140, 130, 120, 110, 100], [0.3, 0.25, 0.2, 0.2, 0.2])],
+    }
+    m, sig = deepdive.earnings_track(research, hist)
+    codes = {s.code for s in sig}
+    assert m["beat_streak"] == 4 and {"beat_streak", "revenue_rising", "margin_expanding"} <= codes
+    assert m["quarters"][0]["report_day"] == "2025-10-28" and abs(m["quarters"][0]["reaction"] - 0.08) < 0.01
+    assert abs(m["revenue_yoy_latest"] - 0.4) < 1e-9
+
+
+def test_smart_money_insiders_and_shorts():
+    now = datetime.now()
+    research = {"insiders": [
+        {"date": now - timedelta(days=5), "insider": "A", "text": "Purchase at price 10", "value": 200_000},
+        {"date": now - timedelta(days=9), "insider": "B", "text": "Purchase at price 11", "value": 100_000},
+        {"date": now - timedelta(days=3), "insider": "C", "text": "Stock Award(Grant)", "value": 9e9},
+        {"date": now - timedelta(days=200), "insider": "D", "text": "Sale at price 30", "value": 9e9},
+    ]}
+    f = {"short_pct_float": 0.25, "short_ratio": 4.0, "shares_short": 13e6, "shares_short_prior": 10e6}
+    m, sig = deepdive.smart_money(f, research)
+    codes = {s.code: s for s in sig}
+    assert m["insider_buy_90d"] == 300_000 and m["buyers_90d"] == 2 and m["insider_sell_90d"] == 0
+    assert codes["insider_buying"].severity == 2 and codes["heavily_shorted"].severity == 2 and "shorts_adding" in codes
+    assert m["insider_tx"][0]["insider"] == "C"  # newest first
+
+
+def test_valuation_context_guards_and_fair_value():
+    hist = frame(np.full(800, 100.0))
+    hist.index = pd.bdate_range("2022-06-01", periods=800)
+    annual = [{"period": date(2024, 12, 31), "eps": 5.0}, {"period": date(2023, 12, 31), "eps": 4.0}]
+    f = {"pe_trailing": 15.0, "pe_forward": 12.0, "eps_forward": 8.0, "revenue_growth": 0.2,
+         "target_mean_price": 130.0, "target_low_price": 90.0, "target_high_price": 400.0}
+    peers = {"P1": {"pe_forward": 20.0, "revenue_growth": 0.1}, "P2": {"pe_forward": 24.0, "revenue_growth": 0.1}}
+    m, sig = deepdive.valuation_context(f, {"annual": annual}, hist, peers, 100.0)
+    assert m["pe_hist_median"] == 22.5 and m["peer_median_pe"] == 22.0
+    assert {"cheap_vs_history", "cheap_vs_peers"} <= {s.code for s in sig}
+    fv = m["fair_value"]
+    assert set(fv["methods"]) == {"analysts", "own history", "peer multiple"}
+    assert fv["high"] < 200  # spans method midpoints, not the most bullish single target
+    # a split-distorted EPS history (P/E 100x off) is discarded rather than trusted
+    m2, _ = deepdive.valuation_context(f, {"annual": [{"period": date(2024, 12, 31), "eps": 0.05}]}, hist, {}, 100.0)
+    assert m2["pe_hist_median"] is None and "own history" not in m2.get("fair_value", {}).get("methods", {})
+
+
+def test_levels_find_nearest_support_and_resistance():
+    wave = 100 + 10 * np.sin(np.linspace(0, 12 * np.pi, 300))
+    lv = deepdive.levels(frame(wave), 100.0)
+    assert lv["support"] < 100 < lv["resistance"]
+
+
+def test_briefing_reports_changes_and_watch_items():
+    store_snap = lambda verdict, composite, price, codes: {  # noqa: E731
+        "ticker": "X", "tier": 1, "verdict": verdict, "composite": composite, "price": price,
+        "fundamental_score": 72, "technical_score": 40,
+        "payload": {"watchlist": False, "error": None, "position": {},
+                    "signals": [{"kind": "risk", "code": c, "message": c.upper(), "severity": 2, "source": "t"} for c in codes],
+                    "technical": {"trend": "down", "rsi": 25.0, "sma200": 110.0, "trailing_stop": 95.0,
+                                  "rs_spy_3m": -0.2},
+                    "fundamental": {"pillar_growth": 90, "pillar_quality": 30},
+                    "events": {"earnings_date": "2026-11-01", "days_to_earnings": 5},
+                    "research": {"earnings": {"avg_move": 0.07, "beats": 3, "reported": 4}}}}
+    prev, now = store_snap("HOLD", 60, 100.0, ["old"]), store_snap("RISK - REVIEW", 45, 90.0, ["new"])
+    b = briefing.stock(now, prev)
+    text = " ".join(b["changed"] + b["watch"] + b["why"])
+    assert "HOLD to RISK - REVIEW" in text and "fell 15 points" in text and "New: NEW" in text and "Cleared: OLD" in text
+    assert "moved about 7%" in text and "stop has been hit" in text and "would turn the trend up" in text
+    assert "underperformed the market by 20%" in text and "best on growth (90)" in text
+    assert briefing.stock(now)["changed"][0].startswith("First scan")
+    lines = briefing.portfolio([now], {"X": prev}, {"state": "RISK-OFF", "day_change": -0.01})
+    assert any("hostile" in l for l in lines) and any("HOLD -> RISK - REVIEW" in l for l in lines)

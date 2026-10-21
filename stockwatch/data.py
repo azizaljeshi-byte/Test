@@ -7,6 +7,7 @@ Every provider returns:
 """
 from __future__ import annotations
 
+import functools
 import logging
 import threading
 import time
@@ -28,6 +29,10 @@ FUNDAMENTAL_KEYS = [
     "debt_to_equity",                             # ratio, 1.5 = 150%
     "current_ratio", "free_cash_flow",
     "target_mean_price", "recommendation_mean",   # 1 = strong buy ... 5 = sell
+    "target_low_price", "target_high_price", "analyst_count",
+    "eps_trailing", "eps_forward", "price_to_sales", "industry", "industry_key",
+    "short_pct_float", "short_ratio", "shares_short", "shares_short_prior",  # short_ratio = days to cover
+    "insider_pct", "institution_pct",
 ]
 
 
@@ -41,7 +46,7 @@ SECTOR_ETFS = {
 
 
 class DataProvider(Protocol):
-    def history(self, ticker: str, period: str = "2y") -> pd.DataFrame: ...
+    def history(self, ticker: str, period: str = "5y") -> pd.DataFrame: ...
     def fundamentals(self, ticker: str) -> dict: ...
 
     def events(self, ticker: str) -> dict:
@@ -49,6 +54,15 @@ class DataProvider(Protocol):
             "news": [{"title", "publisher", "url", "published": datetime}],
             "rating_changes": [{"date": datetime, "firm", "action", "from_grade", "to_grade"}]}
         action is one of up / down / init / main / reit."""
+        ...
+
+    def research(self, ticker: str) -> dict:
+        """Slow-moving deep data, every key optional:
+            "earnings": [{"quarter": date, "eps_actual", "eps_estimate", "surprise_pct"}]  newest first
+            "quarterly": [{"period": date, "revenue", "gross_profit", "operating_income", "net_income"}]  newest first
+            "annual": [{"period": date, "revenue", "eps"}]  newest first
+            "insiders": [{"date": datetime, "insider", "position", "text", "shares", "value"}]
+            "peers": [ticker, ...]"""
         ...
 
 
@@ -65,13 +79,19 @@ class YahooProvider:
         "current_ratio": "currentRatio", "free_cash_flow": "freeCashflow",
         "target_mean_price": "targetMeanPrice",
         "recommendation_mean": "recommendationMean",
+        "target_low_price": "targetLowPrice", "target_high_price": "targetHighPrice",
+        "analyst_count": "numberOfAnalystOpinions", "eps_trailing": "trailingEps", "eps_forward": "forwardEps",
+        "price_to_sales": "priceToSalesTrailing12Months", "industry": "industry", "industry_key": "industryKey",
+        "short_pct_float": "shortPercentOfFloat", "short_ratio": "shortRatio", "shares_short": "sharesShort",
+        "shares_short_prior": "sharesShortPriorMonth", "insider_pct": "heldPercentInsiders",
+        "institution_pct": "heldPercentInstitutions",
     }
 
     def __init__(self):
         import yfinance  # imported lazily so the demo provider works without it
         self._yf = yfinance
 
-    def history(self, ticker: str, period: str = "2y") -> pd.DataFrame:
+    def history(self, ticker: str, period: str = "5y") -> pd.DataFrame:
         df = self._yf.Ticker(ticker).history(period=period, auto_adjust=True)
         if df.empty:
             raise ValueError(f"No price history for {ticker}")
@@ -113,6 +133,74 @@ class YahooProvider:
             log.info("rating changes failed for %s: %s", ticker, e)
         return out
 
+    def research(self, ticker: str) -> dict:
+        return _yahoo_research(self._yf, ticker)
+
+
+def _yahoo_research(yf, ticker: str) -> dict:
+    t = yf.Ticker(ticker)
+    out: dict = {"earnings": [], "quarterly": [], "annual": [], "insiders": [], "peers": []}
+
+    def attempt(name, fn):
+        try:
+            fn()
+        except Exception as e:
+            log.info("%s failed for %s: %s", name, ticker, e)
+
+    def earnings():
+        eh = t.earnings_history
+        if eh is not None and not eh.empty:
+            for q, r in eh.sort_index(ascending=False).iterrows():
+                out["earnings"].append({"quarter": pd.Timestamp(q).date(), "eps_actual": _f(r.get("epsActual")),
+                                        "eps_estimate": _f(r.get("epsEstimate")),
+                                        "surprise_pct": _f(r.get("surprisePercent"))})
+
+    def statements(freq, key, rows):
+        df = t.get_income_stmt(pretty=False, freq=freq)
+        if df is None or df.empty:
+            return
+        for col in sorted(df.columns, reverse=True):
+            out[key].append({"period": pd.Timestamp(col).date(),
+                             **{name: _f(df.at[row, col]) if row in df.index else None for name, row in rows.items()}})
+
+    def insiders():
+        it = t.insider_transactions
+        if it is not None and not it.empty:
+            for _, r in it.head(40).iterrows():
+                out["insiders"].append({"date": pd.Timestamp(r.get("Start Date")).to_pydatetime(),
+                                        "insider": r.get("Insider"), "position": r.get("Position"),
+                                        "text": str(r.get("Text") or ""), "shares": _f(r.get("Shares")),
+                                        "value": _f(r.get("Value"))})
+
+    def peers():
+        key = (t.info or {}).get("industryKey")
+        if key:
+            out["peers"] = [p for p in _industry_leaders(yf, key) if p.upper() != ticker.upper()][:6]
+
+    attempt("earnings history", earnings)
+    attempt("quarterly statements", lambda: statements("quarterly", "quarterly", {
+        "revenue": "TotalRevenue", "gross_profit": "GrossProfit",
+        "operating_income": "OperatingIncome", "net_income": "NetIncome"}))
+    attempt("annual statements", lambda: statements("yearly", "annual", {"revenue": "TotalRevenue", "eps": "DilutedEPS"}))
+    attempt("insider transactions", insiders)
+    attempt("peers", peers)
+    return out
+
+
+@functools.lru_cache(maxsize=256)
+def _industry_leaders(yf, key: str) -> tuple[str, ...]:
+    """Industry membership barely changes, so one lookup per industry per process is plenty."""
+    top = yf.Industry(key).top_companies
+    return tuple(p for p in top.index.tolist() if p) if top is not None else ()
+
+
+def _f(v) -> float | None:
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return None if np.isnan(v) else v
+
 
 def _parse_news(a: dict) -> dict | None:
     """Yahoo has shipped two news formats; accept both."""
@@ -138,9 +226,9 @@ class DemoProvider:
     def _rng(self, ticker: str) -> np.random.Generator:
         return np.random.default_rng(zlib.crc32(ticker.encode()))
 
-    def history(self, ticker: str, period: str = "2y") -> pd.DataFrame:
+    def history(self, ticker: str, period: str = "5y") -> pd.DataFrame:
         rng = self._rng(ticker)
-        n = 504
+        n = 1260
         drift = rng.uniform(-0.0006, 0.0012)
         vol = rng.uniform(0.012, 0.03)
         rets = rng.normal(drift, vol, n)
@@ -160,10 +248,11 @@ class DemoProvider:
     def fundamentals(self, ticker: str) -> dict:
         rng = self._rng(ticker + ":f")
         price = float(self.history(ticker)["Close"].iloc[-1])
+        pe_t, pe_f = float(rng.uniform(8, 60)), float(rng.uniform(7, 45))
         return {
             "name": f"{ticker} (demo)", "sector": str(rng.choice(["Technology", "Healthcare", "Energy"])),
             "market_cap": float(rng.uniform(2e10, 3e12)),
-            "pe_trailing": float(rng.uniform(8, 60)), "pe_forward": float(rng.uniform(7, 45)),
+            "pe_trailing": pe_t, "pe_forward": pe_f,
             "peg": float(rng.uniform(0.6, 3.5)),
             "revenue_growth": float(rng.uniform(-0.1, 0.4)),
             "earnings_growth": float(rng.uniform(-0.3, 0.6)),
@@ -176,7 +265,47 @@ class DemoProvider:
             "free_cash_flow": float(rng.uniform(-2e9, 5e10)),
             "target_mean_price": price * float(rng.uniform(0.85, 1.4)),
             "recommendation_mean": float(rng.uniform(1.4, 3.6)),
+            "target_low_price": price * float(rng.uniform(0.6, 0.9)),
+            "target_high_price": price * float(rng.uniform(1.2, 1.9)), "analyst_count": int(rng.integers(3, 40)),
+            "eps_trailing": price / pe_t, "eps_forward": price / pe_f,
+            "price_to_sales": float(rng.uniform(1, 20)), "industry": "Demo Industry", "industry_key": "demo",
+            "short_pct_float": float(rng.uniform(0.01, 0.3)), "short_ratio": float(rng.uniform(0.5, 8)),
+            "shares_short": 1e7, "shares_short_prior": 1e7 * float(rng.uniform(0.6, 1.3)),
+            "insider_pct": float(rng.uniform(0.0, 0.3)), "institution_pct": float(rng.uniform(0.1, 0.9)),
         }
+
+    def research(self, ticker: str) -> dict:
+        rng = self._rng(ticker + ":r")
+        q_end = (pd.Timestamp.today() - pd.offsets.QuarterEnd(1)).normalize()
+        quarters = [(q_end - pd.offsets.QuarterEnd(i)).date() for i in range(8)]
+        rev0 = float(rng.uniform(5e8, 2e10))
+        growth = float(rng.uniform(-0.03, 0.08))
+        quarterly = []
+        for i, q in enumerate(quarters[:5]):
+            rev = rev0 / (1 + growth) ** i
+            om = float(rng.uniform(0.05, 0.3))
+            quarterly.append({"period": q, "revenue": rev, "gross_profit": rev * 0.55,
+                              "operating_income": rev * om, "net_income": rev * om * 0.8})
+        earnings = []
+        for q in quarters[:4]:
+            est = float(rng.uniform(0.2, 2.0))
+            act = est * float(rng.uniform(0.85, 1.2))
+            earnings.append({"quarter": q, "eps_actual": act, "eps_estimate": est, "surprise_pct": act / est - 1})
+        hist = self.history(ticker)["Close"]
+        annual = []
+        for i in range(4):
+            fy = date(date.today().year - 1 - i, 12, 31)
+            px = float(hist.loc[:pd.Timestamp(fy)].iloc[-1])
+            annual.append({"period": fy, "revenue": rev0 * 4 / (1.15 ** i), "eps": px / float(rng.uniform(15, 40))})
+        now = datetime.now()
+        insiders = [{"date": now - timedelta(days=float(rng.uniform(1, 150))), "insider": f"Insider {i}",
+                     "position": str(rng.choice(["CEO", "CFO", "Director"])),
+                     "text": str(rng.choice(["Sale at price 50.00 per share.", "Purchase at price 48.00 per share.",
+                                             "Stock Award(Grant) at price 0.00 per share."])),
+                     "shares": float(rng.integers(1000, 50000)), "value": float(rng.uniform(5e4, 3e6))}
+                    for i in range(5)]
+        return {"earnings": earnings, "quarterly": quarterly, "annual": annual, "insiders": insiders,
+                "peers": [p for p in ["AAPL", "MSFT", "NVDA", "GOOGL", "AMD"] if p != ticker][:4]}
 
     _HEADLINES = [
         ("{t} beats estimates and raises full-year guidance", 1),
@@ -207,7 +336,7 @@ class CachedProvider:
     """Shares fetches across threads and scans. Fundamentals and events change slowly,
     so they're kept longer, which also keeps the Yahoo request count down."""
 
-    TTL = {"history": 300, "fundamentals": 6 * 3600, "events": 3600}
+    TTL = {"history": 300, "fundamentals": 6 * 3600, "events": 3600, "research": 12 * 3600}
 
     def __init__(self, inner: DataProvider):
         self.inner = inner
@@ -232,7 +361,7 @@ class CachedProvider:
                 fut.set_exception(e)
         return fut.result()
 
-    def history(self, ticker: str, period: str = "2y") -> pd.DataFrame:
+    def history(self, ticker: str, period: str = "5y") -> pd.DataFrame:
         return self._get("history", ticker, period)
 
     def fundamentals(self, ticker: str) -> dict:
@@ -240,6 +369,9 @@ class CachedProvider:
 
     def events(self, ticker: str) -> dict:
         return self._get("events", ticker)
+
+    def research(self, ticker: str) -> dict:
+        return self._get("research", ticker)
 
 
 def get_provider(name: str) -> DataProvider:

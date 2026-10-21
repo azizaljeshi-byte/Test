@@ -38,7 +38,7 @@ class Store:
 
     def save_snapshot(self, e: Evaluation) -> None:
         payload = {"technical": e.technical, "fundamental": e.fundamental, "position": e.position,
-                   "signals": [s.to_dict() for s in e.signals], "events": e.events, "name": e.name, "error": e.error,
+                   "signals": [s.to_dict() for s in e.signals], "events": e.events, "research": e.research, "name": e.name, "error": e.error,
                    "watchlist": e.watchlist}
         self.conn.execute(
             "INSERT INTO snapshots (scanned_at, ticker, tier, price, technical_score, fundamental_score,"
@@ -76,6 +76,12 @@ class Store:
             "SELECT s.* FROM snapshots s JOIN (SELECT ticker, MAX(id) mid FROM snapshots GROUP BY ticker) m"
             " ON s.id = m.mid ORDER BY s.tier, s.composite DESC")
         return [{**dict(r), "payload": json.loads(r["payload"])} for r in rows]
+
+    def previous_snapshot(self, ticker: str) -> dict | None:
+        """The scan before the latest one, for "what changed" comparisons."""
+        r = self.conn.execute("SELECT * FROM snapshots WHERE ticker=? ORDER BY id DESC LIMIT 1 OFFSET 1",
+                              (ticker,)).fetchone()
+        return {**dict(r), "payload": json.loads(r["payload"])} if r else None
 
     def history(self, ticker: str, limit: int = 500) -> list[dict]:
         rows = self.conn.execute(

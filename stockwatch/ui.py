@@ -81,6 +81,29 @@ h1,h2,h3 { font-family: 'Orbitron', sans-serif !important; letter-spacing: .12em
 .mc-news a { color:var(--info); text-decoration:none; }
 .mc-section { font-family:'Orbitron',sans-serif; font-size:.78rem; letter-spacing:.2em; color:var(--muted); margin:1rem 0 .4rem; text-transform:uppercase; }
 
+.mc-brief { border:1px solid var(--line); border-radius:10px; padding:.65rem .85rem; margin:.5rem 0 .8rem;
+  background: linear-gradient(100deg, rgba(61,255,168,.07), rgba(10,17,25,.9) 55%); }
+.mc-brief .hl { font-size:.9rem; color:var(--ink); line-height:1.45; }
+.mc-brief h4 { font-family:'Orbitron',sans-serif !important; font-size:.66rem; letter-spacing:.22em; color:var(--opp);
+  margin:.65rem 0 .15rem; padding:0; }
+.mc-brief ul { margin:0; padding-left:1.05rem; }
+.mc-brief li { font-size:.8rem; line-height:1.5; color:var(--ink); margin:.1rem 0; }
+.mc-brief li::marker { color:var(--muted); }
+.mc-tbl { overflow-x:auto; margin:.3rem 0 .6rem; }
+.mc-tbl table { width:100%; border-collapse:collapse; font-size:.74rem; }
+.mc-tbl th { color:var(--muted); font-weight:400; text-align:right; padding:.25rem .4rem; border-bottom:1px solid var(--line); letter-spacing:.06em; white-space:nowrap; }
+.mc-tbl td { text-align:right; padding:.25rem .4rem; border-bottom:1px solid rgba(23,58,68,.5); color:var(--ink); white-space:nowrap; }
+.mc-tbl th:first-child, .mc-tbl td:first-child { text-align:left; }
+.mc-tbl tr.me td { color:var(--opp); }
+.mc-fv { position:relative; height:44px; margin:.6rem .3rem 1.4rem; }
+.mc-fv .track { position:absolute; left:0; right:0; top:16px; height:6px; border-radius:3px; background:rgba(95,135,150,.18); }
+.mc-fv .band { position:absolute; top:12px; height:14px; border-radius:4px; background:rgba(54,197,240,.22); border:1px solid var(--info); }
+.mc-fv .mid { position:absolute; top:8px; width:2px; height:22px; background:var(--info); }
+.mc-fv .now { position:absolute; top:4px; width:2px; height:30px; background:var(--ink); box-shadow:0 0 8px var(--ink); }
+.mc-fv .lbl { position:absolute; top:34px; font-size:.64rem; color:var(--muted); transform:translateX(-50%); white-space:nowrap; }
+.mc-fv .lbl.now-l { top:-14px; color:var(--ink); }
+.stExpander summary p { letter-spacing:.14em; text-transform:uppercase; font-size:.8rem; }
+
 .stButton > button, .stFormSubmitButton > button { border:1px solid var(--opp) !important; background:rgba(61,255,168,.06) !important;
   color:var(--opp) !important; letter-spacing:.14em; text-transform:uppercase; border-radius:8px; }
 .stButton > button:hover { box-shadow:0 0 14px rgba(61,255,168,.4); }
@@ -176,3 +199,47 @@ def urgency(snap: dict) -> tuple:
     else:
         rank = 3
     return rank, -sum(s["severity"] for s in sigs), snap["ticker"]
+
+
+def money(v) -> str:
+    if nan(v):
+        return "—"
+    a = abs(v)
+    for div, suf in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if a >= div:
+            return f"{'-' if v < 0 else ''}${a / div:.1f}{suf}"
+    return f"${v:,.0f}"
+
+
+def brief(b: dict) -> str:
+    def section(title, items):
+        return f"<h4>{title}</h4><ul>{''.join(f'<li>{escape(i)}</li>' for i in items)}</ul>" if items else ""
+    return (f'<div class="mc-brief"><div class="hl">{escape(b["headline"])}</div>'
+            f'{section("WHY", b["why"])}{section("CHANGED", b["changed"])}{section("WATCH NEXT", b["watch"])}</div>')
+
+
+def mission_brief(lines: list[str]) -> str:
+    return (f'<div class="mc-brief"><h4 style="margin-top:0">MISSION BRIEF</h4><ul>'
+            f'{"".join(f"<li>{escape(l)}</li>" for l in lines)}</ul></div>')
+
+
+def table(headers: list[str], rows: list[list], highlight: int | None = None) -> str:
+    head = "".join(f"<th>{escape(h)}</th>" for h in headers)
+    body = "".join(f'<tr{" class=me" if i == highlight else ""}>' + "".join(f"<td>{escape(str(c))}</td>" for c in r) + "</tr>"
+                   for i, r in enumerate(rows))
+    return f'<div class="mc-tbl"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
+
+
+def fair_value_bar(fv: dict, price: float) -> str:
+    lo = min(fv["low"], price) * 0.92
+    hi = max(fv["high"], price) * 1.08
+    x = lambda v: (v - lo) / (hi - lo) * 100  # noqa: E731
+    return (f'<div class="mc-fv"><div class="track"></div>'
+            f'<div class="band" style="left:{x(fv["low"]):.1f}%;width:{max(x(fv["high"]) - x(fv["low"]), 0.8):.1f}%"></div>'
+            f'<div class="mid" style="left:{x(fv["mid"]):.1f}%"></div><div class="now" style="left:{x(price):.1f}%"></div>'
+            f'<div class="lbl now-l" style="left:{x(price):.1f}%">NOW {price:.2f}</div>'
+            f'<div class="lbl" style="left:{x(fv["mid"]):.1f}%">fair {fv["mid"]:.0f}</div>'
+            # range-end labels only where they won't collide with the midpoint label
+            + "".join(f'<div class="lbl" style="left:{x(v):.1f}%">{v:.0f}</div>'
+                      for v in (fv["low"], fv["high"]) if abs(x(v) - x(fv["mid"])) >= 16)
+            + "</div>")
