@@ -78,7 +78,10 @@ if us_session() in ("PRE", "POST") and tickers:
 snaps = [s for s in store.latest_snapshots() if s["ticker"] in tickers]
 last_scan = max((s["scanned_at"] for s in snaps), default=None)
 session = ui.SESSION_LABEL[us_session()]
-st.markdown(ui.header(f"{session} · {len(tickers)} targets · last sweep "
+quote_times = [(x["payload"].get("quote") or {}).get("fetched_at") for x in snaps]
+quote_times = [q for q in quote_times if q]
+live = (f" · prices {max(quote_times)[11:16]} UTC" if quote_times and us_session() in ("PRE", "POST") else "")
+st.markdown(ui.header(f"{session}{live} · {len(tickers)} targets · last sweep "
                       f"{last_scan[5:16].replace('T', ' ') + ' UTC' if last_scan else 'never'}"),
             unsafe_allow_html=True)
 
@@ -156,6 +159,18 @@ st.markdown(ui.tiles([
 ]), unsafe_allow_html=True)
 
 controls()
+
+LIVE_REFRESH_SECONDS = 120
+
+if us_session() in ("PRE", "POST"):
+    # keep pre-market / after-hours prices moving while the page is open (minute bars only, so cheap)
+    @st.fragment(run_every=f"{LIVE_REFRESH_SECONDS}s")
+    def _live_prices():
+        newest = max(quote_times) if quote_times else None
+        if not newest or time.time() - datetime.fromisoformat(newest).timestamp() >= LIVE_REFRESH_SECONDS - 10:
+            refresh_quotes(portfolio, data, store)
+            st.rerun()
+    _live_prices()
 
 # ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
 VIEWS = {"radar": "◉ Radar", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log", "fleet": "+ Fleet"}
