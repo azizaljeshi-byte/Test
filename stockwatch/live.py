@@ -92,14 +92,15 @@ class Tracker:
             return "quotes"
         return "idle"
 
-    def maybe_market_scan(self, store: Store, now: float | None = None, background: bool = True) -> bool:
+    def maybe_market_scan(self, store: Store, now: float | None = None, background: bool = True,
+                          force: bool = False) -> bool:
         """Start the S&P scan when it's due. It runs on its own thread so the 2-minute tracking
         isn't held up by a scan that can take a minute or two."""
         now = now or time.time()
         if self.last_market is None:
             last = store.latest_market_scan()
             self.last_market = datetime.fromisoformat(last["scanned_at"]).timestamp() if last else 0.0
-        if us_session() == "CLOSED" or self.market_running or now - self.last_market < MARKET_SECONDS:
+        if self.market_running or (not force and (us_session() == "CLOSED" or now - self.last_market < MARKET_SECONDS)):
             return False
         self.market_running = True
         self.last_market = now

@@ -472,14 +472,10 @@ if view == "market":
                    f"{max(1, mstat['next_market_in'] // 60)} min")
     if mstat.get("market_error"):
         st.caption(f"⚠ Last automatic scan failed: {mstat['market_error'][:120]}")
-    if st.button("✦ Scan the S&P 500 now", use_container_width=True, disabled=live.MARKET_LOCK.locked()):
-        bar = st.progress(0.0, text="Starting...")
-        try:
-            live.market_scan(data, store, progress=lambda f, t: bar.progress(min(f, 1.0), text=t))
-            tracking.last_market = time.time()
-            st.rerun()
-        except Exception as e:
-            st.error(f"Scan failed: {e}")
+    # the scan runs on the tracker's thread, so page refreshes can't interrupt it halfway
+    st.button("✦ Scan the S&P 500 now", use_container_width=True,
+              disabled=mstat["market_running"] or live.MARKET_LOCK.locked(),
+              on_click=lambda: tracking.maybe_market_scan(store, force=True))
     ms = store.latest_market_scan()
     if not ms:
         st.caption("No scan yet. It takes a minute or two on live data.")
@@ -571,31 +567,45 @@ if view == "log":
              "ok" if (x["payload"].get("fundamental") or {}).get("available", True) else "blocked",
              (q.get("fetched_at") or "—")[11:19], (q.get("error") or "")[:60]]
             for x in snaps for q in [x["payload"].get("quote") or {}]]), unsafe_allow_html=True)
-        probe = st.text_input("Test a live quote", value=next(iter(sorted(tickers)), "AAPL"), key="probe").strip().upper()
-        if st.button("Test Finnhub key"):
+        st.text_input("Ticker to test", value=next(iter(sorted(tickers)), "AAPL"), key="probe")
+        # results are kept in session state: the page's automatic refreshes would otherwise wipe a
+        # button's output a few seconds after the tap
+        def _test_finnhub():
+            sym = (st.session_state.get("probe") or "AAPL").strip().upper()
             if not finnhub.enabled():
-                st.error("No FINNHUB_API_KEY found. Add it in Settings → Secrets, then reboot the app.")
-            else:
-                try:
-                    recs = finnhub._get("/stock/recommendation", symbol=probe)
-                    metric = (finnhub._get("/stock/metric", symbol=probe, metric="all") or {}).get("metric") or {}
-                    st.success(f"Finnhub works: {len(recs)} months of analyst ratings and "
-                               f"{len(metric)} key ratios for {probe}.")
-                except Exception as e:
-                    msg = str(e)
-                    hint = ("the key is wrong or not activated" if "401" in msg else
-                            "this data needs a paid plan" if "403" in msg else
-                            "too many requests; wait a minute" if "429" in msg else "check the key and try again")
-                    st.error(f"Finnhub request failed: {msg[:120]} ({hint}).")
-        if st.button("Fetch raw quote"):
+                st.session_state.diag = ("error", "No FINNHUB_API_KEY found. Add it in Settings → Secrets, then reboot.")
+                return
+            try:
+                recs = finnhub._get("/stock/recommendation", symbol=sym)
+                metric = (finnhub._get("/stock/metric", symbol=sym, metric="all") or {}).get("metric") or {}
+                st.session_state.diag = ("success", f"Finnhub works: {len(recs)} months of analyst ratings and "
+                                                    f"{len(metric)} key ratios for {sym}.")
+            except Exception as e:
+                msg = str(e)
+                hint = ("the key is wrong or not activated" if "401" in msg else
+                        "this data needs a paid plan" if "403" in msg else
+                        "too many requests; wait a minute" if "429" in msg else "check the key and try again")
+                st.session_state.diag = ("error", f"Finnhub request failed: {msg[:120]} ({hint}).")
+
+        def _raw_quote():
+            sym = (st.session_state.get("probe") or "AAPL").strip().upper()
             inner = getattr(data, "inner", data)
             try:
-                raw = inner.raw_quote(probe) if hasattr(inner, "raw_quote") else inner.quote(probe)
-                st.code(json.dumps(raw, indent=1, default=str), language="json")
-                st.caption("Parsed by the app as:")
-                st.code(json.dumps(inner.quote(probe), indent=1, default=str), language="json")
+                raw = inner.raw_quote(sym) if hasattr(inner, "raw_quote") else inner.quote(sym)
+                st.session_state.diag = ("code", json.dumps({"raw": raw, "parsed": inner.quote(sym)}, indent=1, default=str))
             except Exception as e:
-                st.error(f"Quote failed: {e}")
+                st.session_state.diag = ("error", f"Quote failed: {e}")
+
+        b1, b2 = st.columns(2)
+        b1.button("Test Finnhub key", on_click=_test_finnhub, use_container_width=True)
+        b2.button("Fetch raw quote", on_click=_raw_quote, use_container_width=True)
+        kind, msg = st.session_state.get("diag", (None, None))
+        if kind == "success":
+            st.success(msg)
+        elif kind == "error":
+            st.error(msg)
+        elif kind == "code":
+            st.code(msg, language="json")
 
 # ---------------------------------------------------------------- fleet management
 
