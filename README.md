@@ -66,6 +66,25 @@ The dashboard also shows the market as RISK-ON / CAUTION / RISK-OFF, based on SP
   - A fair-value range from three methods: analyst targets, own-history P/E and peer P/E. Methods that land implausibly far from the price are dropped, which usually means a stock split distorted the EPS history.
   - Nearest support and resistance, taken from swing highs and lows over the last year.
 
+**Technical shifts** (`stockwatch/engine.py`): the technical score is compared with a week earlier. A swing of 20+ points raises its own alert whether or not the fundamentals changed. Fundamentals update quarterly and price action daily, so a breakdown or turn doesn't wait for both to agree.
+
+**SEC filings** (`stockwatch/sec.py`), from SEC EDGAR's free API:
+- **Filings list:** recent filings with links, and 8-K items translated into plain English.
+- **Alerts:**
+  - serious 8-K events: bankruptcy, delisting notice, restated financials, auditor change, impairment
+  - offering registrations (S-1, S-3, 424B), which mean possible dilution
+  - late-filing notices
+  - activist 13D stakes
+  - share-count growth over the last year (dilution), or a falling share count (buybacks)
+
+SEC asks automated tools to identify themselves, so set `SEC_USER_AGENT` to your name and email (e.g. `"Jane Doe jane@example.com"`) in the Streamlit secrets and as a GitHub Actions secret.
+
+**S&P 500 opportunity scan** (`stockwatch/market.py`, the **S&P 500** view or `python -m stockwatch.market`):
+- **Stage 1** screens all ~500 constituents on price action using one bulk download, looking for a golden cross, reclaiming the 200-day, a pullback in an uptrend, a volume surge or a 52-week-high breakout.
+- **Stage 2** runs the full fundamental and technical evaluation on the strongest 25 and ranks the buy setups.
+- **The list of members** refreshes daily from a maintained list, with a bundled copy as a fallback.
+- **Notifications:** with notifications configured, the GitHub job runs the scan every weekday before the open and pushes the top setups.
+
 **Briefings** (`stockwatch/briefing.py`):
 - **Each stock** gets a plain-English summary: why it has its verdict, what changed since the last scan, and what to watch next (earnings, key levels, the 200-day trigger, fair value, stops).
 - **The Radar tab** opens with a portfolio-level mission brief.
@@ -82,9 +101,10 @@ Watchlist verdicts: `BUY SETUP`, `WATCH`, `AVOID`.
 
 ## Dashboard
 
-Dark "mission control" theme, designed for phones first. It has four tabs:
+Dark "mission control" theme, designed for phones first. Tap any stock (a card, a ticker in the brief, an S&P scan result) to open its details page. The views are:
 - **Radar:** one card per stock, most urgent first. Filter by risk, opportunity, held or watchlist.
-- **Target:** chart, every signal, readouts, analyst moves and news for one stock.
+- **Details:** chart, every signal, readouts, SEC filings, analyst moves and news for one stock.
+- **S&P 500:** the opportunity scan.
 - **Log:** the alert history.
 - **Fleet:** add tickers (several at once, separated by commas) with a tier and share count, or remove them.
   Each new ticker shows a **company overview**: what the company does, its size and location, and a report card.

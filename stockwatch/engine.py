@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from . import catalysts, deepdive, fundamental, relative, technical
+from . import catalysts, deepdive, fundamental, relative, sec, technical
 from .config import Holding, Portfolio
 from .data import SECTOR_ETFS, DataProvider
 from .signals import OPPORTUNITY, RISK, Signal
@@ -123,6 +123,28 @@ def _verdict(ev: Evaluation) -> str:
     return "HOLD"
 
 
+SHIFT_BARS = 5        # compare with the picture one trading week ago
+SHIFT_POINTS = 20     # technical-score change that counts as a regime shift
+
+
+def _technical_shift(hist, ts: float, fs: float, atr_mult: float, owned: bool) -> list[Signal]:
+    """Flag a big swing in the technical picture on its own: fundamentals move quarterly,
+    price action daily, so a breakdown or turn shouldn't wait for both to agree."""
+    if len(hist) < 260:
+        return []
+    before, _, _ = technical.analyze(hist.iloc[:-SHIFT_BARS], atr_mult, owned)
+    delta = ts - before
+    if abs(delta) < SHIFT_POINTS:
+        return []
+    fund = (f"fundamentals unchanged and still solid ({fs:.0f}) - more likely a price move than a thesis change"
+            if fs >= 55 else f"with fundamentals already weak ({fs:.0f})")
+    if delta < 0:
+        return [Signal(RISK, "technical", "technical_breakdown",
+                       f"Technical picture deteriorated over the past week ({before:.0f} -> {ts:.0f}), {fund}", 2)]
+    return [Signal(OPPORTUNITY, "technical", "technical_turn",
+                   f"Technical picture improved over the past week ({before:.0f} -> {ts:.0f}), {fund}", 2)]
+
+
 def _extended_hours(q: dict, watchlist: bool) -> list[Signal]:
     """Pre-market / after-hours moves, often an earnings or news reaction the daily bars haven't seen yet."""
     ch = q.get("ext_change")
@@ -144,10 +166,12 @@ def _optional(fn, *args):
         return None
 
 
-def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider) -> Evaluation:
+def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bool = False,
+             hist=None) -> Evaluation:
+    """light=True skips deep research and SEC data (used when screening many tickers)."""
     rules = portfolio.rules(h.tier)
     try:
-        hist = provider.history(h.ticker)
+        hist = hist if hist is not None else provider.history(h.ticker)
         ts, tech, tech_sig = technical.analyze(hist, rules.trailing_atr_mult, owned=not h.is_watchlist)
         price = tech["price"]
         try:
@@ -159,6 +183,8 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider) -> Evalua
     except Exception as e:
         log.exception("evaluation failed for %s", h.ticker)
         return Evaluation(h.ticker, h.tier, h.is_watchlist, float("nan"), 0, 0, 0, "ERROR", [], {}, {}, error=str(e))
+
+    shift_sig = _technical_shift(hist, ts, fs, rules.trailing_atr_mult, not h.is_watchlist)
 
     # relative strength nudges the technical score; benchmarks are cached across tickers
     sector_etf = SECTOR_ETFS.get(f.get("sector") or "")
@@ -175,22 +201,31 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider) -> Evalua
     events, event_sig = catalysts.analyze(raw_events, owned=not h.is_watchlist, tier=h.tier)
 
     # deep research is informational: it adds signals but doesn't move the scores
-    raw = _optional(provider.research, h.ticker) or {}
+    raw = {} if light else (_optional(provider.research, h.ticker) or {})
     peers = {p: _optional(provider.fundamentals, p) for p in raw.get("peers") or []}
     research, deep_sig = {}, []
-    for key, fn in (("earnings", lambda: deepdive.earnings_track(raw, hist)),
-                    ("smart_money", lambda: deepdive.smart_money(f, raw)),
-                    ("valuation", lambda: deepdive.valuation_context(f, raw, hist, peers, price))):
+    deep = () if light else (("earnings", lambda: deepdive.earnings_track(raw, hist)),
+                             ("smart_money", lambda: deepdive.smart_money(f, raw)),
+                             ("valuation", lambda: deepdive.valuation_context(f, raw, hist, peers, price)))
+    for key, fn in deep:
         try:
             research[key], sig = fn()
             deep_sig += sig
         except Exception as e:
             log.warning("%s research failed for %s: %s", key, h.ticker, e)
 
+    raw_sec = None if light else _optional(provider.filings, h.ticker)
+    if raw_sec:
+        try:
+            research["sec"], sec_sig = sec.analyze(raw_sec, f.get("market_cap"))
+            deep_sig += sec_sig
+        except Exception as e:
+            log.warning("SEC analysis failed for %s: %s", h.ticker, e)
+
     composite = rules.fundamental_weight * fs + rules.technical_weight * ts
     pos, pos_sig = _position(h, price, tech, rules)
     signals = (tech_sig + rs_sig + fund_sig + _confluence(fs, tech, tech_sig, h.tier)
-               + event_sig + deep_sig + ext_sig + pos_sig)
+               + shift_sig + event_sig + deep_sig + ext_sig + pos_sig)
     signals.sort(key=lambda s: (-s.severity, s.kind))
     ev = Evaluation(h.ticker, h.tier, h.is_watchlist, price, round(ts, 1), round(fs, 1),
                     round(composite, 1), "", signals, tech, fund, pos, events, research,

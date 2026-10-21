@@ -1,4 +1,5 @@
 import io
+import time
 
 import numpy as np
 import pandas as pd
@@ -6,7 +7,7 @@ import pytest
 
 from stockwatch import fundamental, technical
 from stockwatch.config import Holding, Portfolio, Settings, TierRules, load_portfolio
-from stockwatch.data import DemoProvider
+from stockwatch.data import DemoProvider, get_provider
 from stockwatch.engine import evaluate, scan
 from stockwatch.store import Store
 
@@ -42,6 +43,9 @@ class FixedProvider:
         return {}
 
     def quote(self, ticker):
+        return {}
+
+    def filings(self, ticker):
         return {}
 
 
@@ -520,3 +524,74 @@ def test_fetch_sheet_csv_detects_unshared_sheet(monkeypatch):
     monkeypatch.setattr(cfg.urllib.request, "urlopen",
                         lambda url, timeout: Resp("﻿Ticker,Tier\nAAA,1\n".encode(), "text/csv"))
     assert cfg.fetch_sheet_csv(SHEET).startswith("Ticker")
+
+
+# ---- technical shift, SEC filings, S&P scan, links
+
+from stockwatch import market, sec, ui
+from stockwatch.engine import _technical_shift
+
+
+def test_technical_shift_flags_breakdown_independent_of_fundamentals():
+    up = np.geomspace(50, 150, 300)
+    crash = np.r_[up, up[-1] * np.geomspace(1, 0.78, 6)[1:]]
+    hist = frame(crash)
+    ts, _, _ = technical.analyze(hist, 2.5)
+    sig = _technical_shift(hist, ts, fs=75, atr_mult=2.5, owned=True)
+    assert sig and sig[0].code == "technical_breakdown" and sig[0].severity == 2
+    assert "fundamentals unchanged and still solid (75)" in sig[0].message
+    steady = frame(up)
+    assert _technical_shift(steady, technical.analyze(steady)[0], 75, 2.5, True) == []
+
+
+def test_sec_analysis_events_offerings_and_dilution():
+    today = date(2026, 10, 21)
+    data = {"filings": [
+        {"form": "8-K", "date": "2026-10-19", "items": "4.02,9.01", "url": "u"},
+        {"form": "8-K", "date": "2026-10-18", "items": "1.01", "url": "u"},
+        {"form": "424B5", "date": "2026-10-10", "items": "", "url": "u"},
+        {"form": "NT 10-Q", "date": "2026-09-30", "items": "", "url": "u"},
+        {"form": "8-K", "date": "2026-08-01", "items": "1.03", "url": "u"},   # too old to alert
+        {"form": "4", "date": "2026-10-01", "items": "", "url": "u"},
+    ], "shares": [{"end": "2026-09-30", "value": 120e6}, {"end": "2026-06-30", "value": 110e6},
+                  {"end": "2025-09-30", "value": 100e6}]}
+    m, sig = sec.analyze(data, market_cap=5e8, today=today)
+    codes = {s.code: s for s in sig}
+    assert codes["8k_4.02"].severity == 3 and codes["8k_1.01"].kind == "opportunity"
+    assert codes["sec_offering"].severity == 2 and "sec_late_filing" in codes and "8k_1.03" not in codes
+    assert codes["dilution"].severity == 2 and abs(m["shares_change_1y"] - 0.2) < 1e-9
+    assert m["form4_90d"] == 1 and all(f["form"] != "4" for f in m["filings"])
+    assert m["filings"][0]["label"] == "8-K: past financial statements can no longer be relied on"
+    _, sig_big = sec.analyze(data, market_cap=5e11, today=today)
+    assert {s.code: s for s in sig_big}["sec_offering"].severity == 1   # shelf filings are routine for large caps
+
+
+def test_sec_ticker_lookup_uses_bundled_ciks(monkeypatch):
+    sec._ticker_map.cache_clear()
+    monkeypatch.setattr(sec, "_get", lambda url: (_ for _ in ()).throw(OSError("offline")))
+    assert sec.cik_for("AAPL") == 320193 and sec.cik_for("brk.b") == 1067983
+    sec._ticker_map.cache_clear()
+
+
+def test_market_screen_and_run_on_demo():
+    universe = market.load_universe()
+    assert len(universe) > 450 and {"ticker", "name", "sector", "cik"} <= set(universe.columns)
+    hists = {"UP": frame(np.r_[np.geomspace(50, 150, 280), np.linspace(150, 140, 8)]),
+             "DOWN": frame(np.geomspace(150, 50, 288))}
+    shortlist = market.screen(hists, frame(np.linspace(100, 110, 288)))
+    assert list(shortlist["ticker"]) == ["UP"]
+    small = universe.head(30)
+    monkey = market._universe_cache
+    market._universe_cache = (time.time(), small)
+    try:
+        scan = market.run(get_provider("demo"), top=5)
+    finally:
+        market._universe_cache = monkey
+    assert scan["universe"] == 30 and len(scan["results"]) <= 5
+    assert all({"ticker", "verdict", "composite", "triggers"} <= set(r) for r in scan["results"])
+
+
+def test_link_tickers_only_links_whole_symbols():
+    html = ui.link_tickers("Needs attention: RR, RRX & <b>", {"RR", "RRX"})
+    assert '<a href="?view=target&t=RR" target="_self">RR</a>,' in html
+    assert '<a href="?view=target&t=RRX" target="_self">RRX</a>' in html and "&lt;b&gt;" in html

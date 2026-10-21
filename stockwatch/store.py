@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS alerts (
     code TEXT, severity INTEGER, message TEXT, price REAL
 );
 CREATE INDEX IF NOT EXISTS ix_alert_key ON alerts(ticker, code, created_at);
+CREATE TABLE IF NOT EXISTS market_scans (
+    id INTEGER PRIMARY KEY, scanned_at TEXT, payload TEXT
+);
 CREATE TABLE IF NOT EXISTS ticker_overrides (
     ticker TEXT PRIMARY KEY, tier INTEGER, shares REAL, removed INTEGER DEFAULT 0, updated_at TEXT
 );
@@ -76,6 +79,23 @@ class Store:
             "SELECT s.* FROM snapshots s JOIN (SELECT ticker, MAX(id) mid FROM snapshots GROUP BY ticker) m"
             " ON s.id = m.mid ORDER BY s.tier, s.composite DESC")
         return [{**dict(r), "payload": json.loads(r["payload"])} for r in rows]
+
+    def save_market_scan(self, scan: dict) -> None:
+        """Keep the scan summary, and snapshots of the finalists so their detail pages work."""
+        for e in scan.get("evaluations", []):
+            self.save_snapshot(e)
+        summary = {k: v for k, v in scan.items() if k != "evaluations"}
+        self.conn.execute("INSERT INTO market_scans (scanned_at, payload) VALUES (?, ?)",
+                          (datetime.now(timezone.utc).isoformat(timespec="seconds"), json.dumps(summary, default=str)))
+        self.conn.commit()
+
+    def latest_market_scan(self) -> dict | None:
+        r = self.conn.execute("SELECT * FROM market_scans ORDER BY id DESC LIMIT 1").fetchone()
+        return {"scanned_at": r["scanned_at"], **json.loads(r["payload"])} if r else None
+
+    def snapshot(self, ticker: str) -> dict | None:
+        r = self.conn.execute("SELECT * FROM snapshots WHERE ticker=? ORDER BY id DESC LIMIT 1", (ticker,)).fetchone()
+        return {**dict(r), "payload": json.loads(r["payload"])} if r else None
 
     def previous_snapshot(self, ticker: str) -> dict | None:
         """The scan before the latest one, for "what changed" comparisons."""

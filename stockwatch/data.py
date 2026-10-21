@@ -83,6 +83,10 @@ class DataProvider(Protocol):
              "ext_change": float | None (fraction vs regular_price), "ext_time": datetime | None}"""
         ...
 
+    def filings(self, ticker: str) -> dict:
+        """SEC EDGAR data, see sec.fetch."""
+        ...
+
     def research(self, ticker: str) -> dict:
         """Slow-moving deep data, every key optional:
             "earnings": [{"quarter": date, "eps_actual", "eps_estimate", "surprise_pct"}]  newest first
@@ -181,6 +185,28 @@ class YahooProvider:
         return {"market_state": state, "regular_price": regular, "ext_session": session, "ext_price": price,
                 "ext_change": price / regular - 1 if price and regular else None,
                 "ext_time": datetime.fromtimestamp(when, tz=timezone.utc) if isinstance(when, (int, float)) else when}
+
+    def filings(self, ticker: str) -> dict:
+        from . import sec
+        return sec.fetch(ticker)
+
+    def bulk_history(self, tickers: tuple[str, ...], period: str = "2y") -> dict[str, pd.DataFrame]:
+        """Daily bars for many tickers in a few requests (used by the market scan)."""
+        out: dict[str, pd.DataFrame] = {}
+        for i in range(0, len(tickers), 100):
+            chunk = list(tickers[i:i + 100])
+            df = self._yf.download(chunk, period=period, group_by="ticker", auto_adjust=True,
+                                   threads=True, progress=False)
+            for t in chunk:
+                try:
+                    sub = df[t] if len(chunk) > 1 else df
+                    sub = sub[["Open", "High", "Low", "Close", "Volume"]].dropna(how="all")
+                    if len(sub) > 30:
+                        sub.index = pd.to_datetime(sub.index).tz_localize(None)
+                        out[t] = sub
+                except KeyError:
+                    continue
+        return out
 
     def raw_quote(self, ticker: str) -> dict:
         """Uncached raw quote fields, for the dashboard's diagnostics panel."""
@@ -387,6 +413,13 @@ class DemoProvider:
         return {"market_state": state, "regular_price": regular, "ext_session": session, "ext_price": price,
                 "ext_change": move if session else None, "ext_time": datetime.now(timezone.utc) if session else None}
 
+    def filings(self, ticker: str) -> dict:
+        from . import sec
+        return sec.demo(ticker)
+
+    def bulk_history(self, tickers: tuple[str, ...], period: str = "2y") -> dict[str, pd.DataFrame]:
+        return {t: self.history(t).iloc[-504:] for t in tickers}
+
     _HEADLINES = [
         ("{t} beats estimates and raises full-year guidance", 1),
         ("{t} wins multi-year government contract", 1),
@@ -416,7 +449,8 @@ class CachedProvider:
     """Shares fetches across threads and scans. Fundamentals and events change slowly,
     so they're kept longer, which also keeps the Yahoo request count down."""
 
-    TTL = {"history": 300, "fundamentals": 6 * 3600, "events": 3600, "research": 12 * 3600, "quote": 60}
+    TTL = {"history": 300, "fundamentals": 6 * 3600, "events": 3600, "research": 12 * 3600, "quote": 60,
+           "filings": 3 * 3600, "bulk_history": 900}
 
     def __init__(self, inner: DataProvider):
         self.inner = inner
@@ -455,6 +489,12 @@ class CachedProvider:
 
     def quote(self, ticker: str) -> dict:
         return self._get("quote", ticker)
+
+    def filings(self, ticker: str) -> dict:
+        return self._get("filings", ticker)
+
+    def bulk_history(self, tickers: tuple[str, ...], period: str = "2y") -> dict[str, pd.DataFrame]:
+        return self._get("bulk_history", tuple(tickers), period)
 
 
 def get_provider(name: str) -> DataProvider:

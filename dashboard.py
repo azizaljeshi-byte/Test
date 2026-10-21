@@ -6,6 +6,7 @@ import json
 import os
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from html import escape
 from pathlib import Path
 
@@ -13,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import briefing, technical, ui
+from stockwatch import briefing, market, technical, ui
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
 from stockwatch.data import NY, get_provider, us_session
 from stockwatch.engine import evaluate
@@ -72,27 +73,37 @@ st.markdown(ui.header(f"{session} · {len(tickers)} targets · last sweep "
                       f"{last_scan[5:16].replace('T', ' ') + ' UTC' if last_scan else 'never'}"),
             unsafe_allow_html=True)
 
+try:
+    local_now = datetime.now(ZoneInfo(st.context.timezone or "UTC"))
+except Exception:
+    local_now = datetime.now(NY)
+greeting = ("Good morning" if 5 <= local_now.hour < 12 else "Good afternoon" if local_now.hour < 18
+            else "Good evening") + "."
+
 # ---------------------------------------------------------------- controls
 if base.sheet_error:
     st.warning(f"Couldn't read the Google Sheet, showing the backup list instead. {base.sheet_error}")
 
-c1, c2, c3 = st.columns([1.2, 1.3, 1])
-if c1.button("⟳ Sweep now", use_container_width=True):
-    with st.spinner("Sweeping targets..."):
-        scan_now()
-    st.rerun()
-auto = c2.toggle("Auto-sweep", value=False, help="Re-scans on an interval while this page is open.")
-interval = c3.selectbox("Every", [5, 15, 30, 60], index=1, format_func=lambda m: f"{m} min", label_visibility="collapsed")
-
-if auto:
-    @st.fragment(run_every="60s")
-    def _auto():
-        if time.time() - st.session_state.get("last_auto", 0) >= interval * 60:
+def controls():
+    c1, c2 = st.columns([1, 1])
+    if c1.button("⟳ Sweep now", use_container_width=True):
+        with st.spinner("Sweeping targets..."):
             scan_now()
-            st.rerun()
-    _auto()
+        st.rerun()
+    auto = c2.toggle("Auto-sweep", value=False, help="Re-scans on an interval while this page is open.")
+    if auto:
+        interval = st.select_slider("Sweep every", [5, 15, 30, 60], value=15, format_func=lambda m: f"{m} min")
+
+        @st.fragment(run_every="60s")
+        def _auto():
+            if time.time() - st.session_state.get("last_auto", 0) >= interval * 60:
+                scan_now()
+                st.rerun()
+        _auto()
+
 
 if not snaps:
+    controls()
     st.info("No telemetry yet. Hit **⟳ Sweep now** to run the first scan.")
     st.stop()
 
@@ -111,20 +122,47 @@ opps = [s for s in snaps if s["verdict"] in ("OPPORTUNITY - ADD", "BUY SETUP")]
 soon = [s for s in snaps if (s["payload"].get("events") or {}).get("days_to_earnings") is not None
         and s["payload"]["events"]["days_to_earnings"] <= 7]
 held = [s for s in snaps if not s["payload"]["watchlist"]]
+def _names(group):
+    return ui.link_tickers(" ".join(s["ticker"] for s in group[:5]), tickers)
+
+
+parts = []
+if urgent:
+    parts.append(f"<b>{len(urgent)} need{'s' if len(urgent) == 1 else ''} your attention</b>")
+if opps:
+    parts.append(f"<b>{len(opps)} {'is' if len(opps) == 1 else 'are'} in a buy zone</b>")
+if soon:
+    parts.append(f"{len(soon)} report{'s' if len(soon) == 1 else ''} earnings this week")
+summary = ("Across your " + f"{len(held)} positions and {len(snaps) - len(held)} watchlist names: "
+           + (", ".join(parts) if parts else "nothing urgent right now") + ".")
+if reg:
+    summary += f" The market backdrop reads <b>{reg['state'].lower()}</b>."
+st.markdown(ui.hero(greeting, summary), unsafe_allow_html=True)
+
 st.markdown(ui.tiles([
-    market_tile,
-    ("Red alerts", str(len(urgent)), " ".join(s["ticker"] for s in urgent[:4]) or "all clear", ui.RISK if urgent else ui.MUTED),
-    ("Opportunities", str(len(opps)), " ".join(s["ticker"] for s in opps[:4]) or "none in range", ui.OPP if opps else ui.MUTED),
-    ("Earnings ≤7d", str(len(soon)), " ".join(s["ticker"] for s in soon[:4]) or "quiet week", ui.WARN if soon else ui.MUTED),
+    (market_tile[0] + " mood", market_tile[1], escape(market_tile[2]), market_tile[3]),
+    ("Needs attention", str(len(urgent)), _names(urgent) or "all clear", ui.RISK if urgent else ui.MUTED),
+    ("Buy zone", str(len(opps)), _names(opps) or "nothing in range", ui.OPP if opps else ui.MUTED),
+    ("Earnings this week", str(len(soon)), _names(soon) or "quiet week", ui.WARN if soon else ui.MUTED),
 ]), unsafe_allow_html=True)
 
-radar, target, log, fleet = st.tabs(["◉ Radar", "◎ Target", "≡ Log", "⊕ Fleet"])
+controls()
+
+# ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
+VIEWS = {"radar": "◉ Radar", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log", "fleet": "+ Fleet"}
+current = st.query_params.get("view", "radar")
+current = current if current in VIEWS else "radar"
+picked = st.segmented_control("View", list(VIEWS), format_func=VIEWS.get, default=current,
+                              label_visibility="collapsed")
+view = picked or current
+if view != current:
+    st.query_params["view"] = view
 
 # ---------------------------------------------------------------- radar
 prevs = {s["ticker"]: store.previous_snapshot(s["ticker"]) for s in snaps}
 
-with radar:
-    st.markdown(ui.mission_brief(briefing.portfolio(snaps, prevs, reg)), unsafe_allow_html=True)
+if view == "radar":
+    st.markdown(ui.mission_brief(briefing.portfolio(snaps, prevs, reg), tickers), unsafe_allow_html=True)
     view = st.pills("Filter", ["All", "▼ Risk", "▲ Opportunity", "Held", "Watch"], default="All",
                     label_visibility="collapsed")
     shown = sorted(snaps, key=ui.urgency)
@@ -139,15 +177,26 @@ with radar:
     st.markdown(ui.cards(shown) if shown else '<div class="mc-d">no targets match</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- target detail
-with target:
+if view == "target":
     order = [s["ticker"] for s in sorted(snaps, key=ui.urgency)]
-    ticker = st.selectbox("Lock target", order)
-    snap = next(s for s in snaps if s["ticker"] == ticker)
+    wanted = (st.query_params.get("t") or "").upper()
+    extra = store.snapshot(wanted) if wanted and wanted not in order else None
+    if extra:
+        order = [wanted] + order
+    pick = st.selectbox("Stock", order, index=order.index(wanted) if wanted in order else 0)
+    if pick != wanted:
+        st.query_params["t"] = pick
+    ticker = pick
+    snap = extra if extra and ticker == wanted else next(s for s in snaps if s["ticker"] == ticker)
+    if ticker not in tickers:
+        st.caption("Not in your list. " + ("Add a row to your Google Sheet to track it." if base.sheet_url
+                                           else "Add it on the Fleet tab to track it."))
     p = snap["payload"]
     t, f, ev = p["technical"], p["fundamental"], p.get("events") or {}
     st.markdown(ui.cards([snap]), unsafe_allow_html=True)
-    if p.get("name"):
-        st.caption(p["name"] + (f" · {f['industry']}" if f.get("industry") else ""))
+    industry = (p.get("profile") or {}).get("industry")
+    if industry:
+        st.caption(industry)
     note = next((h.notes for h in portfolio.holdings if h.ticker == ticker and h.notes), None)
     if note:
         st.markdown(f'<div class="mc-log"><small>YOUR NOTE</small><br>{escape(note)}</div>', unsafe_allow_html=True)
@@ -258,6 +307,23 @@ with target:
         if not fv and not va.get("peers"):
             st.caption("Not enough data for a valuation comparison.")
 
+    sec_m = research.get("sec") or {}
+    with st.expander("SEC filings", expanded=False):
+        if sec_m.get("filings"):
+            st.markdown("".join(
+                f'<div class="mc-log"><small>{escape(f["date"])}</small><br>'
+                f'<a href="{escape(f["url"])}" target="_blank" style="color:var(--info)">{escape(f["label"])}</a></div>'
+                for f in sec_m["filings"]), unsafe_allow_html=True)
+            facts = []
+            if sec_m.get("shares_change_1y") is not None:
+                facts.append(f"Share count {ui.pct(sec_m['shares_change_1y'], digits=1)} over the last year")
+            if sec_m.get("form4_90d"):
+                facts.append(f"{sec_m['form4_90d']} insider (Form 4) filings in 90 days")
+            if facts:
+                st.caption(" · ".join(facts))
+        else:
+            st.caption("No SEC data. Foreign companies and funds may file differently, or SEC was unreachable.")
+
     with st.expander("All readouts", expanded=False):
         kv = [
             ("Trend", (t.get("trend") or "—").upper()), ("RSI", ui.num(t.get("rsi"), ".0f")),
@@ -289,8 +355,34 @@ with target:
                 + (f'<a href="{escape(n["url"])}" target="_blank">{escape(n["title"])}</a>' if n.get("url") else escape(n["title"]))
                 + "</div>" for n in ev["news"]), unsafe_allow_html=True)
 
+# ---------------------------------------------------------------- S&P 500 scan
+if view == "market":
+    st.markdown('<div class="mc-section">S&P 500 opportunity scan</div>', unsafe_allow_html=True)
+    st.markdown("Screens all S&P 500 stocks for technical entry setups, then runs the full fundamental and "
+                "technical evaluation on the strongest 25. Stocks already in your list are skipped.")
+    if st.button("✦ Scan the S&P 500 now", use_container_width=True):
+        bar = st.progress(0.0, text="Starting...")
+        try:
+            result = market.run(data, progress=lambda f, t: bar.progress(min(f, 1.0), text=t), exclude=tickers)
+            store.save_market_scan(result)
+            st.rerun()
+        except Exception as e:
+            st.error(f"Scan failed: {e}")
+    ms = store.latest_market_scan()
+    if not ms:
+        st.caption("No scan yet. It takes a minute or two on live data.")
+    else:
+        when = ms["scanned_at"][5:16].replace("T", " ")
+        st.caption(f"Last scan {when} UTC · {ms['priced']} of {ms['universe']} stocks priced · "
+                   f"{ms['setups']} setups · {len(ms['results'])} evaluated in depth. Tap a stock for details.")
+        pick = st.pills("Show", ["Buy setups", "All finalists"], default="Buy setups", label_visibility="collapsed")
+        rows = [r for r in ms["results"] if pick == "All finalists" or r["verdict"] == "BUY SETUP"]
+        st.markdown(f'<div class="mc-cards">{"".join(ui.market_card(r) for r in rows)}</div>' if rows
+                    else '<div class="mc-d">No buy setups in the last scan. Try "All finalists".</div>',
+                    unsafe_allow_html=True)
+
 # ---------------------------------------------------------------- alert log
-with log:
+if view == "log":
     alerts = [a for a in store.recent_alerts(150) if a["ticker"] in tickers]
     if not alerts:
         st.markdown('<div class="mc-d">no transmissions yet</div>', unsafe_allow_html=True)
@@ -332,7 +424,7 @@ def overview_for(h: Holding, acquired: bool) -> None:
         st.markdown(ui.overview_card(briefing.overview(snap), h.ticker, acquired=acquired), unsafe_allow_html=True)
 
 
-with fleet:
+if view == "fleet":
     just_added = [t for t in st.session_state.get("just_added", []) if t in tickers]
     for sym in st.session_state.get("add_failed", []):
         st.error(f"{sym}: no market data found - check the symbol")
