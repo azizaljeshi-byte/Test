@@ -136,7 +136,7 @@ Options-implied moves are compared with the stock's usual reaction. Within a wee
 - **Each stock** gets a plain-English summary: why it has its verdict, what changed since the last scan, and what to watch next (earnings, key levels, the 200-day trigger, fair value, stops).
 - **The Radar tab** opens with a portfolio-level mission brief.
 
-**Extended hours:** each sweep, and every page load during pre-market or after-hours (when prices are over 3 minutes old), reads the latest extended-hours price. It comes from Yahoo's quote, falling back to 1-minute and then 5-minute bars that include extended hours. **Log → System diagnostics** shows, for each stock, the session, the price, which source answered, and any problem.
+**Live prices:** while the market is trading (pre-market, regular hours, after-hours), prices refresh every 2 minutes while the page is open, and on page load when they're over 3 minutes old. During regular hours cards show the live price and today's change, marked LIVE. Outside regular hours they show the latest pre-market or after-hours trade. Scores, verdicts and plans still update on a sweep. It comes from Yahoo's quote, falling back to 1-minute and then 5-minute bars that include extended hours. **Log → System diagnostics** shows, for each stock, the session, the price, which source answered, and any problem.
 Cards show `PRE` or `AH` next to the regular close, and the header shows the current session.
 A move of 3% or more outside regular hours raises a signal; 5% or more on a stock you hold raises an alert (often an earnings reaction).
 Scores and indicators still use regular-session prices.

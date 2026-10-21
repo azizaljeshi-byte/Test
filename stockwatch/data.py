@@ -205,40 +205,47 @@ class YahooProvider:
 
     @_yahoo
     def quote(self, ticker: str) -> dict:
-        """Latest extended-hours price from minute bars that include pre/post-market trading.
+        """Live price from minute bars that include pre/post-market trading.
 
-        This uses Yahoo's chart data, which works without the token that Yahoo rate-limits; the
-        quote endpoint (marketState, preMarketPrice) fails with 401s once the token is throttled.
-        The session comes from the New York clock."""
+        During regular hours: the latest trade and today's change. Outside them: the latest
+        pre-market or after-hours trade against the last regular close. Uses Yahoo's chart
+        data, which works without the token that Yahoo rate-limits. The session comes from
+        the New York clock."""
         t = self._yf.Ticker(ticker)
         clock = us_session()
-        errors, session, price, when, regular, source = [], None, None, None, None, None
-        for period, interval in (("2d", "1m"), ("5d", "5m")):
+        errors, bars, source = [], None, None
+        for period, interval in (("5d", "1m"), ("5d", "5m")):
             try:
-                b_sess, b_price, b_when, last_regular = self._extended_from_bars(t, period, interval)
+                bars = self._bar_summary(t, period, interval)
+                source = f"{interval} bars"
+                break
             except Exception as e:
                 errors.append(f"{interval} bars: {e}")
-                continue
-            regular = regular or last_regular
-            if b_price is not None:
-                session, price, when, source = b_sess, b_price, b_when, f"{interval} bars"
-                break
-            if last_regular is not None:
-                break  # bars came back fine; there just isn't an extended-hours trade after the close
-        if clock == "REGULAR":
-            session = price = when = None   # the regular price is the live price
-        if price is None and clock != "REGULAR" and not errors:
-            errors.append("no extended-hours trades since the last close")
-        return {"market_state": clock, "regular_price": regular, "ext_session": session, "ext_price": price,
-                "ext_change": price / regular - 1 if price and regular else None, "ext_time": when,
-                # an after-hours price shown during pre-market is last night's
-                "ext_stale": bool(session == "post" and clock == "PRE"),
-                "source": source, "error": "; ".join(errors) or None,
-                "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        out = {"market_state": clock, "ext_session": None, "ext_price": None, "ext_change": None, "ext_time": None,
+               "ext_stale": False, "live_price": None, "live_change": None, "live_time": None,
+               "regular_price": None, "source": source if bars else None,
+               "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        if bars:
+            out["regular_price"] = bars["last_regular"]
+            if clock == "REGULAR" and bars["last_session"] == "REGULAR":
+                out["live_price"], out["live_time"] = bars["last_close"], bars["last_time"]
+                if bars["prev_regular"]:
+                    out["live_change"] = bars["last_close"] / bars["prev_regular"] - 1
+            elif clock != "REGULAR" and bars["last_session"] in ("PRE", "POST"):
+                sess = bars["last_session"].lower()
+                out.update(ext_session=sess, ext_price=bars["last_close"], ext_time=bars["last_time"],
+                           ext_stale=sess == "post" and clock == "PRE")
+                if bars["last_regular"]:
+                    out["ext_change"] = bars["last_close"] / bars["last_regular"] - 1
+            elif clock != "REGULAR":
+                errors.append("no extended-hours trades since the last close")
+        out["error"] = "; ".join(errors) or None
+        return out
 
     @staticmethod
-    def _extended_from_bars(t, period: str, interval: str):
-        """Last bar outside regular hours after the latest regular-session bar, plus that regular close."""
+    def _bar_summary(t, period: str, interval: str) -> dict:
+        """Latest bar and its session, the latest regular-session close, and the regular close
+        of the trading day before it (for today's change)."""
         bars = t.history(period=period, interval=interval, prepost=True)
         if bars.empty:
             raise ValueError("no bars returned")
@@ -246,11 +253,16 @@ class YahooProvider:
         idx = bars.index if bars.index.tz is not None else bars.index.tz_localize("UTC")
         sessions = [us_session(ts.to_pydatetime()) for ts in idx]
         regular = [i for i, sess in enumerate(sessions) if sess == "REGULAR"]
-        last_regular = float(bars["Close"].iloc[regular[-1]]) if regular else None
-        if sessions[-1] not in ("PRE", "POST"):
-            return None, None, None, last_regular
-        return (sessions[-1].lower(), float(bars["Close"].iloc[-1]),
-                idx[-1].to_pydatetime().astimezone(timezone.utc), last_regular)
+        last_regular = prev_regular = None
+        if regular:
+            last_i = regular[-1]
+            last_regular = float(bars["Close"].iloc[last_i])
+            day = idx[last_i].tz_convert(NY).date()
+            earlier = [i for i in regular if idx[i].tz_convert(NY).date() < day]
+            prev_regular = float(bars["Close"].iloc[earlier[-1]]) if earlier else None
+        return {"last_close": float(bars["Close"].iloc[-1]), "last_session": sessions[-1],
+                "last_time": idx[-1].to_pydatetime().astimezone(timezone.utc),
+                "last_regular": last_regular, "prev_regular": prev_regular}
 
     def filings(self, ticker: str) -> dict:
         from . import sec
@@ -540,9 +552,13 @@ class DemoProvider:
         session = {"PRE": "pre", "POST": "post", "CLOSED": "post"}.get(state)
         move = float(rng.choice([rng.normal(0, 0.01), rng.normal(0, 0.01), rng.choice([-0.08, 0.07])]))
         price = regular * (1 + move) if session else None
+        live = state == "REGULAR"
+        drift = float(np.random.default_rng().normal(0, 0.004))   # a little movement between refreshes
         return {"market_state": state, "regular_price": regular, "ext_session": session, "ext_price": price,
                 "ext_change": move if session else None, "ext_time": datetime.now(timezone.utc) if session else None,
-                "ext_stale": False, "source": "demo", "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+                "ext_stale": False, "live_price": regular * (1 + drift) if live else None,
+                "live_change": drift if live else None, "live_time": datetime.now(timezone.utc) if live else None,
+                "source": "demo", "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
 
     def filings(self, ticker: str) -> dict:
         from . import sec

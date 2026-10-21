@@ -66,8 +66,8 @@ def scan_now():
     st.session_state.last_auto = time.time()
 
 
-# outside regular hours, keep extended-hours prices fresh without waiting for a full sweep
-if us_session() in ("PRE", "POST") and tickers:
+# whenever the market is trading, keep prices fresh without waiting for a full sweep
+if us_session() != "CLOSED" and tickers:
     fetched = [((x["payload"].get("quote") or {}).get("fetched_at") or "") for x in store.latest_snapshots()
                if x["ticker"] in tickers]
     stale_before = datetime.now(NY).astimezone().timestamp() - 180
@@ -80,7 +80,7 @@ last_scan = max((s["scanned_at"] for s in snaps), default=None)
 session = ui.SESSION_LABEL[us_session()]
 quote_times = [(x["payload"].get("quote") or {}).get("fetched_at") for x in snaps]
 quote_times = [q for q in quote_times if q]
-live = (f" · prices {max(quote_times)[11:16]} UTC" if quote_times and us_session() in ("PRE", "POST") else "")
+live = (f" · prices {max(quote_times)[11:16]} UTC" if quote_times and us_session() != "CLOSED" else "")
 st.markdown(ui.header(f"{session}{live} · {len(tickers)} targets · last sweep "
                       f"{last_scan[5:16].replace('T', ' ') + ' UTC' if last_scan else 'never'}"),
             unsafe_allow_html=True)
@@ -162,8 +162,8 @@ controls()
 
 LIVE_REFRESH_SECONDS = 120
 
-if us_session() in ("PRE", "POST"):
-    # keep pre-market / after-hours prices moving while the page is open (minute bars only, so cheap)
+if us_session() != "CLOSED":
+    # keep prices moving while the page is open, in and out of regular hours (minute bars only, so cheap)
     @st.fragment(run_every=f"{LIVE_REFRESH_SECONDS}s")
     def _live_prices():
         newest = max(quote_times) if quote_times else None

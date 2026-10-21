@@ -434,6 +434,15 @@ def test_quote_falls_back_to_5m_bars_and_reports_failures(monkeypatch):
     assert live["ext_price"] is None and live["error"] is None
 
 
+def test_quote_gives_live_price_and_day_change_in_regular_hours(monkeypatch):
+    _clock(monkeypatch, "REGULAR")
+    bars = _bars(("2026-10-20 15:59", 100.0), ("2026-10-20 18:00", 99.0),   # yesterday's close, then after hours
+                 ("2026-10-21 08:00", 101.0), ("2026-10-21 11:42", 103.0))  # this morning's pre-market, then live
+    q = _fake_yahoo({}, bars).quote("X")
+    assert q["live_price"] == 103.0 and abs(q["live_change"] - 0.03) < 1e-9   # vs yesterday's regular close
+    assert q["ext_price"] is None and q["live_time"].tzinfo is not None
+
+
 def test_yahoo_fundamentals_refuse_empty_responses():
     with pytest.raises(RuntimeError, match="rate-limited"):
         _fake_yahoo({"shortName": "X"}).fundamentals("X")
@@ -885,3 +894,16 @@ def test_technical_score_curve_and_breakdown():
     worse = frame(np.r_[np.geomspace(150, 40, 290), np.geomspace(40, 25, 10)])
     assert technical.analyze(worse)[0] < ts               # still ranked, not tied at 0
     assert technical.to_score(0) == 50 and abs(technical.to_score(10) - 60) < 1.5   # ~1:1 near the middle
+
+
+def test_card_shows_live_price_during_regular_hours():
+    snap = {"ticker": "X", "tier": 1, "verdict": "HOLD", "price": 100.0, "fundamental_score": 60,
+            "technical_score": 55, "composite": 58,
+            "payload": {"watchlist": False, "signals": [], "position": {}, "fundamental": {"available": True},
+                        "technical": {"day_change": 0.01, "trend": "up"},
+                        "quote": {"market_state": "REGULAR", "live_price": 104.5, "live_change": 0.045,
+                                  "fetched_at": "2026-10-21T15:42:10+00:00"}}}
+    html = ui.card(snap)
+    assert "104.50" in html and "+4.5%" in html and "LIVE 15:42" in html and ">100.00" not in html
+    snap["payload"]["quote"] = {"market_state": "CLOSED"}
+    assert "100.00" in ui.card(snap) and "LIVE" not in ui.card(snap)

@@ -251,9 +251,15 @@ def card(snap: dict) -> str:
     urgent = any(s["kind"] == "risk" and s["severity"] >= 3 for s in p["signals"])
     tag = "WATCH" if p["watchlist"] else f"T{snap['tier']}"
     day = t.get("day_change")
+    q = p.get("quote") or {}
+    live = q.get("market_state") == "REGULAR" and not nan(q.get("live_price"))
+    price_now = q["live_price"] if live else snap["price"]
+    if live and not nan(q.get("live_change")):
+        day = q["live_change"]
     day_html = "" if nan(day) else (
         f' <small><i class="mc-g" style="color:{OPP if day >= 0 else RISK}">{"▲" if day >= 0 else "▼"}</i>{pct(day, digits=1)}</small>')
-    q = p.get("quote") or {}
+    if live and q.get("fetched_at"):
+        day_html += f' <small style="color:{OPP}">· LIVE {q["fetched_at"][11:16]}</small>'
     if q.get("market_state") in ("PRE", "POST") and (nan(q.get("ext_price")) or q.get("ext_stale")):
         day_html += (f' <small style="color:{MUTED}">· {"PRE" if q["market_state"] == "PRE" else "AH"} '
                      f'no trades yet</small>')
@@ -290,7 +296,7 @@ def card(snap: dict) -> str:
             f'<div class="mc-row"><div><span class="mc-tk">{escape(snap["ticker"])}</span><span class="mc-tag">{tag}</span>'
             f'<span class="mc-name">{escape(name)}</span></div>'
             f'<span class="mc-chip" style="--c:{color}"><b>{glyph}</b> {escape(snap["verdict"])}</span></div>'
-            f'<div class="mc-px">{num(snap["price"])}{day_html}</div>'
+            f'<div class="mc-px">{num(price_now)}{day_html}</div>'
             f'{_bar("FUND·SEC" if p.get("fundamental", {}).get("source") == "SEC filings" else "FUND", snap["fundamental_score"] if p.get("fundamental", {}).get("available", True) else None)}'
             f'{_bar("TECH", snap["technical_score"])}{_bar("Σ ALL", snap["composite"])}'
             f'<div class="mc-meta">{"".join(f"<span>{m}</span>" for m in meta)}</div>{sig}{plan_line(p.get("plan"))}</div></a>')
