@@ -1,17 +1,21 @@
 """StockWatch Mission Control: streamlit run dashboard.py"""
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import time
+from datetime import datetime
 from html import escape
+from pathlib import Path
 
 import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
 from stockwatch import briefing, technical, ui
-from stockwatch.config import load_portfolio, to_yaml
-from stockwatch.data import get_provider, us_session
+from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
+from stockwatch.data import NY, get_provider, us_session
 from stockwatch.engine import evaluate
 from stockwatch.relative import market_regime
 from stockwatch.scanner import run_once
@@ -21,21 +25,39 @@ st.set_page_config(page_title="StockWatch · Mission Control", page_icon="🛸",
 st.markdown(ui.CSS, unsafe_allow_html=True)
 
 
+# Streamlit keeps cached objects across code updates; keying them on the code itself makes a
+# deploy rebuild them instead of serving an instance of the previous version's classes.
+CODE_VERSION = hashlib.sha1(b"".join(
+    f.read_bytes() for f in sorted(Path(__file__).parent.joinpath("stockwatch").glob("*.py")))).hexdigest()[:8]
+
+
 @st.cache_resource
-def get_store() -> Store:
+def get_store(code_version: str) -> Store:
     return Store()
 
 
 @st.cache_resource
-def provider(name: str):
+def provider(name: str, code_version: str):
     return get_provider(name)
 
 
-base = load_portfolio()
-store = get_store()
-data = provider("demo" if os.getenv("STOCKWATCH_DEMO") else base.settings.data_provider)
-portfolio = store.apply_overrides(base)
+@st.cache_data(ttl=60, show_spinner=False)
+def cached_portfolio(code_version: str):
+    return load_portfolio()
+
+
+base = cached_portfolio(CODE_VERSION)
+store = get_store(CODE_VERSION)
+data = provider("demo" if os.getenv("STOCKWATCH_DEMO") else base.settings.data_provider, CODE_VERSION)
+# with a Google Sheet, the sheet is the only list; dashboard additions are for setups without one
+portfolio = base if base.sheet_url else store.apply_overrides(base)
 tickers = {h.ticker for h in portfolio.holdings}
+
+# tickers that appeared in the sheet since this browser session last looked get an overview
+known = st.session_state.setdefault("known_tickers", set(tickers))
+if base.sheet_url and tickers - known:
+    st.session_state.just_added = sorted(tickers - known)
+st.session_state.known_tickers = known | tickers
 
 
 def scan_now():
@@ -51,6 +73,9 @@ st.markdown(ui.header(f"{session} · {len(tickers)} targets · last sweep "
             unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- controls
+if base.sheet_error:
+    st.warning(f"Couldn't read the Google Sheet, showing the backup list instead. {base.sheet_error}")
+
 c1, c2, c3 = st.columns([1.2, 1.3, 1])
 if c1.button("⟳ Sweep now", use_container_width=True):
     with st.spinner("Sweeping targets..."):
@@ -123,6 +148,9 @@ with target:
     st.markdown(ui.cards([snap]), unsafe_allow_html=True)
     if p.get("name"):
         st.caption(p["name"] + (f" · {f['industry']}" if f.get("industry") else ""))
+    note = next((h.notes for h in portfolio.holdings if h.ticker == ticker and h.notes), None)
+    if note:
+        st.markdown(f'<div class="mc-log"><small>YOUR NOTE</small><br>{escape(note)}</div>', unsafe_allow_html=True)
     st.markdown(ui.brief(briefing.stock(snap, prevs.get(ticker))), unsafe_allow_html=True)
     with st.expander("Company overview & report card", expanded=False):
         st.markdown(ui.overview_card(briefing.overview(snap), ticker), unsafe_allow_html=True)
@@ -271,50 +299,105 @@ with log:
         f'{ui.signal_glyph(a["kind"])}<b>{escape(a["ticker"])}</b> @ {a["price"]:.2f} — {escape(a["message"])}</div>'
         for a in alerts), unsafe_allow_html=True)
 
-# ---------------------------------------------------------------- fleet management
-with fleet:
-    st.markdown('<div class="mc-section">Add targets</div>', unsafe_allow_html=True)
-    with st.form("add", clear_on_submit=True, border=False):
-        raw = st.text_input("Tickers", placeholder="e.g. PLTR, AMZN, TSM")
-        a, b = st.columns(2)
-        tier = a.radio("Tier", [1, 2], horizontal=True, format_func=lambda x: f"T{x} {'core' if x == 1 else 'tactical'}")
-        shares = b.number_input("Shares (0 = watchlist)", min_value=0.0, value=0.0, step=1.0)
-        submitted = st.form_submit_button("⊕ Add to fleet", use_container_width=True)
-    if submitted and raw.strip():
-        added, failed = [], []
-        with st.spinner("Acquiring target..."):
-            for sym in dict.fromkeys(x.strip().upper() for x in raw.replace(" ", ",").split(",") if x.strip()):
-                try:
-                    data.history(sym)  # confirms the symbol exists before saving it
-                except Exception:
-                    failed.append(sym)
-                    continue
-                store.upsert_ticker(sym, tier, shares)
-                h = next(h for h in store.apply_overrides(base).holdings if h.ticker == sym)
-                store.save_snapshot(evaluate(h, portfolio, data))
-                added.append(sym)
-        st.session_state.just_added, st.session_state.add_failed = added, failed
-        st.rerun()
+    with st.expander("System diagnostics", expanded=False):
+        now_ny = datetime.now(NY)
+        st.markdown('<div class="mc-kv">' + "".join(f"<div><span>{k}</span>{escape(str(v))}</div>" for k, v in [
+            ("Code version", CODE_VERSION), ("New York time", now_ny.strftime("%a %H:%M")),
+            ("Session (clock)", us_session()), ("Data source", type(getattr(data, "inner", data)).__name__),
+            ("Ticker list", "Google Sheet" if base.sheet_url else "secret / YAML + app edits"),
+            ("Tickers", len(tickers)),
+        ]) + "</div>", unsafe_allow_html=True)
+        probe = st.text_input("Test a live quote", value=next(iter(sorted(tickers)), "AAPL"), key="probe").strip().upper()
+        if st.button("Fetch raw quote"):
+            inner = getattr(data, "inner", data)
+            try:
+                raw = inner.raw_quote(probe) if hasattr(inner, "raw_quote") else inner.quote(probe)
+                st.code(json.dumps(raw, indent=1, default=str), language="json")
+                st.caption("Parsed by the app as:")
+                st.code(json.dumps(inner.quote(probe), indent=1, default=str), language="json")
+            except Exception as e:
+                st.error(f"Quote failed: {e}")
 
+# ---------------------------------------------------------------- fleet management
+
+
+def overview_for(h: Holding, acquired: bool) -> None:
+    """Show a ticker's overview, scanning it first if it hasn't been scanned yet."""
+    snap = next((x for x in store.latest_snapshots() if x["ticker"] == h.ticker), None)
+    if snap is None:
+        with st.spinner(f"Acquiring {h.ticker}..."):
+            store.save_snapshot(evaluate(h, portfolio, data))
+        snap = next((x for x in store.latest_snapshots() if x["ticker"] == h.ticker), None)
+    if snap:
+        st.markdown(ui.overview_card(briefing.overview(snap), h.ticker, acquired=acquired), unsafe_allow_html=True)
+
+
+with fleet:
+    just_added = [t for t in st.session_state.get("just_added", []) if t in tickers]
     for sym in st.session_state.get("add_failed", []):
         st.error(f"{sym}: no market data found - check the symbol")
-    just_added = [s for s in st.session_state.get("just_added", []) if s in tickers]
+
+    if base.sheet_url:
+        st.markdown('<div class="mc-section">Ticker list</div>', unsafe_allow_html=True)
+        st.markdown(f"Your tickers come from your **[Google Sheet ↗]({sheet_edit_url(base.sheet_url)})**. "
+                    "Add or delete rows there; the app picks up changes within a minute, "
+                    "and new tickers get an overview here.")
+        if st.button("⟳ Reload sheet now"):
+            cached_portfolio.clear()
+            st.rerun()
+    else:
+        st.markdown('<div class="mc-section">Add targets</div>', unsafe_allow_html=True)
+        with st.form("add", clear_on_submit=True, border=False):
+            raw = st.text_input("Tickers", placeholder="e.g. PLTR, AMZN, TSM")
+            a, b = st.columns(2)
+            tier = a.radio("Tier", [1, 2], horizontal=True, format_func=lambda x: f"T{x} {'core' if x == 1 else 'tactical'}")
+            shares = b.number_input("Shares (0 = watchlist)", min_value=0.0, value=0.0, step=1.0)
+            submitted = st.form_submit_button("⊕ Add to fleet", use_container_width=True)
+        if submitted and raw.strip():
+            added, failed = [], []
+            with st.spinner("Acquiring target..."):
+                for sym in dict.fromkeys(x.strip().upper() for x in raw.replace(" ", ",").split(",") if x.strip()):
+                    try:
+                        data.history(sym)  # confirms the symbol exists before saving it
+                    except Exception:
+                        failed.append(sym)
+                        continue
+                    store.upsert_ticker(sym, tier, shares)
+                    h = next(h for h in store.apply_overrides(base).holdings if h.ticker == sym)
+                    store.save_snapshot(evaluate(h, portfolio, data))
+                    added.append(sym)
+            st.session_state.just_added, st.session_state.add_failed = added, failed
+            st.rerun()
+
     for sym in just_added:
-        snap = next((s for s in store.latest_snapshots() if s["ticker"] == sym), None)
-        if snap:
-            st.markdown(ui.overview_card(briefing.overview(snap), sym, acquired=True), unsafe_allow_html=True)
+        overview_for(next(h for h in portfolio.holdings if h.ticker == sym), acquired=True)
     if just_added and st.button("Dismiss overview", key="dismiss"):
         st.session_state.just_added, st.session_state.add_failed = [], []
         st.rerun()
 
-    st.markdown('<div class="mc-section">Remove targets</div>', unsafe_allow_html=True)
-    drop = st.multiselect("Remove", sorted(tickers), label_visibility="collapsed", placeholder="Pick tickers to remove")
-    if st.button("✕ Remove selected", disabled=not drop):
-        for sym in drop:
-            store.remove_ticker(sym)
-        st.rerun()
+    st.markdown('<div class="mc-section">Quick look</div>', unsafe_allow_html=True)
+    look = st.text_input("Look up any ticker without tracking it", placeholder="e.g. AMZN",
+                         key="quick_look").strip().upper()
+    if look:
+        try:
+            data.history(look)
+            overview_for(Holding(look, 2, 0), acquired=False)
+            if look not in tickers:
+                st.caption("Not tracked. " + ("Add a row to the sheet to track it." if base.sheet_url
+                                              else "Use Add targets above to track it."))
+        except Exception:
+            st.error(f"{look}: no market data found - check the symbol")
 
-    st.markdown('<div class="mc-section">Make it permanent</div>', unsafe_allow_html=True)
-    st.caption("Changes here are saved in the app's database, which Streamlit Cloud wipes on a reboot or redeploy. "
-               "To keep them, paste this into the app's STOCKWATCH_PORTFOLIO secret (between the triple quotes).")
-    st.code(to_yaml(portfolio), language="yaml")
+    if not base.sheet_url:
+        st.markdown('<div class="mc-section">Remove targets</div>', unsafe_allow_html=True)
+        drop = st.multiselect("Remove", sorted(tickers), label_visibility="collapsed", placeholder="Pick tickers to remove")
+        if st.button("✕ Remove selected", disabled=not drop):
+            for sym in drop:
+                store.remove_ticker(sym)
+            st.rerun()
+
+        st.markdown('<div class="mc-section">Make it permanent</div>', unsafe_allow_html=True)
+        st.caption("Changes here are saved in the app's database, which Streamlit Cloud wipes on a reboot or redeploy. "
+                   "To keep them, paste this into the app's STOCKWATCH_PORTFOLIO secret (between the triple quotes), "
+                   "or connect a Google Sheet with STOCKWATCH_SHEET_URL.")
+        st.code(to_yaml(portfolio), language="yaml")

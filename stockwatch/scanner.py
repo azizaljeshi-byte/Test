@@ -38,15 +38,20 @@ def main(argv=None):
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    base = load_portfolio(args.portfolio)
-    provider = get_provider("demo" if args.demo else base.settings.data_provider)
+    first = load_portfolio(args.portfolio)
+    provider = get_provider("demo" if args.demo else first.settings.data_provider)
     store = Store()
-    interval = args.interval or base.settings.scan_interval_minutes
+    interval = args.interval or first.settings.scan_interval_minutes
 
     while True:
         try:
-            # re-read each loop so tickers added from the dashboard are picked up
-            run_once(store.apply_overrides(base), provider, store)
+            # re-read each loop so edits to the Google Sheet (or dashboard additions) are picked up
+            portfolio = load_portfolio(args.portfolio)
+            if portfolio.sheet_error:
+                log.warning("Google Sheet unavailable, using the YAML list: %s", portfolio.sheet_error)
+            if not portfolio.sheet_url:
+                portfolio = store.apply_overrides(portfolio)
+            run_once(portfolio, provider, store)
         except Exception:
             log.exception("scan failed")
         if args.once:

@@ -1,3 +1,5 @@
+import io
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -452,3 +454,69 @@ def test_send_survives_channel_failure(monkeypatch, capsys):
     monkeypatch.setenv("NTFY_TOPIC", "sw-test")
     notify.send([("AAA", 1.0, "HOLD", Signal("risk", "t", "x", "msg", 2))])
     assert "AAA" in capsys.readouterr().out
+
+
+# ---- Google Sheet ticker list
+
+from stockwatch import config as cfg
+
+SHEET = "https://docs.google.com/spreadsheets/d/1SQ8UHD2HYSTPFex7VV8fUQ3KRWQ087SqdFNS7lXPEzA/edit#gid=0"
+
+
+def test_sheet_urls():
+    assert cfg.sheet_csv_url(SHEET).endswith("/1SQ8UHD2HYSTPFex7VV8fUQ3KRWQ087SqdFNS7lXPEzA/export?format=csv&gid=0")
+    assert cfg.sheet_csv_url(SHEET.replace("gid=0", "gid=77")).endswith("gid=77")
+    pub = "https://docs.google.com/spreadsheets/d/e/2PACX-abc/pub?gid=0&single=true&output=csv"
+    assert cfg.sheet_csv_url(pub) == pub
+    assert cfg.sheet_edit_url(SHEET) == SHEET.split("#")[0]
+
+
+def test_parse_holdings_csv_is_forgiving():
+    text = ("Ticker,Tier,Shares,Avg cost,Target price,Notes\n"
+            "googl,1,1.5,\"$1,150.50\",,core idea\n"
+            " NVDA ,x,3,,,\n"
+            ",,,,,\n"
+            "RR,2,,,,\n"
+            "NVDA,1,4,,,\n")
+    hs = {h.ticker: h for h in cfg.parse_holdings_csv(text)}
+    assert list(hs) == ["GOOGL", "NVDA", "RR"]
+    assert hs["GOOGL"].cost_basis == 1150.5 and hs["GOOGL"].notes == "core idea"
+    assert hs["NVDA"].tier == 1 and hs["NVDA"].shares == 4    # duplicate row: last one wins
+    assert hs["RR"].is_watchlist and hs["RR"].tier == 2
+    with pytest.raises(ValueError):
+        cfg.parse_holdings_csv("Symbol-ish,Tier\nX,1\n")
+
+
+def test_load_portfolio_prefers_sheet_and_falls_back(monkeypatch):
+    monkeypatch.setenv("STOCKWATCH_PORTFOLIO", "holdings:\n  - {ticker: OLD, tier: 1}\n")
+    monkeypatch.setenv("STOCKWATCH_SHEET_URL", SHEET)
+    monkeypatch.setattr(cfg, "fetch_sheet_csv", lambda url: "Ticker,Tier,Shares\nNEW,2,5\n")
+    p = cfg.load_portfolio()
+    assert [h.ticker for h in p.holdings] == ["NEW"] and p.sheet_url == SHEET and p.sheet_error is None
+
+    def boom(url):
+        raise PermissionError("not shared")
+    monkeypatch.setattr(cfg, "fetch_sheet_csv", boom)
+    p = cfg.load_portfolio()
+    assert [h.ticker for h in p.holdings] == ["OLD"] and p.sheet_url is None and "not shared" in p.sheet_error
+
+
+def test_fetch_sheet_csv_detects_unshared_sheet(monkeypatch):
+    class Resp(io.BytesIO):
+        def __init__(self, body, ctype):
+            super().__init__(body)
+            self.headers = {"Content-Type": ctype}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+    monkeypatch.setattr(cfg.urllib.request, "urlopen",
+                        lambda url, timeout: Resp(b"<!DOCTYPE html><title>Sign in</title>", "text/html"))
+    with pytest.raises(PermissionError, match="Anyone with the link"):
+        cfg.fetch_sheet_csv(SHEET)
+    monkeypatch.setattr(cfg.urllib.request, "urlopen",
+                        lambda url, timeout: Resp("﻿Ticker,Tier\nAAA,1\n".encode(), "text/csv"))
+    assert cfg.fetch_sheet_csv(SHEET).startswith("Ticker")

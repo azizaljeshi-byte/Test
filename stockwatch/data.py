@@ -182,6 +182,13 @@ class YahooProvider:
                 "ext_change": price / regular - 1 if price and regular else None,
                 "ext_time": datetime.fromtimestamp(when, tz=timezone.utc) if isinstance(when, (int, float)) else when}
 
+    def raw_quote(self, ticker: str) -> dict:
+        """Uncached raw quote fields, for the dashboard's diagnostics panel."""
+        info = self._yf.Ticker(ticker).info or {}
+        keys = ("marketState", "regularMarketPrice", "regularMarketTime", "preMarketPrice", "preMarketTime",
+                "postMarketPrice", "postMarketTime", "exchangeTimezoneName")
+        return {k: info.get(k) for k in keys}
+
     @staticmethod
     def _extended_from_bars(t, state: str):
         """Fallback when the quote lacks extended prices: last 5-minute bar outside regular hours."""

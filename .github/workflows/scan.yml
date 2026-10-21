@@ -18,6 +18,7 @@ jobs:
     timeout-minutes: 15
     env:
       STOCKWATCH_PORTFOLIO: ${{ secrets.STOCKWATCH_PORTFOLIO }}
+      STOCKWATCH_SHEET_URL: ${{ secrets.STOCKWATCH_SHEET_URL }}
       NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
       NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
       NTFY_SERVER: ${{ vars.NTFY_SERVER }}

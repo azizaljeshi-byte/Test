@@ -106,6 +106,21 @@ export SMTP_HOST=smtp.gmail.com SMTP_PORT=587 SMTP_USER=you@gmail.com SMTP_PASSW
 
 To scan 24/7, run the scanner as a service (systemd, `tmux`, or a small cloud VM). Or run `--once` from cron.
 
+## Ticker list in a Google Sheet
+
+Keep your tickers in a Google Sheet so the dashboard and the notification job always read the same list.
+The first tab needs a header row with `Ticker`, `Tier`, `Shares`, and optionally `Avg cost`, `Target price` and `Notes`.
+A Shares value of 0 or blank puts the stock on the watchlist.
+
+1. In the sheet, click **Share** and set General access to **Anyone with the link → Viewer**. The app reads the sheet without signing in, so the link works like a password: anyone who has it can see the list.
+2. Add the sheet's link as `STOCKWATCH_SHEET_URL`:
+   - in Streamlit (**Settings → Secrets**): `STOCKWATCH_SHEET_URL = "https://docs.google.com/spreadsheets/d/.../edit"`
+   - in GitHub (**Settings → Secrets and variables → Actions**): a secret with the same name and value
+3. Edit the sheet from anywhere, including the Google Sheets app on your phone. The dashboard picks up changes within a minute (or tap **Reload sheet now** on the Fleet tab), and new tickers get a company overview.
+
+If the sheet can't be read, the app falls back to `STOCKWATCH_PORTFOLIO` (or `portfolio.yaml`) and shows a warning.
+A "Publish to web → CSV" link also works instead of link sharing.
+
 ## Use it from your phone
 
 You don't need a computer that stays on. This setup uses two free services:
@@ -123,7 +138,7 @@ The dashboard only scans while it's open. For alerts while your phone is in your
 Push priority follows severity. Urgent risks (stop hit, thesis breakdown) arrive as high-priority notifications; opportunities arrive as normal ones. The job does nothing until `NTFY_TOPIC` (or Telegram) is set.
 
 **Things to know:**
-- **Tickers added in the dashboard aren't scanned by the job.** It reads only the `STOCKWATCH_PORTFOLIO` secret, so keep that secret up to date (the Fleet tab shows the text to paste).
+- **Use the Google Sheet for your ticker list** (see above). The job reads the same sheet as the dashboard, so additions are scanned for notifications too. Without a sheet, the job reads only the `STOCKWATCH_PORTFOLIO` secret, and tickers added in the dashboard aren't scanned.
 - **Don't also set `NTFY_TOPIC` in Streamlit,** or you'll get duplicate pushes when you sweep from the app.
 - **GitHub pauses scheduled jobs after 60 days with no repo activity.** Re-enable it from the Actions tab.
 
