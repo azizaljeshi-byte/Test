@@ -983,3 +983,49 @@ def test_tracker_runs_the_sp500_scan_on_schedule(monkeypatch, tmp_path):
         assert {a["ticker"] for a in logged} == buys              # logged once, not again on the rescan
     finally:
         market._universe_cache = saved
+
+
+# ---- turbo
+
+from stockwatch import turbo
+from stockwatch.engine import Evaluation
+
+
+def _ev(stance="BUY NOW", verdict="BUY SETUP", composite=70.0, **plan):
+    p = {"stance": stance, "entry_low": 98.0, "entry_high": 100.0, "stop": 94.0, "rr": 2.0, "trigger": "a close above 101",
+         "targets": [{"price": 112.0}], "history": {"n": 20, "win_rate": 0.6}, **plan}
+    return Evaluation("X", 2, True, 100.0, 60, 70, composite, verdict, [], {"atr": 2.0}, {}, plan=p, name="X Corp")
+
+
+def test_turbo_buy_when_price_is_in_the_zone():
+    d = turbo.decide(_ev(), {"price": 99.5, "day_change": 0.01, "extension_atr": 0.5, "sma20": 97.0})
+    assert d["decision"] == "BUY" and d["confidence"] == "High" and "entry 98.00-100.00" in d["line"]
+
+
+def test_turbo_does_not_chase_a_runner():
+    d = turbo.decide(_ev(), {"price": 112.0, "day_change": 0.09, "extension_atr": 3.5, "sma20": 100.0})
+    assert d["decision"] == "WAIT FOR PULLBACK" and d["chasing"] and "chasing here" in d["notes"][0]
+    zone_low = float(d["line"].split("buy zone ")[1].split("-")[0])
+    stop = float(d["line"].split("stop ")[1])
+    assert stop < zone_low                                      # stop moved below the new zone
+
+
+def test_turbo_ran_past_zone_and_broken_stop():
+    ran = turbo.decide(_ev(), {"price": 104.0, "day_change": 0.02, "extension_atr": 1.0, "sma20": 99.0})
+    assert ran["decision"] == "WAIT FOR PULLBACK" and "already above the entry zone" in ran["notes"][0]
+    broke = turbo.decide(_ev(), {"price": 92.0, "day_change": -0.06, "extension_atr": -1.0, "sma20": 99.0})
+    assert broke["decision"] == "PASS" and "below the stop" in broke["line"]
+    avoid = turbo.decide(_ev(stance="NO TRADE", verdict="AVOID", composite=30), {"price": 99.0})
+    assert avoid["decision"] == "PASS" and avoid["confidence"] == "High"
+
+
+def test_turbo_momentum_vwap_and_relative_volume():
+    idx = pd.date_range("2026-10-21 09:30", "2026-10-21 12:45", freq="1min", tz="America/New_York")
+    intraday = pd.DataFrame({"Close": np.linspace(100, 104, len(idx)), "High": np.linspace(100, 104, len(idx)),
+                             "Low": np.linspace(100, 104, len(idx)), "Volume": np.full(len(idx), 1000.0)}, index=idx)
+    hist = frame(np.linspace(80, 100, 300))
+    hist["Volume"] = 390_000.0     # 1,000 a minute over a full day
+    m = turbo.momentum(intraday, hist, atr=2.0, prev_close=100.0)
+    assert m["price"] == 104.0 and m["day_change"] == pytest.approx(0.04)
+    assert 101.9 < m["vwap"] < 102.1 and m["vs_vwap"] > 0
+    assert m["rel_volume"] == pytest.approx(1.0, rel=0.02)

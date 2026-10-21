@@ -193,6 +193,17 @@ a.mc-a:hover .mc-card { border-color:var(--c); transform:translateY(-1px); box-s
 .mc-tone { font-family:var(--mono); font-size:.6rem; letter-spacing:.08em; border:1px solid var(--c); color:var(--c);
   border-radius:4px; padding:0 .25rem; margin-right:.35rem; vertical-align:middle; }
 
+/* ---- turbo */
+.mc-turbo { border:1px solid var(--c); border-radius:18px; padding:1rem 1.05rem; margin:.6rem 0 .9rem; position:relative; overflow:hidden;
+  background: radial-gradient(ellipse at 0% 0%, color-mix(in srgb, var(--c) 16%, transparent), transparent 60%), var(--panel);
+  box-shadow: 0 0 32px -16px var(--c); }
+.mc-turbo .dec { font-family:var(--head); font-weight:700; font-size:1.9rem; line-height:1.05; color:var(--c); margin:.2rem 0; }
+.mc-turbo .conf { font-family:var(--mono); font-size:.7rem; letter-spacing:.14em; color:var(--soft); }
+.mc-turbo .line { font-family:var(--mono); font-size:.82rem; color:var(--ink); margin:.5rem 0 .2rem; }
+.mc-turbo .cols { display:grid; grid-template-columns:minmax(0,1fr); gap:.4rem .9rem; margin-top:.6rem; }
+@media (min-width: 760px) { .mc-turbo .cols { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+.mc-turbo .cols div { font-size:.84rem; line-height:1.5; }
+
 /* ---- streamlit widgets */
 .stButton > button, .stFormSubmitButton > button { border:1px solid rgba(61,255,168,.6) !important; background:rgba(61,255,168,.07) !important;
   color:var(--opp) !important; font-weight:600; border-radius:12px; }
@@ -623,3 +634,38 @@ def news_list(items: list[dict], limit: int = 8) -> str:
         rows.append(f'<div class="mc-log mc-news"><span class="mc-tone" style="--c:{col}">{tag}</span>{title}<br>'
                     f'<small>{escape(n["published"][5:16].replace("T", " "))} · {escape(n.get("publisher") or "")}</small></div>')
     return "".join(rows)
+
+
+DECISION_COLOR = {"BUY": OPP, "WAIT FOR PULLBACK": WARN, "WAIT FOR TRIGGER": INFO, "PASS": RISK}
+
+
+def turbo_card(d: dict, deep: bool) -> str:
+    col = DECISION_COLOR.get(d["decision"], INFO)
+    m = d["momentum"]
+    tape = []
+    if not nan(m.get("price")):
+        tape.append(f"<b>{m['price']:.2f}</b>")
+    if not nan(m.get("day_change")):
+        tape.append(f'<span style="color:{OPP if m["day_change"] >= 0 else RISK}">'
+                    f'{"▲" if m["day_change"] >= 0 else "▼"} {m["day_change"] * 100:+.1f}% today</span>')
+    if not nan(m.get("vwap")):
+        tape.append(f"VWAP {m['vwap']:.2f}")
+    if not nan(m.get("rel_volume")):
+        tape.append(f"rel. volume {m['rel_volume']:.1f}x")
+    if not nan(m.get("extension_atr")):
+        tape.append(f"{m['extension_atr']:+.1f} ATR vs 20-day")
+    pros = "".join(f"<li>{escape(x)}</li>" for x in d["pros"]) or "<li>none stand out</li>"
+    cons = "".join(f"<li>{escape(x)}</li>" for x in d["cons"]) or "<li>none stand out</li>"
+    notes = "".join(f'<p style="font-size:.82rem;color:var(--soft);margin:.3rem 0">{escape(n)}</p>' for n in d["notes"])
+    return (f'<div class="mc-turbo" style="--c:{col}">'
+            f'<div class="mc-row"><div><span class="mc-tk">{escape(d["ticker"])}</span>'
+            f'<span class="mc-name">{escape(d.get("name") or "")}</span></div>'
+            f'<span class="mc-chip" style="--c:{col}">⚡ TURBO{"" if deep else " · quick read"}</span></div>'
+            f'<div class="dec">{escape(d["decision"])}</div>'
+            f'<div class="conf">CONFIDENCE {escape(d["confidence"].upper())} · VERDICT {escape(d["verdict"])} · '
+            f'SCORE {d["composite"]:.0f}</div>'
+            f'<div class="line">{escape(d["line"])}</div>'
+            f'<div class="mc-meta" style="font-size:.74rem">{" · ".join(tape)}</div>{notes}'
+            f'<div class="cols"><div><div class="lab" style="font-family:var(--mono);font-size:.62rem;letter-spacing:.2em;color:{OPP}">FOR</div><ul style="margin:.2rem 0 0;padding-left:1.1rem">{pros}</ul></div>'
+            f'<div><div class="lab" style="font-family:var(--mono);font-size:.62rem;letter-spacing:.2em;color:{RISK}">AGAINST</div><ul style="margin:.2rem 0 0;padding-left:1.1rem">{cons}</ul></div></div>'
+            f'</div>')

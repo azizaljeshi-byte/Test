@@ -154,6 +154,14 @@ Dark "mission control" theme, designed for phones first. Tap any stock (a card, 
 - **Radar:** one card per stock, most urgent first. Filter by risk, opportunity, held or watchlist.
 - **Details:** chart, every signal, readouts, SEC filings, analyst moves and news for one stock.
 - **S&P 500:** the opportunity scan.
+- **⚡ Turbo:** a quick decision on any ticker, without adding it to your list.
+  - **The call:** BUY / WAIT FOR PULLBACK / WAIT FOR TRIGGER / PASS, with a confidence level and a one-line plan.
+  - **How it's trading today:** the change, VWAP, volume compared with normal for the time of day, and how stretched the price is above its 20-day average in ATRs.
+  - **Checks against the live price:**
+    - Up 5%+ today and 2+ ATRs above the 20-day average: "don't chase", with a pullback zone and a stop below it.
+    - Already past the entry zone: wait.
+    - Already below the stop: pass.
+  - **Speed:** a quick read appears first; the analyst, SEC and earnings-setup data then refine it.
 - **Log:** the alert history.
 - **Fleet:** add tickers (several at once, separated by commas) with a tier and share count, or remove them.
   Each new ticker shows a **company overview**: what the company does, its size and location, and a report card.

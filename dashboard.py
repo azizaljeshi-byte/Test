@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import briefing, live, technical, tradeplan, ui
+from stockwatch import briefing, live, technical, tradeplan, turbo, ui
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
 from stockwatch.data import NY, get_provider, us_session
 from stockwatch.engine import evaluate
@@ -183,7 +183,8 @@ controls()
 
 
 # ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
-VIEWS = {"radar": "◉ Radar", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log", "fleet": "+ Fleet"}
+VIEWS = {"radar": "◉ Radar", "turbo": "⚡ Turbo", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log",
+         "fleet": "+ Fleet"}
 current = st.query_params.get("view", "radar")
 current = current if current in VIEWS else "radar"
 picked = st.segmented_control("View", list(VIEWS), format_func=VIEWS.get, default=current,
@@ -489,6 +490,53 @@ if view == "market":
         st.markdown(f'<div class="mc-cards">{"".join(ui.market_card(r, r["ticker"] in new_setups) for r in rows)}</div>'
                     if rows else '<div class="mc-d">No buy setups in the last scan. Try "All finalists".</div>',
                     unsafe_allow_html=True)
+
+# ---------------------------------------------------------------- turbo: quick decision on any ticker
+if view == "turbo":
+    st.markdown('<div class="mc-section">Turbo · quick decision</div>', unsafe_allow_html=True)
+    st.caption("Spotted a mover? Get a buy / wait / pass call in seconds without adding it to your list.")
+    def _turbo_submit():
+        # runs before the rerun, so a background refresh can't swallow the request
+        sym = (st.session_state.get("turbo_input") or "").strip().upper()
+        if sym:
+            st.session_state.turbo_ticker = sym
+            st.session_state.turbo_result = {"ticker": sym, "quick": None, "deep": None, "ev": None, "error": None}
+
+    with st.form("turbo", clear_on_submit=False, border=False):
+        c1, c2 = st.columns([2, 1])
+        c1.text_input("Ticker", placeholder="e.g. PLTR", key="turbo_input", label_visibility="collapsed")
+        c2.form_submit_button("⚡ Decide", use_container_width=True, on_click=_turbo_submit)
+    res = st.session_state.get("turbo_result")
+    if res:
+        sym, slot = res["ticker"], st.empty()
+        # each stage is computed once and kept, so the page's periodic reloads only redraw it
+        try:
+            if res["quick"] is None and res["deep"] is None and not res["error"]:
+                with st.spinner(f"Quick read on {sym}..."):
+                    res["ev"], res["quick"] = turbo.run(sym, portfolio, data, deep=False)
+            if res["deep"] is None and not res["error"]:
+                slot.markdown(ui.turbo_card(res["quick"], deep=False), unsafe_allow_html=True)
+                with st.spinner("Adding analysts, SEC filings and the earnings setup..."):
+                    res["ev"], res["deep"] = turbo.run(sym, portfolio, data, deep=True)
+                store.save_snapshot(res["ev"])   # so the full details page opens for it
+                recent = [t for t in st.session_state.get("turbo_recent", []) if t != sym]
+                st.session_state.turbo_recent = [sym] + recent[:7]
+        except Exception as e:
+            res["error"] = f"{sym}: couldn't get a decision ({e}). Check the symbol."
+        if res["error"]:
+            slot.error(res["error"])
+        else:
+            slot.markdown(ui.turbo_card(res["deep"], deep=True), unsafe_allow_html=True)
+            if res["ev"].plan:
+                st.markdown(ui.trade_plan(res["ev"].plan, None, 0, 0), unsafe_allow_html=True)
+            st.markdown(f'<a class="mc-a" href="?view=target&t={escape(sym)}" target="_self">'
+                        f'<div class="mc-plan" style="text-align:center"><b>OPEN</b>full details for {escape(sym)} →'
+                        f'</div></a>', unsafe_allow_html=True)
+            if sym not in tickers:
+                st.caption("Not in your list. " + ("Add a row to your Google Sheet to track it." if base.sheet_url
+                                                   else "Use the Fleet tab to track it."))
+    if st.session_state.get("turbo_recent"):
+        st.caption("Recent: " + " · ".join(st.session_state.turbo_recent))
 
 # ---------------------------------------------------------------- alert log
 if view == "log":

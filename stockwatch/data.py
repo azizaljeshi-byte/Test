@@ -224,6 +224,14 @@ class YahooProvider:
         return _quote_from_bars(None, None, errors)
 
     @_yahoo
+    def intraday(self, ticker: str) -> pd.DataFrame:
+        """Today's (and yesterday's) 1-minute bars including pre/post-market, for momentum readouts."""
+        bars = self._yf.Ticker(ticker).history(period="2d", interval="1m", prepost=True)
+        if bars.empty:
+            raise ValueError(f"No intraday bars for {ticker}")
+        return bars
+
+    @_yahoo
     def bulk_quotes(self, tickers: list[str]) -> dict[str, dict]:
         """Quotes for many tickers from one download, so a refresh takes seconds, not minutes."""
         df = self._yf.download(list(tickers), period="5d", interval="1m", prepost=True, group_by="ticker",
@@ -593,6 +601,18 @@ class DemoProvider:
     def bulk_quotes(self, tickers: list[str]) -> dict[str, dict]:
         return {t: self.quote(t) for t in tickers}
 
+    def intraday(self, ticker: str) -> pd.DataFrame:
+        rng = self._rng(ticker + ":i")
+        last = float(self.history(ticker)["Close"].iloc[-1])
+        start = pd.Timestamp.now(tz="America/New_York").normalize() + pd.Timedelta(hours=4)
+        idx = pd.date_range(start, periods=16 * 60, freq="1min")
+        so_far = idx[idx <= pd.Timestamp.now(tz="America/New_York")]
+        idx = so_far if len(so_far) > 30 else idx[:300]   # before 4:30am, pretend a few hours have traded
+        path = last * np.exp(np.cumsum(rng.normal(float(rng.uniform(-0.0003, 0.0004)), 0.0015, len(idx))))
+        vol = rng.lognormal(9, 0.6, len(idx))
+        return pd.DataFrame({"Open": path, "High": path * 1.001, "Low": path * 0.999, "Close": path, "Volume": vol},
+                            index=idx)
+
     def bulk_history(self, tickers: tuple[str, ...], period: str = "2y") -> dict[str, pd.DataFrame]:
         return {t: self.history(t).iloc[-504:] for t in tickers}
 
@@ -658,7 +678,7 @@ class CachedProvider:
     # history stays under the tracker's 2-minute sweep so today's bar carries the live price
     TTL = {"history": 100, "fundamentals": 6 * 3600, "events": 3600, "research": 12 * 3600, "quote": 60,
            "filings": 3 * 3600, "bulk_history": 900, "street": 3 * 3600,
-           "sec_facts": 24 * 3600}
+           "sec_facts": 24 * 3600, "intraday": 45}
 
     def __init__(self, inner: DataProvider):
         self.inner = inner
@@ -697,6 +717,9 @@ class CachedProvider:
 
     def quote(self, ticker: str) -> dict:
         return self._get("quote", ticker)
+
+    def intraday(self, ticker: str) -> pd.DataFrame:
+        return self._get("intraday", ticker)
 
     def bulk_quotes(self, tickers: list[str]) -> dict[str, dict]:
         """Not cached: it's the explicit 'refresh prices now' path."""
