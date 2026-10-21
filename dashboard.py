@@ -572,6 +572,21 @@ if view == "log":
              (q.get("fetched_at") or "—")[11:19], (q.get("error") or "")[:60]]
             for x in snaps for q in [x["payload"].get("quote") or {}]]), unsafe_allow_html=True)
         probe = st.text_input("Test a live quote", value=next(iter(sorted(tickers)), "AAPL"), key="probe").strip().upper()
+        if st.button("Test Finnhub key"):
+            if not finnhub.enabled():
+                st.error("No FINNHUB_API_KEY found. Add it in Settings → Secrets, then reboot the app.")
+            else:
+                try:
+                    recs = finnhub._get("/stock/recommendation", symbol=probe)
+                    metric = (finnhub._get("/stock/metric", symbol=probe, metric="all") or {}).get("metric") or {}
+                    st.success(f"Finnhub works: {len(recs)} months of analyst ratings and "
+                               f"{len(metric)} key ratios for {probe}.")
+                except Exception as e:
+                    msg = str(e)
+                    hint = ("the key is wrong or not activated" if "401" in msg else
+                            "this data needs a paid plan" if "403" in msg else
+                            "too many requests; wait a minute" if "429" in msg else "check the key and try again")
+                    st.error(f"Finnhub request failed: {msg[:120]} ({hint}).")
         if st.button("Fetch raw quote"):
             inner = getattr(data, "inner", data)
             try:
