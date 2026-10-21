@@ -102,6 +102,31 @@ h1,h2,h3 { font-family: 'Orbitron', sans-serif !important; letter-spacing: .12em
 .mc-fv .now { position:absolute; top:4px; width:2px; height:30px; background:var(--ink); box-shadow:0 0 8px var(--ink); }
 .mc-fv .lbl { position:absolute; top:34px; font-size:.64rem; color:var(--muted); transform:translateX(-50%); white-space:nowrap; }
 .mc-fv .lbl.now-l { top:-14px; color:var(--ink); }
+.mc-ov { border:1px solid var(--line); border-radius:12px; padding:.8rem .9rem; margin:.4rem 0 .9rem;
+  background: radial-gradient(ellipse at 100% 0%, rgba(54,197,240,.10), transparent 55%), var(--panel); }
+.mc-ov .top { display:flex; justify-content:space-between; align-items:flex-start; gap:.6rem; }
+.mc-ov .nm { font-family:'Orbitron',sans-serif; font-size:.95rem; letter-spacing:.08em; color:var(--ink); }
+.mc-ov .acq { font-size:.62rem; letter-spacing:.22em; color:var(--opp); margin-bottom:.2rem; }
+.mc-ov .big { flex:none; width:60px; height:60px; border-radius:10px; border:1px solid var(--c); display:flex; flex-direction:column;
+  align-items:center; justify-content:center; font-family:'Orbitron',sans-serif; font-size:1.5rem; line-height:1;
+  color:var(--ink); box-shadow:0 0 16px -6px var(--c); }
+.mc-ov .big small { font-size:.45rem; letter-spacing:.14em; color:var(--muted); margin-top:.3rem; }
+.mc-ov p { font-size:.8rem; line-height:1.5; color:var(--ink); margin:.45rem 0; }
+.mc-ov details { font-size:.78rem; color:var(--muted); line-height:1.5; margin:.2rem 0 .5rem; }
+.mc-ov details summary { cursor:pointer; color:var(--ink); list-style:none; }
+.mc-ov details summary::-webkit-details-marker { display:none; }
+.mc-ov details summary span { color:var(--info); }
+.mc-ov details[open] summary span { display:none; }
+.mc-gr { display:grid; grid-template-columns:minmax(0,1fr); gap:.3rem; margin:.5rem 0; }
+@media (min-width: 760px) { .mc-gr { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+.mc-gr div { display:grid; grid-template-columns:1.7rem 1fr; gap:.55rem; align-items:center; font-size:.76rem;
+  border-bottom:1px solid rgba(23,58,68,.6); padding:.25rem 0; }
+.mc-gr b { width:1.7rem; height:1.7rem; border-radius:6px; border:1px solid var(--c); display:grid; place-items:center;
+  font-family:'Orbitron',sans-serif; font-weight:700; color:var(--ink); background:rgba(0,0,0,.25); }
+.mc-gr span { color:var(--ink); }
+.mc-gr em { font-style:normal; color:var(--muted); display:block; font-size:.7rem; }
+.mc-ov h4 { font-family:'Orbitron',sans-serif !important; font-size:.64rem; letter-spacing:.22em; margin:.6rem 0 .15rem; padding:0; }
+.mc-ov ul { margin:0; padding-left:1.05rem; } .mc-ov li { font-size:.78rem; line-height:1.5; }
 .stExpander summary p { letter-spacing:.14em; text-transform:uppercase; font-size:.8rem; }
 
 .stButton > button, .stFormSubmitButton > button { border:1px solid var(--opp) !important; background:rgba(61,255,168,.06) !important;
@@ -243,3 +268,33 @@ def fair_value_bar(fv: dict, price: float) -> str:
             + "".join(f'<div class="lbl" style="left:{x(v):.1f}%">{v:.0f}</div>'
                       for v in (fv["low"], fv["high"]) if abs(x(v) - x(fv["mid"])) >= 16)
             + "</div>")
+
+
+GRADE_COLOR = {"A": OPP, "B": OPP, "C": INFO, "D": WARN, "F": RISK, "?": MUTED}
+
+
+def overview_card(o: dict, ticker: str, acquired: bool = False) -> str:
+    summary = o.get("summary") or ""
+    if len(summary) > 260:
+        cut = summary.rfind(". ", 0, 260)
+        cut = cut + 1 if cut > 80 else 260
+        about = (f"<details><summary>{escape(summary[:cut])} <span>more ▾</span></summary>"
+                 f"{escape(summary[cut:])}</details>")
+    else:
+        about = f'<p style="color:{MUTED}">{escape(summary)}</p>' if summary else ""
+    grades = "".join(
+        f'<div><b style="--c:{GRADE_COLOR[g["grade"]]}">{g["grade"]}</b><span>{escape(g["area"])}'
+        f'<em>{escape(g["note"])}</em></span></div>' for g in o["grades"])
+    lists = ""
+    for title, items, color in (("STRENGTHS", o["strengths"], OPP), ("CONCERNS", o["concerns"], RISK)):
+        if items:
+            lists += (f'<h4 style="color:{color}">{title}</h4><ul>'
+                      + "".join(f"<li>{escape(i)}</li>" for i in items) + "</ul>")
+    site = (f' · <a href="{escape(o["website"])}" target="_blank" style="color:{INFO}">website</a>'
+            if o.get("website") else "")
+    return ('<div class="mc-ov"><div class="top"><div>'
+            + ('<div class="acq">◉ NEW TARGET ACQUIRED</div>' if acquired else "")
+            + f'<div class="nm">{escape(ticker)} · {escape(o["name"])}</div></div>'
+            f'<div class="big" style="--c:{GRADE_COLOR[o["overall"]]}">{o["overall"]}<small>OVERALL</small></div></div>'
+            f'<p>{escape(o["intro"])}{site}</p>{about}<div class="mc-gr">{grades}</div>{lists}'
+            f'<p style="color:{MUTED};margin-bottom:0">{escape(o["standing"])}</p></div>')

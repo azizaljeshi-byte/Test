@@ -326,3 +326,24 @@ def test_briefing_reports_changes_and_watch_items():
     assert briefing.stock(now)["changed"][0].startswith("First scan")
     lines = briefing.portfolio([now], {"X": prev}, {"state": "RISK-OFF", "day_change": -0.01})
     assert any("hostile" in l for l in lines) and any("HOLD -> RISK - REVIEW" in l for l in lines)
+
+
+def test_company_overview_report_card():
+    snap = {"ticker": "X", "verdict": "HOLD", "technical_score": 30.0, "payload": {
+        "profile": {"name": "Xco", "industry": "Semiconductors", "country": "Taiwan", "market_cap": 5e11,
+                    "employees": 70000, "summary": "Makes chips."},
+        "fundamental": {"pillar_valuation": 85, "pillar_growth": 70, "pillar_quality": 90, "pillar_balance": 20,
+                        "pe": 18.0, "revenue_growth": 0.3, "operating_margin": 0.4, "debt_to_equity": 3.0},
+        "technical": {"trend": "down", "rs_spy_3m": -0.1},
+        "research": {"earnings": {"beats": 4, "reported": 4, "avg_move": 0.05},
+                     "smart_money": {"buyers_90d": 2, "short_pct_float": 0.02, "institution_pct": 0.6}}}}
+    o = briefing.overview(snap)
+    assert o["intro"].startswith("Xco is a mega-cap semiconductors company based in Taiwan")
+    grades = {g["area"]: g["grade"] for g in o["grades"]}
+    assert grades == {"Valuation": "A", "Growth": "B", "Profitability": "A", "Balance sheet": "F",
+                      "Momentum": "F", "Earnings delivery": "A", "Smart money": "A"}
+    assert o["strengths"][0].startswith(("Profitability", "Earnings delivery", "Smart money"))
+    assert any(c.startswith("Balance sheet: debt/equity 3.0") for c in o["concerns"])
+    # missing data degrades to fewer grades, not errors
+    bare = briefing.overview({"ticker": "Y", "verdict": "WATCH", "technical_score": 50.0, "payload": {}})
+    assert bare["name"] == "Y" and {g["area"] for g in bare["grades"] if g["grade"] != "?"} == {"Momentum"}

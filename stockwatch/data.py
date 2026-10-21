@@ -33,6 +33,7 @@ FUNDAMENTAL_KEYS = [
     "eps_trailing", "eps_forward", "price_to_sales", "industry", "industry_key",
     "short_pct_float", "short_ratio", "shares_short", "shares_short_prior",  # short_ratio = days to cover
     "insider_pct", "institution_pct",
+    "summary", "website", "employees", "country",           # company profile
 ]
 
 
@@ -84,7 +85,8 @@ class YahooProvider:
         "price_to_sales": "priceToSalesTrailing12Months", "industry": "industry", "industry_key": "industryKey",
         "short_pct_float": "shortPercentOfFloat", "short_ratio": "shortRatio", "shares_short": "sharesShort",
         "shares_short_prior": "sharesShortPriorMonth", "insider_pct": "heldPercentInsiders",
-        "institution_pct": "heldPercentInstitutions",
+        "institution_pct": "heldPercentInstitutions", "summary": "longBusinessSummary", "website": "website",
+        "employees": "fullTimeEmployees", "country": "country",
     }
 
     def __init__(self):
@@ -272,6 +274,11 @@ class DemoProvider:
             "short_pct_float": float(rng.uniform(0.01, 0.3)), "short_ratio": float(rng.uniform(0.5, 8)),
             "shares_short": 1e7, "shares_short_prior": 1e7 * float(rng.uniform(0.6, 1.3)),
             "insider_pct": float(rng.uniform(0.0, 0.3)), "institution_pct": float(rng.uniform(0.1, 0.9)),
+            "summary": (f"{ticker} Inc. (demo) designs and sells products for enterprise and consumer markets. "
+                        "The company operates through hardware, software and services segments, and sells "
+                        "directly and through partners worldwide. It was founded in 1998 and is headquartered "
+                        "in Austin, Texas."),
+            "website": "https://example.com", "employees": int(rng.integers(50, 200_000)), "country": "United States",
         }
 
     def research(self, ticker: str) -> dict:

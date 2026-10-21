@@ -13,6 +13,8 @@ from .signals import OPPORTUNITY, RISK, Signal
 
 log = logging.getLogger(__name__)
 
+PROFILE_KEYS = ("name", "sector", "industry", "summary", "website", "employees", "country", "market_cap")
+
 
 @dataclass
 class Evaluation:
@@ -30,6 +32,7 @@ class Evaluation:
     position: dict = field(default_factory=dict)
     events: dict = field(default_factory=dict)
     research: dict = field(default_factory=dict)
+    profile: dict = field(default_factory=dict)
     name: str | None = None
     error: str | None = None
     scanned_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
@@ -174,7 +177,8 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider) -> Evalua
                + event_sig + deep_sig + pos_sig)
     signals.sort(key=lambda s: (-s.severity, s.kind))
     ev = Evaluation(h.ticker, h.tier, h.is_watchlist, price, round(ts, 1), round(fs, 1),
-                    round(composite, 1), "", signals, tech, fund, pos, events, research, name=f.get("name"))
+                    round(composite, 1), "", signals, tech, fund, pos, events, research,
+                    {k: f.get(k) for k in PROFILE_KEYS}, name=f.get("name"))
     ev.verdict = _verdict(ev)
     return ev
 

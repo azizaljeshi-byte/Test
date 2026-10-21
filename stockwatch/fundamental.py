@@ -108,7 +108,7 @@ def analyze(f: dict, price: float) -> tuple[float, dict, list[Signal]]:
     score = 100 * got / possible if possible else 50.0
     metrics = {
         "pe": pe, "peg": peg, "analyst_upside": upside, "revenue_growth": rg, "earnings_growth": eg,
-        "operating_margin": om, "roe": roe, "debt_to_equity": de, "free_cash_flow": fcf,
+        "operating_margin": om, "roe": roe, "debt_to_equity": de, "current_ratio": cr, "free_cash_flow": fcf,
         "coverage": possible,
         **{f"pillar_{k}": round(100 * sum(v) / len(v), 1) if v else None for k, v in pillars.items()},
     }

@@ -156,3 +156,109 @@ def portfolio(snaps: list[dict], prevs: dict[str, dict | None], regime: dict | N
     if not urgent and not opps:
         lines.append("No urgent risks or buy setups right now.")
     return lines
+
+
+# --------------------------------------------------------------------- company overview
+
+def _grade(score) -> str:
+    return "A" if score >= 80 else "B" if score >= 65 else "C" if score >= 50 else "D" if score >= 35 else "F"
+
+
+def _size(mcap) -> str | None:
+    if not _ok(mcap):
+        return None
+    for floor, label in ((2e11, "mega-cap"), (1e10, "large-cap"), (2e9, "mid-cap"), (3e8, "small-cap")):
+        if mcap >= floor:
+            return label
+    return "micro-cap"
+
+
+def _money(v) -> str:
+    for div, suf in ((1e12, "T"), (1e9, "B"), (1e6, "M")):
+        if abs(v) >= div:
+            return f"${v / div:.1f}{suf}"
+    return f"${v:,.0f}"
+
+
+def _join(parts) -> str:
+    return ", ".join(p for p in parts if p) or "limited data"
+
+
+def overview(snap: dict) -> dict:
+    """Company profile plus a report card: where the stock stands, area by area."""
+    p = snap["payload"]
+    prof, f, t = p.get("profile") or {}, p.get("fundamental") or {}, p.get("technical") or {}
+    r = p.get("research") or {}
+    earn, smart = r.get("earnings") or {}, r.get("smart_money") or {}
+    name = prof.get("name") or snap["ticker"]
+
+    # ---- who they are
+    size = _size(prof.get("market_cap"))
+    what = prof.get("industry") or prof.get("sector") or "public"
+    intro = f"{name} is a {size + ' ' if size else ''}{what.lower()} company"
+    if prof.get("country"):
+        intro += f" based in {prof['country']}"
+    facts = []
+    if _ok(prof.get("market_cap")):
+        facts.append(f"market value {_money(prof['market_cap'])}")
+    if prof.get("employees"):
+        facts.append(f"{prof['employees']:,} employees")
+    intro += (f" ({', '.join(facts)})" if facts else "") + "."
+
+    # ---- report card: (area, score 0-100 or None, evidence)
+    def pct(v, signed=True):
+        return f"{v * 100:{'+' if signed else ''}.0f}%" if _ok(v) else None
+
+    card = []
+    card.append(("Valuation", f.get("pillar_valuation"), _join([
+        f"fwd P/E {f['pe']:.0f}" if _ok(f.get("pe")) else None,
+        f"PEG {f['peg']:.1f}" if _ok(f.get("peg")) else None,
+        f"analysts see {pct(f.get('analyst_upside'))}" if _ok(f.get("analyst_upside")) else None])))
+    card.append(("Growth", f.get("pillar_growth"), _join([
+        f"revenue {pct(f.get('revenue_growth'))} y/y" if _ok(f.get("revenue_growth")) else None,
+        f"earnings {pct(f.get('earnings_growth'))} y/y" if _ok(f.get("earnings_growth")) else None])))
+    card.append(("Profitability", f.get("pillar_quality"), _join([
+        f"op margin {pct(f.get('operating_margin'), False)}" if _ok(f.get("operating_margin")) else None,
+        f"ROE {pct(f.get('roe'), False)}" if _ok(f.get("roe")) else None,
+        ("free cash flow positive" if f["free_cash_flow"] > 0 else "burning cash") if _ok(f.get("free_cash_flow")) else None])))
+    card.append(("Balance sheet", f.get("pillar_balance"), _join([
+        f"debt/equity {f['debt_to_equity']:.1f}" if _ok(f.get("debt_to_equity")) else None,
+        f"current ratio {f['current_ratio']:.1f}" if _ok(f.get("current_ratio")) else None])))
+    card.append(("Momentum", snap["technical_score"], _join([
+        f"trend {t['trend']}" if t.get("trend") else None,
+        f"{pct(t.get('rs_spy_3m'))} vs SPY over 3M" if _ok(t.get("rs_spy_3m")) else None,
+        f"{pct(t.get('drawdown_52w'))} from 52w high" if _ok(t.get("drawdown_52w")) else None])))
+    if earn.get("reported"):
+        card.append(("Earnings delivery", 100 * earn["beats"] / earn["reported"],
+                     f"beat estimates {earn['beats']} of last {earn['reported']}"
+                     + (f", report-day moves ~{earn['avg_move'] * 100:.0f}%" if _ok(earn.get("avg_move")) else "")))
+    if smart:
+        sm = 50.0
+        notes = []
+        if smart.get("buyers_90d"):
+            sm += 25
+            notes.append(f"{smart['buyers_90d']} insider buyer{'s' if smart['buyers_90d'] != 1 else ''} in 90d")
+        elif smart.get("sellers_90d", 0) >= 3:
+            sm -= 15
+            notes.append(f"{smart['sellers_90d']} insiders selling")
+        sp = smart.get("short_pct_float")
+        if _ok(sp):
+            sm -= 25 if sp >= 0.20 else 10 if sp >= 0.10 else 0
+            sm += 10 if sp < 0.03 else 0
+            notes.append(f"{sp * 100:.0f}% of float short")
+        if _ok(smart.get("institution_pct")):
+            notes.append(f"institutions own {smart['institution_pct'] * 100:.0f}%")
+        card.append(("Smart money", max(0.0, min(100.0, sm)), _join(notes)))
+
+    grades = [{"area": a, "grade": _grade(s) if _ok(s) else "?", "score": s if _ok(s) else None, "note": n}
+              for a, s, n in card]
+    rated = sorted((g for g in grades if g["score"] is not None), key=lambda g: g["score"], reverse=True)
+    strengths = [f"{g['area']}: {g['note']}" for g in rated if g["score"] >= 65][:3]
+    concerns = [f"{g['area']}: {g['note']}" for g in reversed(rated) if g["score"] < 50][:3]
+    gpa = sum(g["score"] for g in rated) / len(rated) if rated else None
+
+    standing = (f"Overall it rates {_grade(gpa)} ({gpa:.0f}/100) across {len(rated)} areas; "
+                f"current verdict: {snap['verdict']}." if gpa is not None else f"Current verdict: {snap['verdict']}.")
+    return {"name": name, "intro": intro, "summary": prof.get("summary"), "website": prof.get("website"),
+            "grades": grades, "strengths": strengths, "concerns": concerns, "standing": standing,
+            "overall": _grade(gpa) if gpa is not None else "?"}

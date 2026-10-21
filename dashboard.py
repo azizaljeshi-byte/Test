@@ -121,6 +121,8 @@ with target:
     if p.get("name"):
         st.caption(p["name"] + (f" · {f['industry']}" if f.get("industry") else ""))
     st.markdown(ui.brief(briefing.stock(snap, prevs.get(ticker))), unsafe_allow_html=True)
+    with st.expander("Company overview & report card", expanded=False):
+        st.markdown(ui.overview_card(briefing.overview(snap), ticker), unsafe_allow_html=True)
     research = p.get("research") or {}
     lv = (research.get("valuation") or {}).get("levels") or {}
 
@@ -276,16 +278,30 @@ with fleet:
         shares = b.number_input("Shares (0 = watchlist)", min_value=0.0, value=0.0, step=1.0)
         submitted = st.form_submit_button("⊕ Add to fleet", use_container_width=True)
     if submitted and raw.strip():
-        for sym in [x.strip().upper() for x in raw.replace(" ", ",").split(",") if x.strip()]:
-            try:
-                data.history(sym)  # confirms the symbol exists before saving it
-            except Exception:
-                st.error(f"{sym}: no market data found - check the symbol")
-                continue
-            store.upsert_ticker(sym, tier, shares)
-            h = next(h for h in store.apply_overrides(base).holdings if h.ticker == sym)
-            store.save_snapshot(evaluate(h, portfolio, data))
-            st.success(f"{sym} locked on radar")
+        added, failed = [], []
+        with st.spinner("Acquiring target..."):
+            for sym in dict.fromkeys(x.strip().upper() for x in raw.replace(" ", ",").split(",") if x.strip()):
+                try:
+                    data.history(sym)  # confirms the symbol exists before saving it
+                except Exception:
+                    failed.append(sym)
+                    continue
+                store.upsert_ticker(sym, tier, shares)
+                h = next(h for h in store.apply_overrides(base).holdings if h.ticker == sym)
+                store.save_snapshot(evaluate(h, portfolio, data))
+                added.append(sym)
+        st.session_state.just_added, st.session_state.add_failed = added, failed
+        st.rerun()
+
+    for sym in st.session_state.get("add_failed", []):
+        st.error(f"{sym}: no market data found - check the symbol")
+    just_added = [s for s in st.session_state.get("just_added", []) if s in tickers]
+    for sym in just_added:
+        snap = next((s for s in store.latest_snapshots() if s["ticker"] == sym), None)
+        if snap:
+            st.markdown(ui.overview_card(briefing.overview(snap), sym, acquired=True), unsafe_allow_html=True)
+    if just_added and st.button("Dismiss overview", key="dismiss"):
+        st.session_state.just_added, st.session_state.add_failed = [], []
         st.rerun()
 
     st.markdown('<div class="mc-section">Remove targets</div>', unsafe_allow_html=True)

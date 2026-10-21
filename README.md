@@ -82,6 +82,9 @@ Dark "mission control" theme, designed for phones first. It has four tabs:
 - **Target:** chart, every signal, readouts, analyst moves and news for one stock.
 - **Log:** the alert history.
 - **Fleet:** add tickers (several at once, separated by commas) with a tier and share count, or remove them.
+  Each new ticker shows a **company overview**: what the company does, its size and location, and a report card.
+  The report card grades Valuation, Growth, Profitability, Balance sheet, Momentum, Earnings delivery and Smart money from A to F, with the evidence for each grade, then lists strengths and concerns.
+  The same overview is available for any stock on the Target tab.
 
 Fleet changes are saved in the app's database. On Streamlit Cloud that database is wiped on reboot or redeploy, so the Fleet tab shows YAML you can paste into the `STOCKWATCH_PORTFOLIO` secret to keep your changes.
 
