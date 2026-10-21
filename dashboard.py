@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import briefing, live, technical, tradeplan, turbo, ui
+from stockwatch import briefing, finnhub, live, technical, tradeplan, turbo, ui
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
 from stockwatch.data import NY, get_provider, us_session
 from stockwatch.engine import evaluate
@@ -278,6 +278,8 @@ if view == "target":
     street_m = research.get("street") or {}
     if street_m:
         st.markdown('<div class="mc-section">Outlook · 3 to 12 months</div>', unsafe_allow_html=True)
+        if not street_m.get("consensus"):
+            st.caption("Analyst ratings and targets are missing. " + "Yahoo blocks this data for apps on Streamlit Cloud. " + ("Finnhub didn't have it either." if finnhub.enabled() else "Add a free FINNHUB_API_KEY secret (finnhub.io) to fill it."))
         st.markdown(ui.outlook(street_m, snap["price"]), unsafe_allow_html=True)
     elif ticker not in tickers:
         if st.button("Run the full analysis (street view, outlook, SEC)"):
@@ -352,7 +354,11 @@ if view == "target":
 
     sm = research.get("smart_money") or {}
     with st.expander("Smart money & short interest", expanded=False):
-        if sm:
+        if sm and not any(sm.get(k) is not None for k in ("short_pct_float", "insider_pct", "institution_pct")) \
+                and not sm.get("insider_tx"):
+            st.caption("Short interest, ownership and insider trades are missing. " + "Yahoo blocks this data for apps on Streamlit Cloud. " + ("Finnhub didn't have it either." if finnhub.enabled() else "Add a free FINNHUB_API_KEY secret (finnhub.io) to fill it.")
+                       + " Short interest and institutional ownership need a paid plan on most providers.")
+        elif sm:
             st.markdown('<div class="mc-kv">' + "".join(f"<div><span>{k}</span>{escape(v)}</div>" for k, v in [
                 ("Short % float", ui.pct(sm.get("short_pct_float"), signed=False)),
                 ("Days to cover", ui.num(sm.get("days_to_cover"), ".1f")),
@@ -554,6 +560,7 @@ if view == "log":
             ("Code version", CODE_VERSION), ("New York time", now_ny.strftime("%a %H:%M")),
             ("Session (clock)", us_session()), ("Data source", type(getattr(data, "inner", data)).__name__),
             ("Ticker list", "Google Sheet" if base.sheet_url else "secret / YAML + app edits"),
+            ("Finnhub fallback", "on" if finnhub.enabled() else "off (no FINNHUB_API_KEY)"),
             ("Tickers", len(tickers)),
         ]) + "</div>", unsafe_allow_html=True)
         st.caption("Extended-hours prices come from minute bars, which keep working when Yahoo rate-limits the app. "

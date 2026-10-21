@@ -183,6 +183,23 @@ export SMTP_HOST=smtp.gmail.com SMTP_PORT=587 SMTP_USER=you@gmail.com SMTP_PASSW
 
 To scan 24/7, run the scanner as a service (systemd, `tmux`, or a small cloud VM). Or run `--once` from cron.
 
+## Second data source: Finnhub (recommended on Streamlit Cloud)
+
+Yahoo blocks its quote, analyst and ownership data for apps on Streamlit Cloud's shared servers. Prices and technicals still work, and fundamentals fall back to SEC filings, but analyst ratings, price targets, insider trades, the earnings calendar and news can come back empty.
+
+Add a free Finnhub key to fill those gaps:
+1. Sign up at finnhub.io (free) and copy your API key from the dashboard.
+2. Add it as `FINNHUB_API_KEY = "..."` in the Streamlit secrets, and as a GitHub Actions secret if you use notifications.
+
+Finnhub is used only when Yahoo doesn't return the data. It provides:
+- analyst recommendation trends and price targets (if your plan includes them)
+- earnings history and the next earnings date
+- insider transactions
+- key ratios
+- company news
+
+Requests are spaced to stay under the free plan's 60 a minute, and results are cached for hours. Short interest and institutional ownership need a paid plan on most providers. **Log → System diagnostics** shows whether the fallback is on.
+
 ## Ticker list in a Google Sheet
 
 Keep your tickers in a Google Sheet so the dashboard and the notification job always read the same list.

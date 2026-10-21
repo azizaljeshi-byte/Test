@@ -184,6 +184,8 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
             log.warning("fundamentals failed for %s: %s", h.ticker, e)
             f = {}
         fs, fund, fund_sig = fundamental.analyze(f, price)
+        if f.get("source"):
+            fund["source"] = f["source"]
         if (fund.get("coverage") or 0) < MIN_FUND_COVERAGE:
             # Yahoo refused or returned too little: compute fundamentals from the company's SEC filings
             facts = _optional(provider.sec_facts, h.ticker) if hasattr(provider, "sec_facts") else None

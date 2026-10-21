@@ -162,7 +162,10 @@ class YahooProvider:
         info = self._yf.Ticker(ticker).info or {}
         out = {k: info.get(src) for k, src in self._MAP.items()}
         if sum(v is not None for v in out.values()) < 4:
-            # a blocked request comes back nearly empty; raising keeps it from being cached as real data
+            # a blocked request comes back nearly empty: try Finnhub, otherwise raise so it isn't cached
+            fh = _fallback("fundamentals", ticker)
+            if fh and len(fh) >= 5:
+                return fh
             raise RuntimeError(f"Yahoo returned no fundamentals for {ticker} (likely rate-limited)")
         if out.get("industry_key"):
             self._industry[ticker.upper()] = out["industry_key"]
@@ -197,11 +200,20 @@ class YahooProvider:
                         "to_grade": row.get("ToGrade")})
         except Exception as e:
             log.info("rating changes failed for %s: %s", ticker, e)
+        if not out["earnings_date"]:
+            out["earnings_date"] = _fallback("next_earnings", ticker)
+        if not out["news"]:
+            out["news"] = _fallback("news", ticker) or []
         return out
 
     @_yahoo
     def research(self, ticker: str) -> dict:
-        return _yahoo_research(self._yf, ticker, self._industry.get(ticker.upper()))
+        out = _yahoo_research(self._yf, ticker, self._industry.get(ticker.upper()))
+        if not out.get("earnings"):
+            out["earnings"] = _fallback("earnings", ticker) or []
+        if not out.get("insiders"):
+            out["insiders"] = _fallback("insiders", ticker) or []
+        return out
 
     @_yahoo
     def quote(self, ticker: str) -> dict:
@@ -252,7 +264,13 @@ class YahooProvider:
 
     @_yahoo
     def street(self, ticker: str) -> dict:
-        return _yahoo_street(self._yf, ticker)
+        out = _yahoo_street(self._yf, ticker)
+        if not out.get("recs") or not any((out.get("targets") or {}).get(k) for k in ("mean", "median")):
+            fh = _fallback("street", ticker) or {}
+            out["recs"] = out.get("recs") or fh.get("recs") or []
+            if not any((out.get("targets") or {}).get(k) for k in ("mean", "median")):
+                out["targets"] = {**(out.get("targets") or {}), **(fh.get("targets") or {})}
+        return out
 
     def bulk_history(self, tickers: tuple[str, ...], period: str = "2y") -> dict[str, pd.DataFrame]:
         """Daily bars for many tickers in a few requests (used by the market scan)."""
@@ -407,6 +425,18 @@ def _industry_leaders(yf, key: str) -> tuple[str, ...]:
     """Industry membership barely changes, so one lookup per industry per process is plenty."""
     top = yf.Industry(key).top_companies
     return tuple(p for p in top.index.tolist() if p) if top is not None else ()
+
+
+def _fallback(kind: str, ticker: str):
+    """Ask Finnhub for something Yahoo didn't return, when a FINNHUB_API_KEY is configured."""
+    from . import finnhub
+    if not finnhub.enabled():
+        return None
+    try:
+        return getattr(finnhub, kind)(ticker)
+    except Exception as e:
+        log.info("finnhub %s failed for %s: %s", kind, ticker, e)
+        return None
 
 
 def _bar_summary(bars: pd.DataFrame) -> dict:

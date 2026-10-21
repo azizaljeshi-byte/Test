@@ -310,7 +310,7 @@ def card(snap: dict, was: str | None = None) -> str:
             f'<span class="mc-name">{escape(name)}</span></div>'
             f'<span class="mc-chip" style="--c:{color}"><b>{glyph}</b> {escape(snap["verdict"])}</span></div>'
             f'<div class="mc-px">{num(price_now)}{day_html}</div>'
-            f'{_bar("FUND·SEC" if p.get("fundamental", {}).get("source") == "SEC filings" else "FUND", snap["fundamental_score"] if p.get("fundamental", {}).get("available", True) else None)}'
+            f'{_bar({"SEC filings": "FUND·SEC", "Finnhub": "FUND·FH"}.get(p.get("fundamental", {}).get("source"), "FUND"), snap["fundamental_score"] if p.get("fundamental", {}).get("available", True) else None)}'
             f'{_bar("TECH", snap["technical_score"])}{_bar("Σ ALL", snap["composite"])}'
             f'<div class="mc-meta">{"".join(f"<span>{m}</span>" for m in meta)}</div>{sig}{plan_line(p.get("plan"))}</div></a>')
 

@@ -1044,3 +1044,73 @@ def test_reconcile_trailing_stop_on_a_bullish_stock_means_trim_not_exit():
     r2 = tradeplan.reconcile(plan, stop_hit + thesis)
     assert r2["stance"] == "REDUCE / EXIT" and r2["bias"] == "mixed" and "risk-control exit" in r2["outlook"]
     assert tradeplan.reconcile({**plan, "bias": "bearish"}, stop_hit)["stance"] == "REDUCE / EXIT"
+
+
+# ---- Finnhub fallback
+
+from stockwatch import finnhub
+
+FH = {
+    "/stock/metric": {"metric": {"peTTM": 22.5, "psTTM": 4.1, "revenueGrowthTTMYoy": 12.0, "epsGrowthTTMYoy": -5.0,
+                                 "grossMarginTTM": 55.0, "operatingMarginTTM": 20.0, "netProfitMarginTTM": 15.0,
+                                 "roeTTM": 18.0, "currentRatioQuarterly": 1.6, "totalDebt/totalEquityQuarterly": 0.7,
+                                 "marketCapitalization": 25000.0}},
+    "/stock/profile2": {"name": "Example Inc", "finnhubIndustry": "Semiconductors", "country": "US"},
+    "/stock/recommendation": [{"period": "2026-09-01", "strongBuy": 2, "buy": 5, "hold": 6, "sell": 1, "strongSell": 0},
+                              {"period": "2026-10-01", "strongBuy": 4, "buy": 8, "hold": 4, "sell": 0, "strongSell": 0}],
+    "/stock/price-target": {"targetLow": 80, "targetMean": 120, "targetMedian": 118, "targetHigh": 160},
+    "/stock/earnings": [{"period": "2026-06-30", "actual": 1.1, "estimate": 1.0, "surprisePercent": 10.0},
+                        {"period": "2026-09-30", "actual": 1.3, "estimate": 1.2, "surprisePercent": 8.3}],
+    "/calendar/earnings": {"earningsCalendar": [{"date": (date.today() + timedelta(days=9)).isoformat()}]},
+    "/stock/insider-transactions": {"data": [
+        {"name": "CEO", "change": 5000, "transactionPrice": 100.0, "transactionCode": "P", "transactionDate": "2026-10-01"},
+        {"name": "CFO", "change": -2000, "transactionPrice": 110.0, "transactionCode": "S", "transactionDate": "2026-09-20"}]},
+    "/company-news": [{"headline": "Example wins contract", "source": "Reuters", "url": "u", "datetime": 1761040000}],
+}
+
+
+def test_finnhub_maps_to_app_formats(monkeypatch):
+    monkeypatch.setenv("FINNHUB_API_KEY", "x")
+    monkeypatch.setattr(finnhub, "_get", lambda path, **kw: FH[path])
+    f = finnhub.fundamentals("EXM")
+    assert f["market_cap"] == 25e9 and f["revenue_growth"] == pytest.approx(0.12) and f["operating_margin"] == 0.2
+    assert f["debt_to_equity"] == 0.7 and f["source"] == "Finnhub" and f["name"] == "Example Inc"
+    s = finnhub.street("EXM")
+    assert s["recs"][0]["period"] == "2026-10-01" and s["targets"]["median"] == 118.0   # newest first
+    assert street.consensus(s["recs"])["label"] in ("Buy", "Strong Buy")
+    e = finnhub.earnings("EXM")
+    assert e[0]["quarter"] == date(2026, 9, 30) and e[0]["surprise_pct"] == pytest.approx(0.083)
+    assert finnhub.next_earnings("EXM") == date.today() + timedelta(days=9)
+    ins = finnhub.insiders("EXM")
+    assert ins[0]["text"] == "Purchase" and ins[0]["value"] == 500_000 and ins[1]["text"] == "Sale"
+    assert deepdive.smart_money({}, {"insiders": ins})[0]["buyers_90d"] <= 1
+    assert finnhub.news("EXM")[0]["title"] == "Example wins contract"
+
+
+def test_finnhub_paces_requests(monkeypatch):
+    monkeypatch.setenv("FINNHUB_API_KEY", "x")
+    calls = []
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+    monkeypatch.setattr(finnhub.urllib.request, "urlopen", lambda req, timeout: calls.append(time.monotonic()) or Resp(b"{}"))
+    monkeypatch.setattr(finnhub, "MIN_INTERVAL", 0.05)
+    for _ in range(3):
+        finnhub._get("/stock/metric", symbol="X")
+    assert calls[2] - calls[0] >= 0.09
+
+
+def test_yahoo_falls_back_to_finnhub_when_blocked(monkeypatch):
+    monkeypatch.setenv("FINNHUB_API_KEY", "x")
+    monkeypatch.setattr(finnhub, "_get", lambda path, **kw: FH[path])
+    yp = _fake_yahoo({"shortName": "X"})              # Yahoo returns next to nothing
+    f = yp.fundamentals("EXM")
+    assert f["source"] == "Finnhub" and f["pe_trailing"] == 22.5
+    monkeypatch.delenv("FINNHUB_API_KEY")
+    with pytest.raises(RuntimeError):
+        yp.fundamentals("EXM")
