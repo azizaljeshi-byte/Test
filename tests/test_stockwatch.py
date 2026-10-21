@@ -129,3 +129,9 @@ def test_invalid_tier_rejected(tmp_path):
     f.write_text("holdings:\n  - {ticker: X, tier: 3}\n")
     with pytest.raises(ValueError):
         load_portfolio(f)
+
+
+def test_portfolio_from_env(monkeypatch):
+    monkeypatch.setenv("STOCKWATCH_PORTFOLIO", "holdings:\n  - {ticker: tsla, tier: 2, shares: 5}\n")
+    p = load_portfolio()
+    assert p.source is None and p.holdings[0].ticker == "TSLA"

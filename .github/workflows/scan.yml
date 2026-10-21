@@ -1,0 +1,35 @@
+name: StockWatch scan
+
+on:
+  schedule:
+    # every 15 min, Mon-Fri, ~US market hours (UTC). GitHub may delay scheduled runs.
+    - cron: "*/15 13-21 * * 1-5"
+  workflow_dispatch: {}
+
+concurrency:
+  group: stockwatch-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      # keep the alert history between runs so the same alert isn't re-sent every 15 min
+      - uses: actions/cache@v4
+        with:
+          path: data/stockwatch.db
+          key: stockwatch-db-${{ github.run_id }}
+          restore-keys: stockwatch-db-
+      - name: Scan and send alerts
+        env:
+          STOCKWATCH_PORTFOLIO: ${{ secrets.STOCKWATCH_PORTFOLIO }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m stockwatch.scanner --once

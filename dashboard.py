@@ -38,7 +38,8 @@ store = get_store()
 
 with st.sidebar:
     st.title("📈 StockWatch")
-    st.caption(f"Portfolio: `{portfolio.source.name}` · data: `{provider_name(portfolio)}`")
+    source = portfolio.source.name if portfolio.source else "STOCKWATCH_PORTFOLIO secret"
+    st.caption(f"Portfolio: `{source}` · data: `{provider_name(portfolio)}`")
     auto = st.toggle("Auto-scan while open", value=False,
                      help="Re-runs the scan on an interval. For 24/7 monitoring run the scanner process instead.")
     interval = st.number_input("Interval (minutes)", 1, 240, portfolio.settings.scan_interval_minutes)

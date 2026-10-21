@@ -66,6 +66,30 @@ export SMTP_HOST=smtp.gmail.com SMTP_PORT=587 SMTP_USER=you@gmail.com SMTP_PASSW
 
 To scan 24/7, run the scanner as a service (systemd, `tmux`, or a small cloud VM). Or run `--once` from cron.
 
+## Use it from your phone
+
+You don't need a computer that stays on. This setup uses two free services:
+
+### 1. Alerts on your phone (Telegram + GitHub Actions)
+1. In Telegram, message **@BotFather** and send `/newbot`. Follow the steps and copy the **bot token** it gives you.
+2. Send any message to your new bot. Then open `https://api.telegram.org/bot<TOKEN>/getUpdates` and copy the `chat` → `id` number.
+3. In GitHub, open the repo → **Settings → Secrets and variables → Actions → New repository secret**. Add three secrets:
+   - `TELEGRAM_BOT_TOKEN`: the bot token
+   - `TELEGRAM_CHAT_ID`: the chat id
+   - `STOCKWATCH_PORTFOLIO`: the full text of your `portfolio.yaml` (paste it in)
+4. Go to **Actions → StockWatch scan → Run workflow** to test it. After that it runs every 15 minutes during US market hours and messages you when something new happens.
+
+### 2. Dashboard on your phone (Streamlit Community Cloud)
+1. Sign in at **share.streamlit.io** with GitHub. Click **Create app** and pick this repo, the branch, and `dashboard.py`.
+2. Under **Advanced settings → Secrets**, add your portfolio:
+   ```toml
+   STOCKWATCH_PORTFOLIO = """
+   holdings:
+     - {ticker: AAPL, tier: 1, shares: 40, cost_basis: 165}
+   """
+   ```
+3. Open the app URL on your phone. In your browser's share menu, choose **Add to Home Screen** to get an app icon. Tap **Scan now**, or turn on auto-scan.
+
 ## Tests
 
 ```bash

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -58,12 +59,17 @@ class Portfolio:
 
 
 def load_portfolio(path: str | Path | None = None) -> Portfolio:
-    if path is None:
-        path = next((p for p in DEFAULT_PATHS if p.exists()), None)
+    """Load from `path`, else the STOCKWATCH_PORTFOLIO env var (YAML text, used for
+    cloud deployments so positions stay out of the repo), else portfolio.yaml."""
+    if path is None and os.getenv("STOCKWATCH_PORTFOLIO"):
+        raw, path = yaml.safe_load(os.environ["STOCKWATCH_PORTFOLIO"]) or {}, None
+    else:
         if path is None:
-            raise FileNotFoundError("No portfolio.yaml found; copy portfolio.example.yaml")
-    path = Path(path)
-    raw = yaml.safe_load(path.read_text()) or {}
+            path = next((p for p in DEFAULT_PATHS if p.exists()), None)
+            if path is None:
+                raise FileNotFoundError("No portfolio.yaml found; copy portfolio.example.yaml")
+        path = Path(path)
+        raw = yaml.safe_load(path.read_text()) or {}
 
     tiers = {}
     for tier, defaults in DEFAULT_TIERS.items():
