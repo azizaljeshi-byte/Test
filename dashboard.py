@@ -163,6 +163,9 @@ if not snaps:
             else "No telemetry yet. Hit **⟳ Sweep now** to run the first scan.")
     st.stop()
 
+if len(snaps) < len(tickers) and live.SWEEP_LOCK.locked():
+    st.info(f"Analysing your list: {len(snaps)} of {len(tickers)} stocks ready. The rest appear here as they finish.")
+
 # ---------------------------------------------------------------- status tiles
 reg = None
 # the tracker fetches the benchmark every sweep; read its last copy rather than queue behind it for Yahoo

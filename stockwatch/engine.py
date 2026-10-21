@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -291,9 +291,16 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
     return ev
 
 
-def scan(portfolio: Portfolio, provider: DataProvider, workers: int = 6) -> list[Evaluation]:
+def scan(portfolio: Portfolio, provider: DataProvider, workers: int = 6, on_ready=None) -> list[Evaluation]:
+    """Evaluate every holding. on_ready(evaluation) runs in the caller's thread as each one finishes,
+    before the portfolio-level checks, so a slow sweep can show results as they come in."""
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        evals = list(pool.map(lambda h: evaluate(h, portfolio, provider), portfolio.holdings))
+        futures = {pool.submit(evaluate, h, portfolio, provider): i for i, h in enumerate(portfolio.holdings)}
+        evals: list[Evaluation | None] = [None] * len(futures)
+        for fut in as_completed(futures):
+            evals[futures[fut]] = fut.result()
+            if on_ready:
+                on_ready(evals[futures[fut]])
 
     # portfolio-level checks need every position's value
     total = sum(e.position.get("value", 0) for e in evals if not e.error)

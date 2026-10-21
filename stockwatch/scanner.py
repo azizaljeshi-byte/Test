@@ -16,10 +16,24 @@ log = logging.getLogger("stockwatch")
 
 
 def run_once(portfolio, provider, store: Store) -> list[Evaluation]:
-    evals = scan(portfolio, provider)
+    # stocks with nothing on screen yet (after a reboot, or new in the sheet) are saved as soon as they're
+    # analysed, so the page fills in during a slow sweep; their final save replaces that row, keeping one
+    # snapshot per sweep for the "what changed" comparisons
+    blank = {h.ticker for h in portfolio.holdings if store.snapshot(h.ticker) is None}
+    early = set()
+
+    def show_now(e: Evaluation):
+        if e.ticker in blank:
+            store.save_snapshot(e)
+            early.add(e.ticker)
+
+    evals = scan(portfolio, provider, on_ready=show_now)
     alerts = []
     for e in evals:
-        store.save_snapshot(e)
+        if e.ticker in early:
+            store.replace_latest(e)
+        else:
+            store.save_snapshot(e)
         if e.error:
             log.warning("%s: %s", e.ticker, e.error)
             continue

@@ -100,7 +100,9 @@ class Tracker:
         if self.last_market is None:
             last = store.latest_market_scan()
             self.last_market = datetime.fromisoformat(last["scanned_at"]).timestamp() if last else 0.0
-        if self.market_running or (not force and (us_session() == "CLOSED" or now - self.last_market < MARKET_SECONDS)):
+        # the S&P scan waits for the first portfolio sweep, which needs the same slow data sources more
+        if self.market_running or (not force and (us_session() == "CLOSED" or not self.last_sweep
+                                                   or now - self.last_market < MARKET_SECONDS)):
             return False
         self.market_running = True
         self.last_market = now

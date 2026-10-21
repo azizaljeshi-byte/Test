@@ -971,11 +971,14 @@ def test_tracker_runs_the_sp500_scan_on_schedule(monkeypatch, tmp_path):
         monkeypatch.setattr(live_mod, "us_session", lambda now=None: "CLOSED")
         assert not t.maybe_market_scan(store, background=False)
         monkeypatch.setattr(live_mod, "us_session", lambda now=None: "REGULAR")
+        assert not t.maybe_market_scan(store, background=False)      # waits for the first portfolio sweep
+        t.last_sweep = time.time()
         assert t.maybe_market_scan(store, background=False)          # nothing on record: scan now
         first = store.latest_market_scan()
         assert first and first["universe"] == 40
         assert not t.maybe_market_scan(store, background=False)      # just ran
         restarted = live.Tracker(get_provider("demo"), store_path=tmp_path / "m.db", start=False)
+        restarted.last_sweep = time.time()
         assert not restarted.maybe_market_scan(store, background=False)   # a restart doesn't rescan
         assert t.maybe_market_scan(store, now=time.time() + live.MARKET_SECONDS + 1, background=False)
         logged = [a for a in store.recent_alerts() if a["code"] == "sp500_buy_setup"]
@@ -1258,3 +1261,24 @@ def test_a_sell_into_a_bounce_waits_for_the_close():
     row = ui.row(bounce)
     assert "↻ REASSESS" in row and "DON'T RUSH" in row and "IF IT FAILS" in row
     assert "Reassess before selling" in ui.reassess_note(bounce) and ui.reassess_note(calm) == ""
+
+
+def test_first_sweep_shows_each_stock_as_it_lands_without_doubling_snapshots(monkeypatch, tmp_path):
+    from stockwatch.scanner import run_once
+    monkeypatch.setenv("STOCKWATCH_PORTFOLIO", "holdings:\n  - {ticker: AAA, tier: 1, shares: 5}\n  - {ticker: BBB, tier: 2, shares: 0}\n")
+    monkeypatch.delenv("STOCKWATCH_SHEET_URL", raising=False)
+    pf, store = load_portfolio(), Store(tmp_path / "s.db")
+    seen_mid_sweep = []
+    real_save = store.save_snapshot
+
+    def spy(e):
+        real_save(e)
+        seen_mid_sweep.append(len(store.latest_snapshots()))
+    monkeypatch.setattr(store, "save_snapshot", spy)
+    run_once(pf, get_provider("demo"), store)
+    assert seen_mid_sweep[:2] == [1, 2]                       # on screen one by one, before the sweep ends
+    assert all(len(store.history(t)) == 1 for t in ("AAA", "BBB"))     # the final save replaced the early copy
+    assert store.snapshot("AAA")["payload"]["position"].get("weight_pct") == 100   # portfolio checks kept
+    run_once(pf, get_provider("demo"), store)
+    assert all(len(store.history(t)) == 2 for t in ("AAA", "BBB"))     # later sweeps: one snapshot each
+    assert store.previous_snapshot("AAA") is not None

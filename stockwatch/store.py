@@ -50,6 +50,11 @@ class Store:
              e.composite, e.verdict, json.dumps(payload, default=str)))
         self.conn.commit()
 
+    def replace_latest(self, e: Evaluation) -> None:
+        """Swap a ticker's latest snapshot for this one (the early copy of the same sweep)."""
+        self.conn.execute("DELETE FROM snapshots WHERE id = (SELECT MAX(id) FROM snapshots WHERE ticker=?)", (e.ticker,))
+        self.save_snapshot(e)
+
     def record_alerts(self, e: Evaluation, cooldown_hours: float, min_severity: int = 2) -> list[Signal]:
         """Store signals that are new (not alerted within the cooldown) and return them."""
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=cooldown_hours)).isoformat(timespec="seconds")
