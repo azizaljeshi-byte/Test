@@ -1182,5 +1182,18 @@ def test_radar_draws_every_stock_and_links_to_details():
     assert html.count(" dim") == 2                                 # filtered out: faded, not removed
     listed = ui.rows(snaps, changed={"CCC": "WATCH"})
     assert listed.index(">AAA<") < listed.index(">CCC<")          # act now first
-    assert "ACT NOW</b> in the entry zone now" in listed and "NEW</b> <small>was WATCH" in listed
+    assert "ACT NOW</b> in the entry zone now" in listed and "NEW <small>was WATCH" in listed
+    assert "▲ BUY NOW</span>" in listed and "OWNED · T1" in listed
     assert "buy now 95.00-99.00 · stop 90.00" in listed
+
+
+def test_list_call_is_plain_buy_or_sell_and_never_sells_a_watchlist_name():
+    assert ui.action(_rsnap(verdict="OPPORTUNITY - ADD", plan={"stance": "ADD"}))[0] == "BUY MORE"
+    assert ui.action(_rsnap(verdict="BUY SETUP", watch=True, plan={"stance": "BUY ON PULLBACK"}))[0] == "BUY ON DIP"
+    assert ui.action(_rsnap(verdict="RISK - REVIEW", plan={"stance": "REDUCE / EXIT"}))[0] == "SELL"
+    assert ui.action(_rsnap(verdict="TRIM / REVIEW", plan={"stance": "TRIM / PROTECT"}))[0] == "SELL SOME"
+    assert ui.action(_rsnap(verdict="RISK - REVIEW", watch=True, plan={"stance": "REDUCE / EXIT"}))[0] == "PASS"
+    assert ui.action(_rsnap(verdict="WATCH", watch=True))[0] == "WAIT"                 # no plan: from the verdict
+    assert ui.action(_rsnap(verdict="HOLD"))[0] == "HOLD"
+    err = _rsnap(verdict="ERROR")
+    assert ui.action(err)[0] == "NO SIGNAL"

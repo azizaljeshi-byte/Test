@@ -123,18 +123,27 @@ a.mc-a:hover .mc-card { border-color:var(--c); transform:translateY(-1px); box-s
 .mc-rl .k.own, .mc-li.own .k { background:var(--c, var(--soft)); }
 
 /* ---- radar list (compact cards) */
-.mc-list { display:grid; grid-template-columns:minmax(0,1fr); gap:.45rem; }
+.mc-list { display:grid; grid-template-columns:minmax(0,1fr); gap:.6rem; }
 @media (min-width: 900px) { .mc-list { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-.mc-li { border:1px solid var(--line); border-radius:12px; padding:.55rem .7rem; background:var(--panel); transition:border-color .15s; }
-a.mc-a:hover .mc-li { border-color:var(--c); }
-.mc-li .mc-tk { font-size:1rem; }
-.mc-li .mc-tag { margin-left:0; }
-.mc-li .px { font-family:var(--mono); font-size:.8rem; color:var(--ink); margin:.25rem 0 .1rem; }
-.mc-li .px small { color:var(--muted); font-size:.7rem; }
-.mc-li .why { font-size:.8rem; line-height:1.4; color:var(--ink); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-.mc-li .rg { font-family:var(--mono); font-size:.6rem; letter-spacing:.1em; font-weight:500; margin-right:.25rem; }
+.mc-li { border:1px solid var(--line); border-radius:16px; padding:.8rem .95rem .85rem; background:var(--panel); transition:border-color .15s;
+  position:relative; overflow:hidden; }
+.mc-li::before { content:''; position:absolute; left:0; top:0; right:0; height:3px; background:var(--a); box-shadow:0 0 12px var(--a); }
+a.mc-a:hover .mc-li { border-color:var(--a); }
+.mc-li .call { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; margin-bottom:.35rem; }
+.mc-li .act { font-family:var(--head); font-weight:700; font-size:1.15rem; letter-spacing:.04em; color:var(--a); }
+.mc-li .call .mc-tag { margin-left:auto; }
+.mc-li .new { font-family:var(--mono); font-size:.66rem; font-weight:600; }
+.mc-li .new small { color:var(--muted); font-weight:400; }
+.mc-li .id { min-width:0; }
+.mc-li .mc-tk { font-size:1.2rem; }
+.mc-li .nm { color:var(--soft); font-size:.8rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mc-li .px { font-family:var(--mono); font-size:.92rem; color:var(--ink); margin:.35rem 0 .3rem; }
+.mc-li .px small { color:var(--muted); font-size:.76rem; }
+.mc-li .why { font-size:.9rem; line-height:1.45; color:var(--ink); display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+.mc-li .rg { font-family:var(--mono); font-size:.64rem; letter-spacing:.1em; font-weight:500; margin-right:.3rem; }
 .mc-li .rg.r1 { color:var(--c); } .mc-li .rg.r2 { color:var(--soft); } .mc-li .rg.r3 { color:var(--muted); }
-.mc-li .pl { font-family:var(--mono); font-size:.66rem; color:var(--soft); margin-top:.3rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mc-li .pl { font-family:var(--mono); font-size:.74rem; line-height:1.5; color:var(--soft); margin-top:.5rem; padding-top:.45rem;
+  border-top:1px solid rgba(27,52,66,.8); }
 .mc-li .pl b { color:var(--opp); font-weight:500; letter-spacing:.12em; margin-right:.35rem; }
 
 /* ---- lists, logs, tables */
@@ -465,11 +474,34 @@ def radar(snaps: list[dict], shown: set[str] | None = None) -> str:
             '<span>Middle: act now</span><span>Dashed ring: getting close</span><span>Edge: nothing to do</span></div>')
 
 
-def row(snap: dict, was: str | None = None) -> str:
-    """One compact list line: verdict, price, why it sits where it does on the radar, and the plan."""
+ACTIONS = {  # plan stance -> the plain call at the top of a list row, its glyph and color
+    "BUY NOW": ("BUY NOW", "▲", OPP), "BUY ON PULLBACK": ("BUY ON DIP", "▲", OPP),
+    "BUY THE BREAKOUT": ("BUY ON BREAKOUT", "▲", OPP), "ADD": ("BUY MORE", "▲", OPP),
+    "WAIT FOR CONFIRMATION": ("WAIT", "◌", INFO), "HOLD": ("HOLD", "●", INFO), "NO TRADE": ("PASS", "✕", MUTED),
+    "TRIM": ("SELL SOME", "◆", WARN), "TRIM / PROTECT": ("SELL SOME", "◆", WARN), "REDUCE / EXIT": ("SELL", "▼", RISK),
+}
+VERDICT_ACTIONS = {"OPPORTUNITY - ADD": "ADD", "BUY SETUP": "BUY NOW", "TRIM / REVIEW": "TRIM", "RISK - REVIEW": "REDUCE / EXIT",
+                   "AVOID": "NO TRADE"}
+
+
+def action(snap: dict) -> tuple[str, str, str]:
+    """(call, glyph, color): buy / wait / hold / sell in plain words, from the same plan the verdict produced.
+    Nothing to sell on a watchlist name, so a sell there reads PASS."""
     p = snap["payload"]
-    color, glyph = VERDICT_STYLE.get(snap["verdict"], (MUTED, "●"))
-    tag = "WATCH" if p["watchlist"] else f"T{snap['tier']}"
+    if p.get("error") or snap["verdict"] == "ERROR":
+        return "NO SIGNAL", "?", MUTED
+    stance = (p.get("plan") or {}).get("stance") or VERDICT_ACTIONS.get(snap["verdict"], "HOLD" if not p["watchlist"] else "WAIT FOR CONFIRMATION")
+    if p["watchlist"] and stance in ("TRIM", "TRIM / PROTECT", "REDUCE / EXIT", "HOLD"):
+        stance = "NO TRADE" if stance != "HOLD" else "WAIT FOR CONFIRMATION"
+    return ACTIONS.get(stance, (stance, "●", INFO))
+
+
+def row(snap: dict, was: str | None = None) -> str:
+    """One list entry: the buy/sell call on top, then price, why it sits where it does on the radar, and the plan."""
+    p = snap["payload"]
+    color, _ = VERDICT_STYLE.get(snap["verdict"], (MUTED, "●"))
+    call, glyph, acolor = action(snap)
+    tag = f'<span class="mc-tag">OWNED · T{snap["tier"]}</span>' if not p["watchlist"] else ""
     price_now, day_html = _price(snap)
     r, why = ring(snap)
     top = p["signals"][0] if p["signals"] else None
@@ -479,14 +511,16 @@ def row(snap: dict, was: str | None = None) -> str:
         why_html = f'<b class="rg r{r}">{RING_LABEL[r]}</b> {escape(why) if r < 3 else ""}'
     else:
         why_html = f'{signal_glyph(top["kind"])}{escape(top["message"])}'
-    new = f' <b style="color:{color}">● NEW</b> <small>was {escape(was)}</small>' if was else ""
+    new = f'<span class="new" style="color:{color}">● NEW <small>was {escape(was)}</small></span>' if was else ""
+    name = (p.get("profile") or {}).get("name") or p.get("name") or ""
+    name = "" if name.upper() == snap["ticker"] else name
     from .tradeplan import summary
     plan = summary(p.get("plan"))
     return (f'<a class="mc-a" href="?view=target&t={escape(snap["ticker"])}" target="_self">'
-            f'<div class="mc-li{" own" if not p["watchlist"] else ""}" style="--c:{color}">'
-            f'<div class="mc-row"><div><b class="k"></b><span class="mc-tk">{escape(snap["ticker"])}</span>'
-            f'<span class="mc-tag">{tag}</span>{new}</div>'
-            f'<span class="mc-chip" style="--c:{color}"><b>{glyph}</b> {escape(snap["verdict"])}</span></div>'
+            f'<div class="mc-li{" own" if not p["watchlist"] else ""}" style="--c:{color};--a:{acolor}">'
+            f'<div class="call"><span class="act">{glyph} {escape(call)}</span>{new}{tag}</div>'
+            f'<div class="mc-row"><div class="id"><b class="k"></b><span class="mc-tk">{escape(snap["ticker"])}</span>'
+            f'<span class="nm">{escape(name)}</span></div></div>'
             f'<div class="px">{num(price_now)}{day_html}</div><div class="why">{why_html}</div>'
             + (f'<div class="pl"><b>PLAN</b>{escape(plan)}</div>' if plan else "") + '</div></a>')
 
