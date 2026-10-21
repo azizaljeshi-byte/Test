@@ -97,6 +97,46 @@ a.mc-a:hover .mc-card { border-color:var(--c); transform:translateY(-1px); box-s
 .mc-sig { font-size:.8rem; line-height:1.45; color:var(--ink); margin-top:.5rem; border-top:1px solid rgba(27,52,66,.8); padding-top:.45rem; }
 .mc-g { font-style:normal; margin-right:.35rem; }
 
+/* ---- radar scope */
+.mc-scope { position:relative; width:100%; max-width:440px; aspect-ratio:1; margin:.4rem auto .2rem; }
+.mc-scope .disc { position:absolute; inset:3.5%; border-radius:50%; border:1px solid var(--line); overflow:hidden; }
+.mc-scope .sw { position:absolute; inset:0; border-radius:50%; animation: sweep 4s linear infinite;
+  background: conic-gradient(from 0deg, rgba(61,255,168,.26), rgba(61,255,168,0) 60deg, transparent 360deg); }
+.mc-scope .ring { position:absolute; border-radius:50%; box-sizing:border-box; pointer-events:none; }
+.mc-scope .r2 { inset:14%; border:1px dashed var(--line); }
+.mc-scope .r1 { inset:26%; border:1px solid rgba(61,255,168,.35); background:rgba(61,255,168,.04); }
+.mc-scope .spoke { position:absolute; left:50%; top:50%; width:1px; height:46.5%; background:var(--line); transform-origin:top center; }
+.mc-scope .sec { position:absolute; font-family:var(--mono); font-size:.62rem; letter-spacing:.1em; }
+.mc-scope .blip { position:absolute; width:32px; height:30px; margin:-8px 0 0 -16px; display:flex; flex-direction:column;
+  align-items:center; gap:1px; text-decoration:none !important; z-index:2; }
+.mc-scope .blip b { width:9px; height:9px; border-radius:50%; box-sizing:border-box; border:2px solid var(--c); color:var(--c); }
+.mc-scope .blip.own b { background:var(--c); }
+.mc-scope .blip span { font-family:var(--mono); font-size:.55rem; line-height:1; color:var(--soft); white-space:nowrap; }
+.mc-scope .blip.far span { display:none; }
+.mc-scope .blip.urgent b { animation: ping 1.6s ease-out infinite; }
+.mc-scope .blip.dim { opacity:.14; }
+.mc-scope .blip:hover span { color:var(--ink); }
+@keyframes ping { 0% { box-shadow:0 0 0 0 var(--c); } 100% { box-shadow:0 0 0 7px transparent; } }
+.mc-rl { justify-content:center; font-family:var(--sans); font-size:.7rem; margin-bottom:.5rem; }
+.mc-rl span, .mc-li .mc-row > div { display:inline-flex; align-items:center; gap:.35rem; }
+.mc-rl .k, .mc-li .k { width:9px; height:9px; border-radius:50%; box-sizing:border-box; border:2px solid var(--c, var(--soft)); flex:none; }
+.mc-rl .k.own, .mc-li.own .k { background:var(--c, var(--soft)); }
+
+/* ---- radar list (compact cards) */
+.mc-list { display:grid; grid-template-columns:minmax(0,1fr); gap:.45rem; }
+@media (min-width: 900px) { .mc-list { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+.mc-li { border:1px solid var(--line); border-radius:12px; padding:.55rem .7rem; background:var(--panel); transition:border-color .15s; }
+a.mc-a:hover .mc-li { border-color:var(--c); }
+.mc-li .mc-tk { font-size:1rem; }
+.mc-li .mc-tag { margin-left:0; }
+.mc-li .px { font-family:var(--mono); font-size:.8rem; color:var(--ink); margin:.25rem 0 .1rem; }
+.mc-li .px small { color:var(--muted); font-size:.7rem; }
+.mc-li .why { font-size:.8rem; line-height:1.4; color:var(--ink); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.mc-li .rg { font-family:var(--mono); font-size:.6rem; letter-spacing:.1em; font-weight:500; margin-right:.25rem; }
+.mc-li .rg.r1 { color:var(--c); } .mc-li .rg.r2 { color:var(--soft); } .mc-li .rg.r3 { color:var(--muted); }
+.mc-li .pl { font-family:var(--mono); font-size:.66rem; color:var(--soft); margin-top:.3rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mc-li .pl b { color:var(--opp); font-weight:500; letter-spacing:.12em; margin-right:.35rem; }
+
 /* ---- lists, logs, tables */
 .mc-log { font-size:.84rem; line-height:1.5; border-bottom:1px solid rgba(27,52,66,.7); padding:.45rem 0; color:var(--ink); }
 .mc-log small { color:var(--muted); font-family:var(--mono); font-size:.68rem; }
@@ -255,12 +295,10 @@ def _bar(label: str, v: float | None) -> str:
     return f'<div class="mc-bar"><span>{label}</span><i><u style="width:{v:.0f}%"></u></i><span>{v:.0f}</span></div>'
 
 
-def card(snap: dict, was: str | None = None) -> str:
+def _price(snap: dict) -> tuple[float | None, str]:
+    """The price to show (live during regular hours) and its change line, with any pre/after-hours trade."""
     p = snap["payload"]
-    t, ev = p.get("technical", {}), p.get("events") or {}
-    color, glyph = VERDICT_STYLE.get(snap["verdict"], (MUTED, "●"))
-    urgent = any(s["kind"] == "risk" and s["severity"] >= 3 for s in p["signals"])
-    tag = "WATCH" if p["watchlist"] else f"T{snap['tier']}"
+    t = p.get("technical", {})
     day = t.get("day_change")
     q = p.get("quote") or {}
     live = q.get("market_state") == "REGULAR" and not nan(q.get("live_price"))
@@ -280,6 +318,16 @@ def card(snap: dict, was: str | None = None) -> str:
         day_html += (f' <small style="color:{MUTED}">· {label}</small> '
                      f'{q["ext_price"]:.2f} <small><i class="mc-g" style="color:{OPP if ch >= 0 else RISK}">'
                      f'{"▲" if ch >= 0 else "▼"}</i>{pct(ch, digits=1)}</small>')
+    return price_now, day_html
+
+
+def card(snap: dict, was: str | None = None) -> str:
+    p = snap["payload"]
+    t, ev = p.get("technical", {}), p.get("events") or {}
+    color, glyph = VERDICT_STYLE.get(snap["verdict"], (MUTED, "●"))
+    urgent = any(s["kind"] == "risk" and s["severity"] >= 3 for s in p["signals"])
+    tag = "WATCH" if p["watchlist"] else f"T{snap['tier']}"
+    price_now, day_html = _price(snap)
     meta = []
     if was:
         meta.append(f'<b style="color:{color}">● NEW</b> was {escape(was)}')
@@ -318,6 +366,134 @@ def card(snap: dict, was: str | None = None) -> str:
 def cards(snaps: list[dict], changed: dict[str, str] | None = None) -> str:
     changed = changed or {}
     return f'<div class="mc-cards">{"".join(card(s, changed.get(s["ticker"])) for s in snaps)}</div>'
+
+
+# ---- radar scope: direction is the verdict, distance from the middle is how soon the stock needs you
+BUY_VERDICTS = ("OPPORTUNITY - ADD", "BUY SETUP")
+RISK_VERDICTS = ("RISK - REVIEW", "TRIM / REVIEW", "AVOID")
+# % of the scope's width from the centre, by ring and by how many lanes a crowded group is staggered over
+LANES = {1: ([15], [12, 18], [9, 15, 21]), 2: ([30], [28, 32], [27, 30, 33]), 3: ([41.5], [39.5, 43.5], [38.5, 41.5, 44.5])}
+RING_LABEL = {1: "ACT NOW", 2: "GETTING CLOSE", 3: "NOTHING TO DO"}
+CLOSE = 0.03                                                           # "getting close" = within 3%
+
+
+def sector(verdict: str) -> str:
+    return "opp" if verdict in BUY_VERDICTS else "risk" if verdict in RISK_VERDICTS else "hold"
+
+
+def ring(snap: dict) -> tuple[int, str]:
+    """(1 act now | 2 getting close | 3 nothing to do, the reason in plain English).
+    Reasons only ever back the card's verdict (a buy zone on a buy, an exit on a risk), never contradict it."""
+    p = snap["payload"]
+    side, plan = sector(snap["verdict"]), p.get("plan") or {}
+    sigs = p.get("signals") or []
+    days = (p.get("events") or {}).get("days_to_earnings")
+    price, _ = _price(snap)
+    stance = plan.get("stance")
+    urgent = next((s for s in sigs if s["kind"] == "risk" and s["severity"] >= 3), None)
+    if urgent:
+        return 1, urgent["message"]
+    if side == "risk" and stance == "REDUCE / EXIT":
+        return 1, "the plan says reduce or exit"
+    buying = side == "opp" and stance in ("BUY NOW", "BUY ON PULLBACK", "BUY THE BREAKOUT", "ADD")
+    lo, hi = plan.get("entry_low"), plan.get("entry_high")
+    in_reach = not (nan(price) or nan(lo) or nan(hi)) and lo > 0
+    if buying and in_reach and lo <= price <= hi:
+        return 1, "in the entry zone now"
+    if days is not None and days <= 2:
+        return 1, f"earnings in {days} day{'s' if days != 1 else ''}"
+    if side == "opp" and in_reach and stance != "NO TRADE":
+        gap = (price - hi) / hi if price > hi else (lo - price) / lo
+        if gap <= CLOSE:
+            return 2, f"{gap * 100:.1f}% from the entry zone"
+    stop = plan.get("stop")
+    if (not p["watchlist"] and side != "opp" and not (nan(price) or nan(stop)) and stop > 0
+            and 0 <= (price - stop) / price <= CLOSE):
+        return 2, f"{(price - stop) / price * 100:.1f}% above the stop"
+    if side == "risk" and stance in ("TRIM", "TRIM / PROTECT"):
+        return 2, "the plan says trim"
+    if days is not None and days <= 7:
+        return 2, f"earnings in {days} days"
+    return 3, "nothing to do"
+
+
+def _ring_sort(snap: dict) -> tuple:
+    return (ring(snap)[0],) + urgency(snap)
+
+
+def sectors(snaps: list[dict]) -> dict[str, tuple[float, float]]:
+    """(start angle, width) per verdict wedge, 0 = top and clockwise. Buys sit at the top; wedges widen with their count."""
+    n = {k: sum(1 for s in snaps if sector(s["verdict"]) == k) for k in ("opp", "hold", "risk")}
+    width = {k: 60 + 180 * v / max(len(snaps), 1) for k, v in n.items()}
+    opp = -width["opp"] / 2
+    return {"opp": (opp, width["opp"]), "hold": (opp + width["opp"], width["hold"]),
+            "risk": (opp + width["opp"] + width["hold"], width["risk"])}
+
+
+def radar(snaps: list[dict], shown: set[str] | None = None) -> str:
+    """The scope: one dot per stock, tapping opens its Details. Stocks outside the filter fade instead of vanishing."""
+    groups: dict[tuple[str, int], list[dict]] = {}
+    for s in sorted(snaps, key=lambda x: x["ticker"]):
+        groups.setdefault((sector(s["verdict"]), ring(s)[0]), []).append(s)
+    wedges = sectors(snaps)
+    dots = []
+    for (side, r), group in groups.items():
+        start, width = wedges[side]
+        pad = min(8, width / 8)
+        lanes = LANES[r][0 if len(group) < 3 else 1 if len(group) <= 8 else 2]
+        for i, s in enumerate(group):
+            ang = math.radians(start + pad + (i + 0.5) * (width - 2 * pad) / len(group))
+            dist = lanes[i % len(lanes)]
+            x, y = 50 + dist * math.sin(ang), 50 - dist * math.cos(ang)
+            color, _ = VERDICT_STYLE.get(s["verdict"], (MUTED, "●"))
+            urgent = r == 1 and side != "hold"
+            cls = "blip" + (" own" if not s["payload"]["watchlist"] else "") + (" urgent" if urgent else "") \
+                + (" far" if r == 3 else "") + (" dim" if shown is not None and s["ticker"] not in shown else "")
+            tk = escape(s["ticker"])
+            dots.append(f'<a class="{cls}" href="?view=target&t={tk}" target="_self" style="left:{x:.1f}%;top:{y:.1f}%;--c:{color}" '
+                        f'title="{tk}: {escape(s["verdict"].lower())}, {escape(ring(s)[1])}" aria-label="{tk}"><b></b><span>{tk}</span></a>')
+    spokes = "".join(f'<i class="spoke" style="transform:rotate({a + 180:.1f}deg)"></i>' for a, _ in wedges.values())
+    o, h = wedges["opp"][1], wedges["hold"][1]
+    tint = (f"conic-gradient(from {wedges['opp'][0]:.1f}deg, rgba(61,255,168,.07) 0 {o:.1f}deg, "
+            f"rgba(54,197,240,.045) {o:.1f}deg {o + h:.1f}deg, rgba(255,77,122,.08) {o + h:.1f}deg 360deg)")
+    return (f'<div class="mc-scope"><div class="disc" style="background:{tint}"><div class="sw"></div></div>'
+            '<div class="ring r2"></div><div class="ring r1"></div>'
+            f'{spokes}<span class="sec" style="left:50%;top:0;transform:translateX(-50%);color:{OPP}">▲ BUY ZONE</span>'
+            f'<span class="sec" style="left:0;bottom:0;color:{RISK}">▼ RISK</span>'
+            f'<span class="sec" style="right:0;bottom:0;color:{INFO}">● HOLD / WATCH</span>{"".join(dots)}</div>'
+            '<div class="mc-legend mc-rl"><span><b class="k own"></b>Owned</span><span><b class="k"></b>Watchlist</span>'
+            '<span>Middle: act now</span><span>Dashed ring: getting close</span><span>Edge: nothing to do</span></div>')
+
+
+def row(snap: dict, was: str | None = None) -> str:
+    """One compact list line: verdict, price, why it sits where it does on the radar, and the plan."""
+    p = snap["payload"]
+    color, glyph = VERDICT_STYLE.get(snap["verdict"], (MUTED, "●"))
+    tag = "WATCH" if p["watchlist"] else f"T{snap['tier']}"
+    price_now, day_html = _price(snap)
+    r, why = ring(snap)
+    top = p["signals"][0] if p["signals"] else None
+    if p.get("error"):
+        why_html = f'<span style="color:{MUTED}">signal lost: {escape(p["error"][:90])}</span>'
+    elif r < 3 or not top:
+        why_html = f'<b class="rg r{r}">{RING_LABEL[r]}</b> {escape(why) if r < 3 else ""}'
+    else:
+        why_html = f'{signal_glyph(top["kind"])}{escape(top["message"])}'
+    new = f' <b style="color:{color}">● NEW</b> <small>was {escape(was)}</small>' if was else ""
+    from .tradeplan import summary
+    plan = summary(p.get("plan"))
+    return (f'<a class="mc-a" href="?view=target&t={escape(snap["ticker"])}" target="_self">'
+            f'<div class="mc-li{" own" if not p["watchlist"] else ""}" style="--c:{color}">'
+            f'<div class="mc-row"><div><b class="k"></b><span class="mc-tk">{escape(snap["ticker"])}</span>'
+            f'<span class="mc-tag">{tag}</span>{new}</div>'
+            f'<span class="mc-chip" style="--c:{color}"><b>{glyph}</b> {escape(snap["verdict"])}</span></div>'
+            f'<div class="px">{num(price_now)}{day_html}</div><div class="why">{why_html}</div>'
+            + (f'<div class="pl"><b>PLAN</b>{escape(plan)}</div>' if plan else "") + '</div></a>')
+
+
+def rows(snaps: list[dict], changed: dict[str, str] | None = None) -> str:
+    changed = changed or {}
+    return f'<div class="mc-list">{"".join(row(s, changed.get(s["ticker"])) for s in sorted(snaps, key=_ring_sort))}</div>'
 
 
 def urgency(snap: dict) -> tuple:

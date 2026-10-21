@@ -136,7 +136,7 @@ Options-implied moves are compared with the stock's usual reaction. Within a wee
 
 **Briefings** (`stockwatch/briefing.py`):
 - **Each stock** gets a plain-English summary: why it has its verdict, what changed since the last scan, and what to watch next (earnings, key levels, the 200-day trigger, fair value, stops).
-- **The Radar tab** opens with a portfolio-level mission brief.
+- **The Radar tab** opens with a radar scope of every stock, then a portfolio-level mission brief.
 
 **Live tracking:** while the market is trading (4:00am-8:00pm New York, weekdays), a background tracker in the app re-runs the full analysis every 2 minutes (technicals on today's live bar, verdicts, plans, alerts) and refreshes prices every minute in between (`STOCKWATCH_SWEEP_SECONDS` / `STOCKWATCH_QUOTE_SECONDS` to change). The page picks up new results within 30 seconds, pops up new important alerts, and marks cards whose verdict just changed ("NEW · was HOLD"). The same tracker runs the S&P 500 opportunity scan every 30 minutes while the market trades (`STOCKWATCH_MARKET_SECONDS`), on its own thread so the 2-minute tracking isn't held up; it doesn't rescan after a restart if the last scan is recent. Buy setups that weren't in the previous scan are marked NEW SETUP, logged, and popped up on screen. It runs while the app is awake; for alerts when nobody has it open, use the GitHub Actions notifications.
 
@@ -153,7 +153,7 @@ Watchlist verdicts: `BUY SETUP`, `WATCH`, `AVOID`.
 ## Dashboard
 
 Dark "mission control" theme, designed for phones first. Tap any stock (a card, a ticker in the brief, an S&P scan result) to open its details page. The views are:
-- **Radar:** one card per stock, most urgent first. Filter by risk, opportunity, held or watchlist.
+- **Radar:** a scope with one dot per stock. Direction is the verdict (buy zone at the top, risk bottom-left, hold/watch bottom-right); the closer to the middle, the sooner it needs you. Filled dots are owned, hollow ones watchlist; tap a dot for Details. Below it, a compact list (price, verdict, why, plan), act-now first. Filter by risk, opportunity, held or watchlist.
 - **Details:** chart, every signal, readouts, SEC filings, analyst moves and news for one stock.
 - **S&P 500:** the opportunity scan.
 - **⚡ Turbo:** a quick decision on any ticker, without adding it to your list.

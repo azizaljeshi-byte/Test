@@ -208,8 +208,10 @@ def verdict_changes(snaps: list[dict]) -> dict[str, str]:
 
 
 @st.fragment
-def radar_list(snaps: list[dict]):
-    """Filter + cards. A fragment, so tapping a filter redraws only this part of the page."""
+def radar_list(snaps: list[dict], brief: str):
+    """Radar scope, brief, filter + list. A fragment, so tapping a filter redraws only this part of the page."""
+    scope = st.empty()
+    st.markdown(brief, unsafe_allow_html=True)
     # filters follow the verdict shown on each card, so every card in a filter shows that status
     groups = {
         "Risk": lambda x: x["verdict"] in ("RISK - REVIEW", "TRIM / REVIEW", "AVOID"),
@@ -223,16 +225,14 @@ def radar_list(snaps: list[dict]):
         g: f"{icons.get(g, '')}{g} ({sum(1 for x in snaps if fn(x))})" for g, fn in groups.items()}
     choice = st.pills("Filter", list(labels), format_func=labels.get, default="All", key="radar_filter",
                       label_visibility="collapsed")
-    shown = sorted(snaps, key=ui.urgency)
-    if choice in groups:
-        shown = [x for x in shown if groups[choice](x)]
-    st.markdown(ui.cards(shown, changed=verdict_changes(snaps)) if shown else '<div class="mc-d">No stocks with this status right now.</div>',
+    shown = [x for x in snaps if groups[choice](x)] if choice in groups else snaps
+    scope.markdown(ui.radar(snaps, {x["ticker"] for x in shown}), unsafe_allow_html=True)
+    st.markdown(ui.rows(shown, changed=verdict_changes(snaps)) if shown else '<div class="mc-d">No stocks with this status right now.</div>',
                 unsafe_allow_html=True)
 
 
 if view == "radar":
-    st.markdown(ui.mission_brief(briefing.portfolio(snaps, prevs, reg), tickers), unsafe_allow_html=True)
-    radar_list(snaps)
+    radar_list(snaps, ui.mission_brief(briefing.portfolio(snaps, prevs, reg), tickers))
 
 # ---------------------------------------------------------------- target detail
 if view == "target":

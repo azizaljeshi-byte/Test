@@ -1139,3 +1139,48 @@ def test_product_offerings_are_not_share_sales():
     m, sig = catalysts.analyze({"news": [{"title": "ONDS announces $50M registered direct offering", "published": now}]},
                                owned=True, tier=1)
     assert m["news"][0]["tone"] == "negative" and sig[0].code == "news_negative" and sig[0].severity == 2
+
+
+# ---- radar scope
+
+
+def _rsnap(ticker="X", verdict="HOLD", price=100.0, watch=False, plan=None, signals=None, days=None):
+    return {"ticker": ticker, "tier": 1, "verdict": verdict, "price": price, "fundamental_score": 60,
+            "technical_score": 55, "composite": 58,
+            "payload": {"watchlist": watch, "signals": signals or [], "position": {}, "fundamental": {"available": True},
+                        "technical": {}, "quote": {}, "plan": plan or {},
+                        "events": {"days_to_earnings": days} if days is not None else {}}}
+
+
+def test_radar_ring_follows_how_soon_a_stock_needs_you():
+    buy = {"stance": "BUY ON PULLBACK", "entry_low": 95.0, "entry_high": 99.0, "stop": 90.0}
+    assert ui.ring(_rsnap(verdict="BUY SETUP", price=97, plan=buy)) == (1, "in the entry zone now")
+    assert ui.ring(_rsnap(verdict="BUY SETUP", price=101, plan=buy))[0] == 2              # 2% above the zone
+    assert ui.ring(_rsnap(verdict="BUY SETUP", price=110, plan=buy))[0] == 3
+    # the plan's zone never pulls a stock with a non-buy verdict into "act now": no conflicting answers
+    assert ui.ring(_rsnap(verdict="WATCH", price=97, plan=buy))[0] == 3
+    urgent = [{"kind": "risk", "severity": 3, "message": "trailing stop hit"}]
+    assert ui.ring(_rsnap(verdict="RISK - REVIEW", signals=urgent)) == (1, "trailing stop hit")
+    exit_plan = {"stance": "REDUCE / EXIT", "stop": 80.0}
+    assert ui.ring(_rsnap(verdict="RISK - REVIEW", plan=exit_plan))[0] == 1
+    near_stop = {"stance": "HOLD", "stop": 98.0}
+    assert ui.ring(_rsnap(plan=near_stop))[1] == "2.0% above the stop"
+    assert ui.ring(_rsnap(plan=near_stop, watch=True))[0] == 3                          # no stop on a watchlist name
+    assert ui.ring(_rsnap(days=2)) == (1, "earnings in 2 days")
+    assert ui.ring(_rsnap(days=6))[0] == 2
+    assert ui.ring(_rsnap(price=float("nan"), plan=buy, verdict="BUY SETUP"))[0] == 3   # unknown price: no claim
+
+
+def test_radar_draws_every_stock_and_links_to_details():
+    plan = {"stance": "BUY NOW", "entry_low": 95.0, "entry_high": 99.0, "stop": 90.0, "rr": 2.0,
+            "targets": [{"price": 111.0}, {"price": 120.0}]}
+    snaps = [_rsnap("AAA", "BUY SETUP", 97, plan=plan),
+             _rsnap("BBB", "RISK - REVIEW", watch=True), _rsnap("CCC")]
+    html = ui.radar(snaps, shown={"AAA"})
+    assert html.count('class="blip') == 3 and "?view=target&t=BBB" in html
+    assert 'class="blip own urgent"' in html                       # owned, act-now buy pulses
+    assert html.count(" dim") == 2                                 # filtered out: faded, not removed
+    listed = ui.rows(snaps, changed={"CCC": "WATCH"})
+    assert listed.index(">AAA<") < listed.index(">CCC<")          # act now first
+    assert "ACT NOW</b> in the entry zone now" in listed and "NEW</b> <small>was WATCH" in listed
+    assert "buy now 95.00-99.00 · stop 90.00" in listed
