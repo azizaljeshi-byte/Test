@@ -956,3 +956,30 @@ def test_card_marks_changed_verdicts():
                         "technical": {}, "quote": {}}}
     assert "NEW</b> was WATCH" in ui.cards([snap], changed={"X": "WATCH"})
     assert "NEW" not in ui.cards([snap])
+
+
+def test_tracker_runs_the_sp500_scan_on_schedule(monkeypatch, tmp_path):
+    from stockwatch import live
+    import stockwatch.live as live_mod
+    monkeypatch.setenv("STOCKWATCH_PORTFOLIO", "holdings:\n  - {ticker: AAA, tier: 2, shares: 5}\n")
+    monkeypatch.delenv("STOCKWATCH_SHEET_URL", raising=False)
+    saved = market._universe_cache
+    market._universe_cache = (time.time(), market.load_universe().head(40))
+    try:
+        store = Store(tmp_path / "m.db")
+        t = live.Tracker(get_provider("demo"), store_path=tmp_path / "m.db", start=False)
+        monkeypatch.setattr(live_mod, "us_session", lambda now=None: "CLOSED")
+        assert not t.maybe_market_scan(store, background=False)
+        monkeypatch.setattr(live_mod, "us_session", lambda now=None: "REGULAR")
+        assert t.maybe_market_scan(store, background=False)          # nothing on record: scan now
+        first = store.latest_market_scan()
+        assert first and first["universe"] == 40
+        assert not t.maybe_market_scan(store, background=False)      # just ran
+        restarted = live.Tracker(get_provider("demo"), store_path=tmp_path / "m.db", start=False)
+        assert not restarted.maybe_market_scan(store, background=False)   # a restart doesn't rescan
+        assert t.maybe_market_scan(store, now=time.time() + live.MARKET_SECONDS + 1, background=False)
+        logged = [a for a in store.recent_alerts() if a["code"] == "sp500_buy_setup"]
+        buys = {r["ticker"] for r in first["results"] if r["verdict"] == "BUY SETUP"}
+        assert {a["ticker"] for a in logged} == buys              # logged once, not again on the rescan
+    finally:
+        market._universe_cache = saved

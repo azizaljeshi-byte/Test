@@ -358,13 +358,15 @@ def hero(greeting: str, summary: str) -> str:
     return f'<div class="mc-hero"><div class="h1">{escape(greeting)}</div><p>{summary}</p></div>'
 
 
-def market_card(r: dict) -> str:
+def market_card(r: dict, new: bool = False) -> str:
     color, glyph = VERDICT_STYLE.get(r["verdict"], (MUTED, "●"))
     trig = "".join(f'<div class="mc-sig" style="border:0;padding-top:.1rem;margin-top:.1rem">'
                    f'{signal_glyph("opportunity")}{escape(t)}</div>' for t in r["triggers"][:2])
     risks = "".join(f'<div class="mc-sig" style="border:0;padding-top:.1rem;margin-top:.1rem;color:var(--soft)">'
                     f'{signal_glyph("risk")}{escape(t)}</div>' for t in r.get("top_risks", [])[:1])
     meta = [f"{escape(r.get('sector') or '')}"]
+    if new:
+        meta.insert(0, f'<b style="color:{OPP}">● NEW SETUP</b>')
     if not nan(r.get("rs_spy_3m")):
         meta.append(f"VS SPY 3M <b>{pct(r['rs_spy_3m'])}</b>")
     if r.get("earnings_days") is not None:

@@ -100,9 +100,30 @@ class Store:
                           (datetime.now(timezone.utc).isoformat(timespec="seconds"), json.dumps(summary, default=str)))
         self.conn.commit()
 
-    def latest_market_scan(self) -> dict | None:
-        r = self.conn.execute("SELECT * FROM market_scans ORDER BY id DESC LIMIT 1").fetchone()
+    def latest_market_scan(self, offset: int = 0) -> dict | None:
+        r = self.conn.execute("SELECT * FROM market_scans ORDER BY id DESC LIMIT 1 OFFSET ?", (offset,)).fetchone()
         return {"scanned_at": r["scanned_at"], **json.loads(r["payload"])} if r else None
+
+    def record_market_alerts(self, rows: list[dict], cooldown_hours: float = 24) -> list[dict]:
+        """Log new S&P buy setups as alerts (once per ticker per cooldown); returns the new ones."""
+        now = datetime.now(timezone.utc)
+        cutoff = (now - timedelta(hours=cooldown_hours)).isoformat(timespec="seconds")
+        fresh = []
+        for r in rows:
+            seen = self.conn.execute("SELECT 1 FROM alerts WHERE ticker=? AND code='sp500_buy_setup' AND created_at>=?",
+                                     (r["ticker"], cutoff)).fetchone()
+            if seen:
+                continue
+            trig = "; ".join(r.get("triggers", [])[:1])
+            self.conn.execute(
+                "INSERT INTO alerts (created_at, ticker, kind, source, code, severity, message, price)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (now.isoformat(timespec="seconds"), r["ticker"], "opportunity", "S&P scan", "sp500_buy_setup", 2,
+                 f"S&P scan: new buy setup ({r.get('name') or r['ticker']})" + (f" - {trig}" if trig else ""),
+                 r.get("price")))
+            fresh.append(r)
+        self.conn.commit()
+        return fresh
 
     def snapshot(self, ticker: str) -> dict | None:
         r = self.conn.execute("SELECT * FROM snapshots WHERE ticker=? ORDER BY id DESC LIMIT 1", (ticker,)).fetchone()

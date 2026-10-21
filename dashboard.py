@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import briefing, live, market, technical, tradeplan, ui
+from stockwatch import briefing, live, technical, tradeplan, ui
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
 from stockwatch.data import NY, get_provider, us_session
 from stockwatch.engine import evaluate
@@ -122,7 +122,8 @@ def _watch_for_updates():
         st.session_state.watermark = mark
         return
     if mark != seen:
-        fresh = [a for a in store.alerts_after(seen[1]) if a["ticker"] in tickers and a["severity"] >= 2]
+        fresh = [a for a in store.alerts_after(seen[1])
+                 if (a["ticker"] in tickers or a["source"] == "S&P scan") and a["severity"] >= 2]
         for a in fresh[:5]:
             st.toast(f"{'🟢' if a['kind'] == 'opportunity' else '🔴'} {a['ticker']}: {a['message']}")
         if len(fresh) > 5:
@@ -454,11 +455,21 @@ if view == "market":
     st.markdown('<div class="mc-section">S&P 500 opportunity scan</div>', unsafe_allow_html=True)
     st.markdown("Screens all S&P 500 stocks for technical entry setups, then runs the full fundamental and "
                 "technical evaluation on the strongest 25. Stocks already in your list are skipped.")
-    if st.button("✦ Scan the S&P 500 now", use_container_width=True):
+    mstat = tracking.status()
+    if mstat["market_running"] or live.MARKET_LOCK.locked():
+        st.caption("✦ Scanning the S&P 500 now; results appear here automatically when it finishes.")
+    elif mstat["session"] == "CLOSED":
+        st.caption("Auto-scan runs every 30 minutes while the market trades (4:00am-8:00pm New York).")
+    elif mstat["next_market_in"] is not None:
+        st.caption(f"🟢 Auto-scan every {live.MARKET_SECONDS // 60} min · next in "
+                   f"{max(1, mstat['next_market_in'] // 60)} min")
+    if mstat.get("market_error"):
+        st.caption(f"⚠ Last automatic scan failed: {mstat['market_error'][:120]}")
+    if st.button("✦ Scan the S&P 500 now", use_container_width=True, disabled=live.MARKET_LOCK.locked()):
         bar = st.progress(0.0, text="Starting...")
         try:
-            result = market.run(data, progress=lambda f, t: bar.progress(min(f, 1.0), text=t), exclude=tickers)
-            store.save_market_scan(result)
+            live.market_scan(data, store, progress=lambda f, t: bar.progress(min(f, 1.0), text=t))
+            tracking.last_market = time.time()
             st.rerun()
         except Exception as e:
             st.error(f"Scan failed: {e}")
@@ -469,15 +480,19 @@ if view == "market":
         when = ms["scanned_at"][5:16].replace("T", " ")
         st.caption(f"Last scan {when} UTC · {ms['priced']} of {ms['universe']} stocks priced · "
                    f"{ms['setups']} setups · {len(ms['results'])} evaluated in depth. Tap a stock for details.")
+        before = store.latest_market_scan(offset=1) or {}
+        was = {r["ticker"] for r in before.get("results", []) if r["verdict"] == "BUY SETUP"}
+        new_setups = {r["ticker"] for r in ms["results"] if r["verdict"] == "BUY SETUP" and r["ticker"] not in was}
         pick = st.pills("Show", ["Buy setups", "All finalists"], default="Buy setups", label_visibility="collapsed")
         rows = [r for r in ms["results"] if pick == "All finalists" or r["verdict"] == "BUY SETUP"]
-        st.markdown(f'<div class="mc-cards">{"".join(ui.market_card(r) for r in rows)}</div>' if rows
-                    else '<div class="mc-d">No buy setups in the last scan. Try "All finalists".</div>',
+        rows.sort(key=lambda r: r["ticker"] not in new_setups)   # new setups first
+        st.markdown(f'<div class="mc-cards">{"".join(ui.market_card(r, r["ticker"] in new_setups) for r in rows)}</div>'
+                    if rows else '<div class="mc-d">No buy setups in the last scan. Try "All finalists".</div>',
                     unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- alert log
 if view == "log":
-    alerts = [a for a in store.recent_alerts(150) if a["ticker"] in tickers]
+    alerts = [a for a in store.recent_alerts(150) if a["ticker"] in tickers or a["source"] == "S&P scan"]
     if not alerts:
         st.markdown('<div class="mc-d">no transmissions yet</div>', unsafe_allow_html=True)
     st.markdown("".join(
