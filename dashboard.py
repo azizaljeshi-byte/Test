@@ -172,17 +172,22 @@ prevs = {s["ticker"]: store.previous_snapshot(s["ticker"]) for s in snaps}
 
 if view == "radar":
     st.markdown(ui.mission_brief(briefing.portfolio(snaps, prevs, reg), tickers), unsafe_allow_html=True)
-    view = st.pills("Filter", ["All", "▼ Risk", "▲ Opportunity", "Held", "Watch"], default="All",
-                    label_visibility="collapsed")
+    # filters follow the verdict shown on each card, so every card in a filter shows that status
+    groups = {
+        "Risk": lambda x: x["verdict"] in ("RISK - REVIEW", "TRIM / REVIEW", "AVOID"),
+        "Opportunity": lambda x: x["verdict"] in ("OPPORTUNITY - ADD", "BUY SETUP"),
+        "Hold": lambda x: x["verdict"] in ("HOLD", "STRONG HOLD", "WATCH"),
+        "Held": lambda x: not x["payload"]["watchlist"],
+        "Watch": lambda x: x["payload"]["watchlist"],
+    }
+    icons = {"Risk": "▼ ", "Opportunity": "▲ ", "Hold": "● "}
+    labels = {"All": f"All ({len(snaps)})"} | {
+        g: f"{icons.get(g, '')}{g} ({sum(1 for x in snaps if fn(x))})" for g, fn in groups.items()}
+    choice = st.pills("Filter", list(labels), format_func=labels.get, default="All", key="radar_filter",
+                      label_visibility="collapsed")
     shown = sorted(snaps, key=ui.urgency)
-    if view == "▼ Risk":
-        shown = [s for s in shown if any(x["kind"] == "risk" and x["severity"] >= 2 for x in s["payload"]["signals"])]
-    elif view == "▲ Opportunity":
-        shown = [s for s in shown if any(x["kind"] == "opportunity" and x["severity"] >= 2 for x in s["payload"]["signals"])]
-    elif view == "Held":
-        shown = [s for s in shown if not s["payload"]["watchlist"]]
-    elif view == "Watch":
-        shown = [s for s in shown if s["payload"]["watchlist"]]
+    if choice in groups:
+        shown = [x for x in shown if groups[choice](x)]
     st.markdown(ui.cards(shown) if shown else '<div class="mc-d">no targets match</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- target detail
