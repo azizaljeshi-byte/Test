@@ -3,6 +3,8 @@
 Keeps scanning your holdings and watchlist and flags **opportunities** (add / buy) and **risks** (trim / review / exit).
 Every stock gets a **fundamental** and a **technical** score. The two are weighted by tier and checked against each other.
 
+> Project summary for picking this up later: [`docs/HANDOFF.md`](docs/HANDOFF.md).
+
 > Personal decision-support tool, not financial advice. Free Yahoo data can be delayed or incomplete.
 
 ## Quick start
