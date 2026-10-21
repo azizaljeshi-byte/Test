@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import briefing, market, technical, ui
+from stockwatch import briefing, market, technical, tradeplan, ui
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
 from stockwatch.data import NY, get_provider, us_session
 from stockwatch.engine import evaluate
@@ -201,6 +201,15 @@ if view == "target":
     if note:
         st.markdown(f'<div class="mc-log"><small>YOUR NOTE</small><br>{escape(note)}</div>', unsafe_allow_html=True)
     st.markdown(ui.brief(briefing.stock(snap, prevs.get(ticker))), unsafe_allow_html=True)
+    plan = p.get("plan") or {}
+    if plan:
+        portfolio_value = sum(x["payload"]["position"].get("value", 0) for x in snaps if not x["payload"]["watchlist"])
+        risk_pct = st.session_state.get("risk_pct", portfolio.settings.risk_per_trade_pct)
+        sizing = tradeplan.size(plan, portfolio_value, risk_pct, portfolio.rules(snap["tier"]).max_position_pct)
+        st.markdown(ui.trade_plan(plan, sizing, risk_pct, portfolio_value), unsafe_allow_html=True)
+        st.select_slider("Risk per trade (% of portfolio lost if the stop is hit)", [0.25, 0.5, 1.0, 1.5, 2.0],
+                         value=risk_pct, key="risk_pct")
+
     with st.expander("Company overview & report card", expanded=False):
         st.markdown(ui.overview_card(briefing.overview(snap), ticker), unsafe_allow_html=True)
     research = p.get("research") or {}
@@ -217,6 +226,12 @@ if view == "target":
         fig.add_trace(go.Scatter(x=ind.index, y=ind.RSI, name="RSI", line=dict(width=2, color=ui.INFO),
                                  showlegend=False), 2, 1)
         fig.add_hrect(y0=30, y1=70, fillcolor="rgba(54,197,240,0.06)", line_width=0, row=2, col=1)
+        if plan:
+            fig.add_hrect(y0=plan["entry_low"], y1=plan["entry_high"], fillcolor="rgba(61,255,168,0.12)", line_width=0,
+                          row=1, col=1)
+            fig.add_hline(y=plan["stop"], line_dash="dash", line_width=1, line_color=ui.RISK, row=1, col=1,
+                          annotation_text=f"stop {plan['stop']:.2f}", annotation_font_color=ui.RISK,
+                          annotation_position="bottom left")
         for level, label in ((lv.get("support"), "support"), (lv.get("resistance"), "resistance")):
             if level:
                 fig.add_hline(y=level, line_dash="dot", line_width=1, line_color=ui.MUTED, row=1, col=1,

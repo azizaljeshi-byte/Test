@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import relative, technical
+from . import relative, technical, tradeplan
 from .config import Holding, load_portfolio
 from .data import get_provider
 from .engine import evaluate
@@ -126,6 +126,7 @@ def run(provider, top: int = 25, progress=None, exclude: set[str] = frozenset())
             "earnings_days": (e.events or {}).get("days_to_earnings"),
             "top_signals": [s.message for s in e.signals if s.kind == OPPORTUNITY][:3],
             "top_risks": [s.message for s in e.signals if s.kind != OPPORTUNITY and s.severity >= 2][:2],
+            "plan": e.plan,
         })
     results.sort(key=lambda r: (r["rank"], -r["composite"]))
     step(1.0, f"Done: {sum(r['verdict'] == 'BUY SETUP' for r in results)} buy setups among {len(results)} finalists")
@@ -154,7 +155,8 @@ def main(argv=None):
         print(f"{r['ticker']:6} {r['verdict']:10} {r['composite']:5.1f}  {'; '.join(r['triggers'][:2])}")
     if args.notify and buys:
         notify.send([(r["ticker"], r["price"], "S&P SCAN", Signal(OPPORTUNITY, "market", "market_scan",
-                      f"{r['name']}: {'; '.join(r['triggers'][:2])} (score {r['composite']:.0f})", 2)) for r in buys])
+                      f"{r['name']}: {'; '.join(r['triggers'][:1])}. Plan: {tradeplan.summary(r.get('plan'))}", 2))
+                     for r in buys])
 
 
 if __name__ == "__main__":

@@ -51,6 +51,7 @@ class Settings:
     data_provider: str = "yahoo"
     benchmark: str = "SPY"
     sheet_url: str | None = None      # Google Sheet holding the ticker list (overrides YAML holdings)
+    risk_per_trade_pct: float = 1.0   # portfolio % lost if a trade hits its stop (position sizing)
 
 
 @dataclass

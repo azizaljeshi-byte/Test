@@ -157,6 +157,29 @@ a.mc-a:hover .mc-card { border-color:var(--c); transform:translateY(-1px); box-s
 .mc-ov .h4 { font-family:var(--mono) !important; font-size:.6rem; letter-spacing:.2em; margin:.7rem 0 .15rem; padding:0; font-weight:500; }
 .mc-ov ul { margin:0; padding-left:1.1rem; } .mc-ov li { font-size:.84rem; line-height:1.55; }
 
+/* ---- trade plan */
+.mc-plan { font-family:var(--mono); font-size:.68rem; color:var(--soft); margin-top:.45rem; padding:.35rem .5rem;
+  border:1px dashed rgba(61,255,168,.25); border-radius:10px; background:rgba(61,255,168,.03); }
+.mc-plan b { color:var(--opp); font-weight:500; letter-spacing:.12em; margin-right:.35rem; }
+.mc-tp { border:1px solid var(--line); border-radius:16px; padding:.9rem 1rem; margin:.6rem 0 .9rem;
+  background: linear-gradient(160deg, rgba(54,197,240,.07), transparent 45%), var(--panel); }
+.mc-tp .hd { display:flex; justify-content:space-between; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.mc-tp .lab { font-family:var(--mono); font-size:.62rem; letter-spacing:.2em; color:var(--opp); }
+.mc-tp .stance { font-family:var(--head); font-weight:700; font-size:1.25rem; color:var(--ink); margin:.25rem 0 .1rem; }
+.mc-tp p { font-size:.88rem; line-height:1.55; color:var(--ink); margin:.5rem 0; }
+.mc-tp .note { color:var(--warn); font-size:.82rem; }
+.mc-tp ol { margin:.2rem 0 0; padding-left:1.2rem; } .mc-tp li { font-size:.84rem; line-height:1.55; color:var(--ink); margin:.12rem 0; }
+.mc-tp .mc-kv { grid-template-columns:minmax(0,1fr); }
+@media (min-width: 760px) { .mc-tp .mc-kv { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+.mc-tp .fine { color:var(--muted); font-size:.72rem; margin-top:.6rem; }
+.mc-lad { position:relative; height:64px; margin:.9rem .4rem .6rem; font-family:var(--mono); }
+.mc-lad .track { position:absolute; left:0; right:0; top:28px; height:4px; border-radius:2px;
+  background:linear-gradient(90deg, rgba(255,77,122,.35), rgba(108,138,151,.25) 35%, rgba(54,197,240,.35)); }
+.mc-lad .zone { position:absolute; top:22px; height:16px; border-radius:5px; background:rgba(61,255,168,.22); border:1px solid var(--opp); }
+.mc-lad .tick { position:absolute; top:20px; width:2px; height:20px; border-radius:1px; }
+.mc-lad .lbl { position:absolute; font-size:.6rem; transform:translateX(-50%); white-space:nowrap; color:var(--soft); }
+.mc-lad .lbl.top { top:2px; } .mc-lad .lbl.bot { top:44px; }
+
 /* ---- streamlit widgets */
 .stButton > button, .stFormSubmitButton > button { border:1px solid rgba(61,255,168,.6) !important; background:rgba(61,255,168,.07) !important;
   color:var(--opp) !important; font-weight:600; border-radius:12px; }
@@ -248,7 +271,7 @@ def card(snap: dict) -> str:
             f'<span class="mc-chip" style="--c:{color}"><b>{glyph}</b> {escape(snap["verdict"])}</span></div>'
             f'<div class="mc-px">{num(snap["price"])}{day_html}</div>'
             f'{_bar("FUND", snap["fundamental_score"])}{_bar("TECH", snap["technical_score"])}{_bar("Σ ALL", snap["composite"])}'
-            f'<div class="mc-meta">{"".join(f"<span>{m}</span>" for m in meta)}</div>{sig}</div></a>')
+            f'<div class="mc-meta">{"".join(f"<span>{m}</span>" for m in meta)}</div>{sig}{plan_line(p.get("plan"))}</div></a>')
 
 
 def cards(snaps: list[dict]) -> str:
@@ -322,7 +345,7 @@ def market_card(r: dict) -> str:
             f'<div class="mc-px">{num(r["price"])}</div>'
             f'{_bar("FUND", r["fundamental"])}{_bar("TECH", r["technical"])}{_bar("Σ ALL", r["composite"])}'
             f'<div class="mc-meta">{"".join(f"<span>{m}</span>" for m in meta)}</div>'
-            f'<div style="margin-top:.4rem">{trig}{risks}</div></div></a>')
+            f'<div style="margin-top:.4rem">{trig}{risks}</div>{plan_line(r.get("plan"))}</div></a>')
 
 
 def table(headers: list[str], rows: list[list], highlight: int | None = None) -> str:
@@ -378,3 +401,83 @@ def overview_card(o: dict, ticker: str, acquired: bool = False) -> str:
 
 
 SESSION_LABEL = {"REGULAR": "market open", "PRE": "pre-market", "POST": "after hours", "CLOSED": "market closed"}
+
+
+STANCE_COLOR = {"BUY NOW": OPP, "BUY ON PULLBACK": OPP, "BUY THE BREAKOUT": OPP, "ADD": OPP,
+                "WAIT FOR CONFIRMATION": INFO, "HOLD": INFO, "TRIM": WARN, "REDUCE / EXIT": RISK, "NO TRADE": RISK}
+BIAS_GLYPH = {"bullish": ("▲ bullish", OPP), "bearish": ("▼ bearish", RISK), "neutral": ("◆ neutral", INFO)}
+
+
+def plan_line(plan: dict | None) -> str:
+    from .tradeplan import summary
+    return f'<div class="mc-plan"><b>PLAN</b>{escape(summary(plan))}</div>' if plan else ""
+
+
+def _ladder(plan: dict) -> str:
+    exit_only = plan["stance"] in ("REDUCE / EXIT", "NO TRADE")
+    points = [plan["stop"], plan["entry_low"], plan["entry_high"], plan["price"]]
+    if not exit_only:
+        points += [t["price"] for t in plan["targets"]]
+    lo, hi = min(points), max(points)
+    pad = (hi - lo) * 0.06 or hi * 0.02
+    lo, hi = lo - pad, hi + pad
+    x = lambda v: (v - lo) / (hi - lo) * 100  # noqa: E731
+    out = ['<div class="mc-lad"><div class="track"></div>',
+           "" if exit_only else
+           f'<div class="zone" style="left:{x(plan["entry_low"]):.1f}%;width:{max(x(plan["entry_high"]) - x(plan["entry_low"]), 1):.1f}%"></div>',
+           f'<div class="tick" style="left:{x(plan["stop"]):.1f}%;background:{RISK}"></div>',
+           f'<div class="tick" style="left:{x(plan["price"]):.1f}%;background:{INK};box-shadow:0 0 8px {INK};height:28px;top:16px"></div>',
+           f'<div class="lbl top" style="left:{x(plan["price"]):.1f}%;color:{INK}">NOW {plan["price"]:.2f}</div>',
+           f'<div class="lbl bot" style="left:{x(plan["stop"]):.1f}%;color:{RISK}">STOP {plan["stop"]:.2f}</div>']
+    zone_mid = x((plan["entry_low"] + plan["entry_high"]) / 2)
+    if not exit_only and abs(zone_mid - x(plan["price"])) >= 18:
+        out.append(f'<div class="lbl top" style="left:{zone_mid:.1f}%;color:{OPP}">ZONE</div>')
+    if not exit_only:
+        for i, t in enumerate(plan["targets"]):
+            out.append(f'<div class="tick" style="left:{x(t["price"]):.1f}%;background:{INFO}"></div>')
+            if abs(x(t["price"]) - x(plan["stop"])) >= 16 and (i == 0 or abs(x(t["price"]) - x(plan["targets"][0]["price"])) >= 16):
+                out.append(f'<div class="lbl bot" style="left:{x(t["price"]):.1f}%;color:{INFO}">T{i + 1} {t["price"]:.2f}</div>')
+    return "".join(out) + "</div>"
+
+
+def trade_plan(plan: dict, sizing: dict | None, risk_pct: float, portfolio_value: float) -> str:
+    if not plan:
+        return ""
+    color = STANCE_COLOR.get(plan["stance"], INFO)
+    bias, bias_color = BIAS_GLYPH.get(plan["bias"], ("◆ neutral", INFO))
+    price = plan["price"]
+    exit_only = plan["stance"] in ("REDUCE / EXIT", "NO TRADE")
+
+    def rel(v):
+        return f"{v:.2f} <small style='color:{MUTED}'>({(v / price - 1) * 100:+.1f}%)</small>"
+
+    zone_label = {"ADD": "Add zone", "HOLD": "Add on dips", "TRIM": "Re-buy zone", "WAIT FOR CONFIRMATION": "Entry zone",
+                  "REDUCE / EXIT": "Support zone", "NO TRADE": "Support zone"}.get(plan["stance"], "Entry zone")
+    rows = [] if exit_only else [(zone_label, f"{plan['entry_low']:.2f} - {plan['entry_high']:.2f}")]
+    if plan.get("trigger"):
+        rows.append(("Trigger", escape(plan["trigger"])))
+    rows.append(("Stop", rel(plan["stop"]) + f"<br><small style='color:{MUTED}'>{escape(plan['stop_basis'])}</small>"))
+    if not exit_only:
+        for i, t in enumerate(plan["targets"]):
+            r = f" · {t['r']:.1f}R" if t.get("r") else ""
+            rows.append((f"Target {i + 1}", rel(t["price"]) + f"<br><small style='color:{MUTED}'>{escape(t['label'])}{r}</small>"))
+        rows.append(("Reward / risk", f"{plan['rr']:.1f} : 1"))
+    rows.append(("Horizon", escape(plan["horizon"])))
+    grid = "".join(f"<div><span>{k}</span><em style='font-style:normal;text-align:right'>{v}</em></div>" for k, v in rows)
+
+    size_html = ""
+    if sizing and not exit_only:
+        size_html = (f"<p style='font-size:.82rem;color:var(--soft)'>Sizing: risking {risk_pct:g}% of your "
+                     f"{money(portfolio_value)} portfolio ({money(sizing['budget'])}) means about "
+                     f"<b style='color:var(--ink)'>{sizing['shares']:.1f} shares</b> ({money(sizing['value'])})"
+                     + (" — capped by the tier's maximum position size" if sizing["capped"] else "") + ".</p>")
+    notes = "".join(f"<p class='note'>⚠ {escape(n)}</p>" for n in plan.get("notes", []))
+    exits = "".join(f"<li>{escape(e)}</li>" for e in plan["exits"])
+    return (f'<div class="mc-tp"><div class="hd"><div><div class="lab">TRADE PLAN</div>'
+            f'<div class="stance" style="color:{color}">{escape(plan["stance"])}</div></div>'
+            f'<span class="mc-chip" style="--c:{bias_color}">{bias}</span></div>'
+            f'{_ladder(plan)}<div class="mc-kv" style="margin-top:.2rem">{grid}</div>'
+            f'<p>{escape(plan["outlook"])}</p>{notes}{size_html}'
+            f'<div class="lab" style="margin-top:.7rem">{"WHAT WOULD CHANGE THE PLAN" if plan["stance"] == "NO TRADE" else "WHEN TO SELL"}</div><ol>{exits}</ol>'
+            f'<div class="fine">Rule-based levels from price structure and volatility, not a forecast or financial advice. '
+            f'Check them against the chart before placing an order.</div></div>')

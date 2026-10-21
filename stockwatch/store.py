@@ -41,7 +41,7 @@ class Store:
 
     def save_snapshot(self, e: Evaluation) -> None:
         payload = {"technical": e.technical, "fundamental": e.fundamental, "position": e.position,
-                   "signals": [s.to_dict() for s in e.signals], "events": e.events, "research": e.research, "profile": e.profile, "quote": e.quote, "name": e.name, "error": e.error,
+                   "signals": [s.to_dict() for s in e.signals], "events": e.events, "research": e.research, "profile": e.profile, "quote": e.quote, "plan": e.plan, "name": e.name, "error": e.error,
                    "watchlist": e.watchlist}
         self.conn.execute(
             "INSERT INTO snapshots (scanned_at, ticker, tier, price, technical_score, fundamental_score,"

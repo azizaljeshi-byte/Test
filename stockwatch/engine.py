@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from . import catalysts, deepdive, fundamental, relative, sec, technical
+from . import catalysts, deepdive, fundamental, relative, sec, technical, tradeplan
 from .config import Holding, Portfolio
 from .data import SECTOR_ETFS, DataProvider
 from .signals import OPPORTUNITY, RISK, Signal
@@ -34,6 +34,7 @@ class Evaluation:
     research: dict = field(default_factory=dict)
     profile: dict = field(default_factory=dict)
     quote: dict = field(default_factory=dict)
+    plan: dict = field(default_factory=dict)
     name: str | None = None
     error: str | None = None
     scanned_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
@@ -231,6 +232,12 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
                     round(composite, 1), "", signals, tech, fund, pos, events, research,
                     {k: f.get(k) for k in PROFILE_KEYS}, quote, name=f.get("name"))
     ev.verdict = _verdict(ev)
+    try:
+        val = research.get("valuation") or {}
+        ev.plan = tradeplan.build(hist, tech, fund, fs, ev.verdict, h.tier, h.is_watchlist, val.get("levels"),
+                                  val.get("fair_value"), events, quote)
+    except Exception as e:
+        log.warning("trade plan failed for %s: %s", h.ticker, e)
     return ev
 
 

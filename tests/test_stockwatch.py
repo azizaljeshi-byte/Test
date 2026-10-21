@@ -595,3 +595,60 @@ def test_link_tickers_only_links_whole_symbols():
     html = ui.link_tickers("Needs attention: RR, RRX & <b>", {"RR", "RRX"})
     assert '<a href="?view=target&t=RR" target="_self">RR</a>,' in html
     assert '<a href="?view=target&t=RRX" target="_self">RRX</a>' in html and "&lt;b&gt;" in html
+
+
+# ---- trade plan
+
+from stockwatch import tradeplan
+
+
+def _plan(close, verdict, tier=2, watchlist=True, fs=70.0, **kw):
+    hist = frame(close)
+    _, tech, _ = technical.analyze(hist, 2.5, owned=not watchlist)
+    return tradeplan.build(hist, tech, {"analyst_upside": kw.get("upside")}, fs, verdict, tier, watchlist,
+                           events=kw.get("events"), quote=kw.get("quote"))
+
+
+UPTREND_DIP = np.r_[np.geomspace(50, 150, 280), np.linspace(150, 141, 8)]
+
+
+def test_plan_buy_setup_has_ordered_levels():
+    p = _plan(UPTREND_DIP, "BUY SETUP")
+    assert p["stance"] in ("BUY NOW", "BUY ON PULLBACK") and p["bias"] == "bullish"
+    t1, t2 = (t["price"] for t in p["targets"])
+    assert p["stop"] < p["entry_low"] <= p["entry_high"] < t1 < t2
+    assert t1 >= p["entry"] + 1.5 * p["risk_per_share"] - 1e-9
+    assert any("Stop: sell if it closes below" in e for e in p["exits"])
+
+
+def test_plan_never_says_buy_when_verdict_says_watch():
+    p = _plan(UPTREND_DIP, "WATCH")
+    assert p["stance"] in ("WAIT FOR CONFIRMATION", "BUY ON PULLBACK")
+    assert p["stance"] != "BUY NOW" and p["trigger"]
+
+
+def test_plan_breakout_and_no_trade():
+    breakout = _plan(np.geomspace(50, 150, 300), "BUY SETUP")
+    assert breakout["stance"] == "BUY THE BREAKOUT" and "close above" in breakout["trigger"]
+    no_trade = _plan(np.geomspace(150, 60, 300), "AVOID", fs=30)
+    assert no_trade["stance"] == "NO TRADE" and no_trade["bias"] == "bearish"
+    assert len(no_trade["exits"]) == 2 and "revisit" in no_trade["trigger"]
+
+
+def test_plan_for_held_positions_and_warnings():
+    exit_plan = _plan(np.geomspace(150, 60, 300), "RISK - REVIEW", watchlist=False, fs=30)
+    assert exit_plan["stance"] == "REDUCE / EXIT" and exit_plan["exits"][0].startswith("Reduce or exit now")
+    assert not any("Take a third" in e for e in exit_plan["exits"]) and "current price" in exit_plan["stop_basis"]
+    hold = _plan(UPTREND_DIP, "STRONG HOLD", tier=1, watchlist=False,
+                 events={"days_to_earnings": 3}, quote={"ext_change": -0.06, "ext_session": "post"})
+    assert hold["stance"] == "HOLD" and hold["horizon"].startswith("Position trade")
+    assert any("Earnings in 3 days" in n for n in hold["notes"]) and any("After hours" in n for n in hold["notes"])
+
+
+def test_position_sizing_risk_budget_and_cap():
+    plan = {"risk_per_share": 5.0, "entry": 100.0}
+    s = tradeplan.size(plan, 100_000, 1.0, 50)
+    assert s["budget"] == 1000 and s["shares"] == 200 and not s["capped"]
+    capped = tradeplan.size(plan, 100_000, 1.0, 7)
+    assert capped["capped"] and capped["value"] == pytest.approx(7000)
+    assert tradeplan.size(plan, 0, 1.0, 7) is None

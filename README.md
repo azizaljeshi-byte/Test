@@ -85,6 +85,24 @@ SEC asks automated tools to identify themselves, so set `SEC_USER_AGENT` to your
 - **The list of members** refreshes daily from a maintained list, with a bundled copy as a fallback.
 - **Notifications:** with notifications configured, the GitHub job runs the scan every weekday before the open and pushes the top setups.
 
+**Trade plan** (`stockwatch/tradeplan.py`): a rule-based plan for every stock, on its details page and as a one-line summary on each card.
+- **Stance:**
+  - for new entries: buy now / buy on a pullback / buy the breakout / wait for confirmation / no trade
+  - for positions you hold: add / hold / trim / reduce or exit
+  - A buy stance requires the engine's BUY SETUP verdict, so the plan never contradicts the verdict.
+- **Entry zone and trigger:** the zone comes from the nearest support or moving average; breakouts use the pivot; otherwise the plan waits for a close above the 200-day.
+- **Stop:** just below support when that's sensible, otherwise 2x ATR (Tier 2) or 3x ATR (Tier 1) below the entry.
+- **Targets:**
+  - Target 1 is the nearest of resistance, the 52-week high, fair value or the analyst target that pays at least 1.5x the risk (capped at 5x).
+  - Target 2 is the next level up, or a measured move.
+  - Reward-to-risk is shown for each.
+- **Outlook and horizon:** bullish, neutral or bearish, with the level that proves the view wrong. Tier 1 plans are position trades (3–12 months); Tier 2 plans are swing trades (2–8 weeks).
+- **When to sell:** the stop; take a third at Target 1 and move the stop to break-even; trail the rest under the 20-day (Tier 2) or 50-day (Tier 1) average; thesis-break exits; a time stop.
+- **Position size:** shares chosen so that hitting the stop loses `risk_per_trade_pct` of the portfolio (default 1%, adjustable on the page), capped by the tier's maximum position size.
+- **Warnings:** earnings within a week, or a big pre-market or after-hours move.
+
+The levels are mechanical, from price structure and volatility. They're a consistent starting point, not a forecast.
+
 **Briefings** (`stockwatch/briefing.py`):
 - **Each stock** gets a plain-English summary: why it has its verdict, what changed since the last scan, and what to watch next (earnings, key levels, the 200-day trigger, fair value, stops).
 - **The Radar tab** opens with a portfolio-level mission brief.
