@@ -117,6 +117,21 @@ def earnings_setup(days: int | None, earn: dict, revisions: dict, hist: pd.DataF
             "implied_move": implied, "typical_move": hist_move, "note": note}
 
 
+def revision_direction(revisions: dict) -> str | None:
+    """'up', 'down' or None. Analyst counts lead when there are at least three revisions; the
+    consensus move decides otherwise. When the two point opposite ways, there's no signal."""
+    r30, up, down = revisions.get("eps_30d"), revisions.get("up30") or 0, revisions.get("down30") or 0
+    by_count = ("up" if up >= 2 * max(down, 1) else "down" if down >= 2 * max(up, 1) else None) if up + down >= 3 else None
+    by_level = ("up" if r30 >= 0.03 else "down" if r30 <= -0.03 else None) if _ok(r30) else None
+    if by_count and by_level and by_count != by_level:
+        return None
+    if by_count and _ok(r30) and ((by_count == "up" and r30 < -0.01) or (by_count == "down" and r30 > 0.01)):
+        return None   # e.g. more analysts cut, but the consensus still rose: mixed
+    if not by_count and by_level and ((by_level == "up" and down > up) or (by_level == "down" and up > down)):
+        return None   # the few analysts who revised went the other way
+    return by_count or by_level
+
+
 def analyze(raw: dict, price: float, hist: pd.DataFrame, market: pd.DataFrame | None, earn: dict,
             valuation: dict, days_to_earnings: int | None, owned: bool) -> tuple[dict, list[Signal]]:
     out: list[Signal] = []
@@ -163,17 +178,22 @@ def analyze(raw: dict, price: float, hist: pd.DataFrame, market: pd.DataFrame | 
             if _ok(t.get("current")) and _ok(t.get(lag)) and t[lag]:
                 revisions[f"eps_{lag}"] = t["current"] / t[lag] - 1
     r0 = revs.get("0y") or next(iter(revs.values()), {}) if revs else {}
-    revisions["up30"], revisions["down30"] = (r0 or {}).get("up30"), (r0 or {}).get("down30")
+    revisions["up30"] = int((r0 or {}).get("up30") or 0) if (r0 or {}).get("up30") is not None else None
+    revisions["down30"] = int((r0 or {}).get("down30") or 0) if (r0 or {}).get("down30") is not None else None
+    # a % change on an estimate near zero (e.g. 0.02 -> 0.08) is meaningless; ignore it
+    base = (trend.get(period) or {}).get("30d") if period else None
+    if _ok(revisions.get("eps_30d")) and not (_ok(base) and abs(base) >= 0.10):
+        revisions["eps_30d"] = None
     m["revisions"] = revisions
-    r30, up, down = revisions.get("eps_30d"), revisions.get("up30") or 0, revisions.get("down30") or 0
-    if (_ok(r30) and r30 >= 0.03) or (up >= 3 and up >= 2 * max(down, 1)):
-        out.append(Signal(OPPORTUNITY, "street", "estimates_rising",
-                          f"Analysts are raising estimates: {f'EPS estimate {r30 * 100:+.1f}% in 30 days, ' if _ok(r30) else ''}"
-                          f"{up} up / {down} down", 2))
-    elif (_ok(r30) and r30 <= -0.03) or (down >= 3 and down >= 2 * max(up, 1)):
-        out.append(Signal(RISK, "street", "estimates_falling",
-                          f"Analysts are cutting estimates: {f'EPS estimate {r30 * 100:+.1f}% in 30 days, ' if _ok(r30) else ''}"
-                          f"{up} up / {down} down", 2))
+    direction = revision_direction(revisions)
+    if direction:
+        r30, up, down = revisions.get("eps_30d"), revisions.get("up30") or 0, revisions.get("down30") or 0
+        evidence = ", ".join(x for x in (f"{up} raised / {down} cut this month" if up or down else None,
+                                         f"consensus EPS {r30 * 100:+.1f}% in 30 days" if _ok(r30) else None) if x)
+        if direction == "up":
+            out.append(Signal(OPPORTUNITY, "street", "estimates_rising", f"Analysts are raising estimates: {evidence}", 2))
+        else:
+            out.append(Signal(RISK, "street", "estimates_falling", f"Analysts are cutting estimates: {evidence}", 2))
 
     opts = {o["label"]: o for o in raw.get("options") or []}
     m["options"] = list(opts.values())

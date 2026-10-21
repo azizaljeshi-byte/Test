@@ -1114,3 +1114,28 @@ def test_yahoo_falls_back_to_finnhub_when_blocked(monkeypatch):
     monkeypatch.delenv("FINNHUB_API_KEY")
     with pytest.raises(RuntimeError):
         yp.fundamentals("EXM")
+
+
+def test_revision_direction_never_contradicts_its_evidence():
+    d = street.revision_direction
+    assert d({"eps_30d": 0.125, "up30": 28, "down30": 2}) == "up"
+    assert d({"eps_30d": 0.002, "up30": 2, "down30": 4}) == "down"
+    assert d({"eps_30d": 0.05, "up30": 1, "down30": 6}) is None          # counts and consensus disagree
+    assert d({"eps_30d": 0.048, "up30": 0, "down30": 1}) is None         # the one revision was a cut
+    assert d({"eps_30d": -0.52, "up30": 0, "down30": 1}) == "down"
+    assert d({"eps_30d": None, "up30": 1, "down30": 0}) is None          # too little evidence
+    raw = {"recs": [], "targets": {}, "eps_trend": {"0y": {"current": 0.08, "30d": 0.02}},
+           "revisions": {"0y": {"up30": 1.0, "down30": 1.0}}, "options": []}
+    m, sig = street.analyze(raw, 10.0, frame(np.linspace(9, 10, 300)), None, {}, {}, None, owned=True)
+    assert m["revisions"]["eps_30d"] is None and m["revisions"]["up30"] == 1   # tiny base ignored, counts are ints
+    assert not [s for s in sig if s.code.startswith("estimates_")]
+
+
+def test_product_offerings_are_not_share_sales():
+    now = datetime.now(timezone.utc)
+    m, sig = catalysts.analyze({"news": [{"title": "Can WDAY's New AI Offerings Drive Growth?", "published": now}]},
+                               owned=True, tier=1)
+    assert m["news"][0]["tone"] != "negative" and not sig
+    m, sig = catalysts.analyze({"news": [{"title": "ONDS announces $50M registered direct offering", "published": now}]},
+                               owned=True, tier=1)
+    assert m["news"][0]["tone"] == "negative" and sig[0].code == "news_negative" and sig[0].severity == 2

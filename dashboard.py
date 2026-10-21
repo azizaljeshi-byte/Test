@@ -96,7 +96,7 @@ if base.sheet_error:
 
 def controls():
     c1, c2 = st.columns([1, 1.6])
-    if c1.button("⟳ Sweep now", use_container_width=True):
+    if c1.button("⟳ Sweep now", width="stretch"):
         with st.spinner("Sweeping targets..."):
             scan_now()
         st.rerun()
@@ -321,7 +321,7 @@ if view == "target":
         fig.update_xaxes(gridcolor=grid, zeroline=False)
         fig.update_yaxes(gridcolor=grid, zeroline=False)
         fig.update_yaxes(title_text="RSI", range=[0, 100], row=2, col=1)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
     except Exception as e:
         st.warning(f"Chart offline: {e}")
 
@@ -473,7 +473,7 @@ if view == "market":
     if mstat.get("market_error"):
         st.caption(f"⚠ Last automatic scan failed: {mstat['market_error'][:120]}")
     # the scan runs on the tracker's thread, so page refreshes can't interrupt it halfway
-    st.button("✦ Scan the S&P 500 now", use_container_width=True,
+    st.button("✦ Scan the S&P 500 now", width="stretch",
               disabled=mstat["market_running"] or live.MARKET_LOCK.locked(),
               on_click=lambda: tracking.maybe_market_scan(store, force=True))
     ms = store.latest_market_scan()
@@ -507,7 +507,7 @@ if view == "turbo":
     with st.form("turbo", clear_on_submit=False, border=False):
         c1, c2 = st.columns([2, 1])
         c1.text_input("Ticker", placeholder="e.g. PLTR", key="turbo_input", label_visibility="collapsed")
-        c2.form_submit_button("⚡ Decide", use_container_width=True, on_click=_turbo_submit)
+        c2.form_submit_button("⚡ Decide", width="stretch", on_click=_turbo_submit)
     res = st.session_state.get("turbo_result")
     if res:
         sym, slot = res["ticker"], st.empty()
@@ -597,8 +597,8 @@ if view == "log":
                 st.session_state.diag = ("error", f"Quote failed: {e}")
 
         b1, b2 = st.columns(2)
-        b1.button("Test Finnhub key", on_click=_test_finnhub, use_container_width=True)
-        b2.button("Fetch raw quote", on_click=_raw_quote, use_container_width=True)
+        b1.button("Test Finnhub key", on_click=_test_finnhub, width="stretch")
+        b2.button("Fetch raw quote", on_click=_raw_quote, width="stretch")
         kind, msg = st.session_state.get("diag", (None, None))
         if kind == "success":
             st.success(msg)
@@ -641,7 +641,7 @@ if view == "fleet":
             a, b = st.columns(2)
             tier = a.radio("Tier", [1, 2], horizontal=True, format_func=lambda x: f"T{x} {'core' if x == 1 else 'tactical'}")
             shares = b.number_input("Shares (0 = watchlist)", min_value=0.0, value=0.0, step=1.0)
-            submitted = st.form_submit_button("⊕ Add to fleet", use_container_width=True)
+            submitted = st.form_submit_button("⊕ Add to fleet", width="stretch")
         if submitted and raw.strip():
             added, failed = [], []
             with st.spinner("Acquiring target..."):

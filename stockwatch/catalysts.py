@@ -11,7 +11,11 @@ from datetime import date, datetime, timezone
 from .signals import OPPORTUNITY, RISK, Signal
 
 SEVERE_NEGATIVE = ["fraud", "bankruptcy", "chapter 11", "delist", "going concern", "default",
-                   "offering", "dilution", "reverse split", "restatement", "subpoena"]
+                   "dilution", "reverse split", "restatement", "subpoena"]
+# "offering" alone also means products ("new AI offerings"); only share sales count
+SHARE_SALE = re.compile(r"\b(stock|share|equity|public|secondary|follow-on|registered direct|at-the-market|atm|"
+                        r"convertible|priced|proposed|underwritten)\s+(notes\s+)?offering\b|\boffering of\b.*\b(shares|"
+                        r"stock|notes|units|warrants)\b|\bprices?\b.*\boffering\b", re.I)
 NEGATIVE = ["downgrade", "lawsuit", "probe", "investigation", "sec ", "recall", "misses", "miss ",
             "cuts guidance", "lowers guidance", "plunge", "tumble", "layoffs", "short seller",
             "halt", "warning", "resigns", "slump"]
@@ -30,6 +34,10 @@ def _aware(d: datetime) -> datetime:
 def _matches(title: str, words: list[str]) -> bool:
     t = f" {title.lower()} "
     return any(w in t for w in words)
+
+
+def _severe(title: str) -> bool:
+    return bool(SHARE_SALE.search(title)) or _matches(title, SEVERE_NEGATIVE)
 
 
 def analyze(events: dict, owned: bool, tier: int, today: date | None = None) -> tuple[dict, list[Signal]]:
@@ -77,7 +85,7 @@ def analyze(events: dict, owned: bool, tier: int, today: date | None = None) -> 
     m["news_today"] = 0
     for n in events.get("news") or []:
         published = _aware(n["published"])
-        tone = ("negative" if _matches(n["title"], SEVERE_NEGATIVE + NEGATIVE)
+        tone = ("negative" if _severe(n["title"]) or _matches(n["title"], NEGATIVE)
                 else "positive" if _matches(n["title"], POSITIVE) else "neutral")
         m["news"].append({**n, "published": published.isoformat(timespec="minutes"), "tone": tone})
         if (now - published).total_seconds() <= 36 * 3600:
@@ -85,7 +93,7 @@ def analyze(events: dict, owned: bool, tier: int, today: date | None = None) -> 
         if (now - published).total_seconds() > NEWS_WINDOW_HOURS * 3600:
             continue
         title = n["title"]
-        if _matches(title, SEVERE_NEGATIVE):
+        if _severe(title):
             if worst is None or worst[0] < 2:
                 worst = (2, title)
         elif _matches(title, NEGATIVE):
