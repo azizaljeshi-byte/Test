@@ -173,39 +173,53 @@ class YahooProvider:
         return _yahoo_research(self._yf, ticker)
 
     def quote(self, ticker: str) -> dict:
-        """Extended-hours price from the quote fields, falling back to 1-minute then 5-minute bars that
-        include pre/post-market trading. Records which source answered, or why none did."""
+        """Latest extended-hours price.
+
+        The session comes from the New York clock, not Yahoo's marketState, which can lag (it has
+        reported CLOSED well into pre-market). Among the pre-market and after-hours prices in the
+        quote, the newest trade after the regular close wins; during pre-market, minute bars are
+        checked when the quote has no pre-market trade yet."""
         t = self._yf.Ticker(ticker)
+        clock = us_session()
         errors = []
         try:
             info = t.info or {}
         except Exception as e:
             info, errors = {}, [f"quote: {e}"]
-        state = str(info.get("marketState") or us_session()).upper()
-        state = {"PREPRE": "CLOSED", "POSTPOST": "CLOSED"}.get(state, state)
         regular = _f(info.get("regularMarketPrice"))
+        reg_t = _when(info.get("regularMarketTime"))
+        picks = []
+        for sess, price_key, time_key in (("pre", "preMarketPrice", "preMarketTime"),
+                                          ("post", "postMarketPrice", "postMarketTime")):
+            price, when = _f(info.get(price_key)), _when(info.get(time_key))
+            if price and (when is None or reg_t is None or when >= reg_t):
+                picks.append((when or datetime.min.replace(tzinfo=timezone.utc), sess, price))
         session = price = when = None
         source = "quote"
-        # pre-market quotes are only meaningful before the open; post-market ones persist until the next pre-market
-        if state == "PRE" and _f(info.get("preMarketPrice")):
-            session, price, when = "pre", _f(info["preMarketPrice"]), info.get("preMarketTime")
-        elif state in ("POST", "CLOSED") and _f(info.get("postMarketPrice")):
-            session, price, when = "post", _f(info["postMarketPrice"]), info.get("postMarketTime")
-        if price is None and state != "REGULAR":
+        if picks:
+            when, session, price = max(picks)
+        if clock != "REGULAR" and (price is None or (clock == "PRE" and session != "pre")):
             for period, interval in (("1d", "1m"), ("5d", "5m")):
                 try:
-                    session, price, when, last_regular = self._extended_from_bars(t, period, interval)
+                    b_sess, b_price, b_when, last_regular = self._extended_from_bars(t, period, interval)
                 except Exception as e:
                     errors.append(f"{interval} bars: {e}")
                     continue
-                if price is not None:
-                    source, regular = f"{interval} bars", regular or last_regular
+                if b_price is not None and (price is None or b_when > when):
+                    session, price, when, source = b_sess, b_price, b_when, f"{interval} bars"
+                    regular = regular or last_regular
+                if b_price is not None:
                     break
-        if price is None and state != "REGULAR" and not errors:
+        if clock == "REGULAR":
+            session = price = when = None   # the regular price is the live price
+        if price is None and clock != "REGULAR" and not errors:
             errors.append("no extended-hours trades reported yet")
-        return {"market_state": state, "regular_price": regular, "ext_session": session, "ext_price": price,
+        return {"market_state": clock, "yahoo_state": info.get("marketState"), "regular_price": regular,
+                "ext_session": session, "ext_price": price,
                 "ext_change": price / regular - 1 if price and regular else None,
-                "ext_time": datetime.fromtimestamp(when, tz=timezone.utc) if isinstance(when, (int, float)) else when,
+                "ext_time": when if when and when.year > 1970 else None,
+                # an after-hours price shown during pre-market is last night's
+                "ext_stale": bool(session == "post" and clock == "PRE"),
                 "source": source if price is not None else None, "error": "; ".join(errors) or None,
                 "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
 
@@ -221,7 +235,7 @@ class YahooProvider:
         last_regular = float(bars["Close"].iloc[regular[-1]]) if regular else None
         if sessions[-1] not in ("PRE", "POST"):
             return None, None, None, last_regular
-        return sessions[-1].lower(), float(bars["Close"].iloc[-1]), idx[-1].to_pydatetime(), last_regular
+        return sessions[-1].lower(), float(bars["Close"].iloc[-1]), idx[-1].to_pydatetime().astimezone(timezone.utc), last_regular
 
     def filings(self, ticker: str) -> dict:
         from . import sec
@@ -380,6 +394,15 @@ def _industry_leaders(yf, key: str) -> tuple[str, ...]:
     return tuple(p for p in top.index.tolist() if p) if top is not None else ()
 
 
+def _when(v) -> datetime | None:
+    """Yahoo quote times arrive as epoch seconds (occasionally as formatted text, which isn't comparable)."""
+    if isinstance(v, (int, float)) and v > 0:
+        return datetime.fromtimestamp(v, tz=timezone.utc)
+    if isinstance(v, datetime):
+        return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+    return None
+
+
 def _f(v) -> float | None:
     try:
         v = float(v)
@@ -506,7 +529,8 @@ class DemoProvider:
         move = float(rng.choice([rng.normal(0, 0.01), rng.normal(0, 0.01), rng.choice([-0.08, 0.07])]))
         price = regular * (1 + move) if session else None
         return {"market_state": state, "regular_price": regular, "ext_session": session, "ext_price": price,
-                "ext_change": move if session else None, "ext_time": datetime.now(timezone.utc) if session else None}
+                "ext_change": move if session else None, "ext_time": datetime.now(timezone.utc) if session else None,
+                "ext_stale": False, "source": "demo", "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
 
     def filings(self, ticker: str) -> dict:
         from . import sec

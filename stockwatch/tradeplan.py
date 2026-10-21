@@ -187,6 +187,8 @@ def summary(plan: dict) -> str:
         return f"wait: {plan['trigger']}"
     if plan["stance"] == "NO TRADE":
         return f"no trade: {plan['trigger']}"
+    if plan["stance"] == "REDUCE / EXIT":
+        return f"reduce / exit · if keeping some, sell below {plan['stop']:.2f}"
     return f"{plan['stance'].lower()} · stop {plan['stop']:.2f} · target {t1:.2f}"
 
 

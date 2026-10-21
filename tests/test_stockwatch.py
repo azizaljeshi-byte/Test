@@ -389,21 +389,46 @@ def _fake_yahoo(info, bars=None):
     return yp
 
 
-def test_yahoo_quote_reads_pre_and_post_market():
-    post = _fake_yahoo({"marketState": "POST", "regularMarketPrice": 100.0, "postMarketPrice": 92.0,
-                        "postMarketTime": 1761080000}).quote("X")
-    assert post["ext_session"] == "post" and abs(post["ext_change"] + 0.08) < 1e-9 and post["ext_time"].tzinfo
-    pre = _fake_yahoo({"marketState": "PRE", "regularMarketPrice": 50.0, "preMarketPrice": 51.0,
-                       "postMarketPrice": 49.0}).quote("X")
-    assert pre["ext_session"] == "pre" and pre["ext_price"] == 51.0       # stale post price ignored pre-market
+ORIGINAL_SESSION = us_session
+CLOSE_T, LAST_NIGHT, THIS_MORNING = 1761076800, 1761091200, 1761127200   # 4pm ET close, 8pm ET, next morning
+
+
+def _clock(monkeypatch, session):
+    """Pin 'now' to a session while bar timestamps are still classified by the real clock."""
+    import stockwatch.data as data_mod
+    monkeypatch.setattr(data_mod, "us_session", lambda now=None: session if now is None else ORIGINAL_SESSION(now))
+
+
+def test_yahoo_quote_follows_the_clock_not_yahoos_state(monkeypatch):
+    _clock(monkeypatch, "PRE")
+    # pre-market while Yahoo still says CLOSED: the newest trade (pre) wins over last night's after-hours
+    q = _fake_yahoo({"marketState": "CLOSED", "regularMarketPrice": 50.0, "regularMarketTime": CLOSE_T,
+                     "preMarketPrice": 51.0, "preMarketTime": THIS_MORNING,
+                     "postMarketPrice": 49.0, "postMarketTime": LAST_NIGHT}).quote("X")
+    assert q["ext_session"] == "pre" and q["ext_price"] == 51.0 and q["market_state"] == "PRE"
+    # only last night's after-hours price and no pre-market bars: shown, but flagged as last night's
+    q = _fake_yahoo({"marketState": "CLOSED", "regularMarketPrice": 50.0, "regularMarketTime": CLOSE_T,
+                     "postMarketPrice": 49.0, "postMarketTime": LAST_NIGHT}).quote("X")
+    assert q["ext_session"] == "post" and q["ext_stale"] and q["yahoo_state"] == "CLOSED"
+    # a pre-market trade in the minute bars beats last night's quote
+    idx = pd.DatetimeIndex([pd.Timestamp("2026-10-21 15:59", tz="America/New_York"),
+                            pd.Timestamp("2026-10-22 06:05", tz="America/New_York")])
+    bars = pd.DataFrame({"Close": [50.0, 52.0]}, index=idx)
+    q = _fake_yahoo({"marketState": "CLOSED", "regularMarketPrice": 50.0, "regularMarketTime": CLOSE_T,
+                     "postMarketPrice": 49.0, "postMarketTime": LAST_NIGHT}, bars).quote("X")
+    assert q["ext_session"] == "pre" and q["ext_price"] == 52.0 and q["source"] == "1m bars" and not q["ext_stale"]
+    # during regular hours there's no extended price to show
+    _clock(monkeypatch, "REGULAR")
     live = _fake_yahoo({"marketState": "REGULAR", "regularMarketPrice": 50.0, "postMarketPrice": 49.0}).quote("X")
-    assert live["ext_price"] is None                                         # no extended price during the session
+    assert live["ext_price"] is None
 
 
-def test_yahoo_quote_falls_back_to_extended_bars():
-    idx = pd.DatetimeIndex([pd.Timestamp("2026-10-21 19:55", tz="America/New_York")])
-    bars = pd.DataFrame({"Close": [105.0]}, index=idx)
-    q = _fake_yahoo({"marketState": "POST", "regularMarketPrice": 100.0}, bars).quote("X")
+def test_yahoo_quote_falls_back_to_extended_bars(monkeypatch):
+    _clock(monkeypatch, "POST")
+    idx = pd.DatetimeIndex([pd.Timestamp("2026-10-21 15:59", tz="America/New_York"),
+                            pd.Timestamp("2026-10-21 19:55", tz="America/New_York")])
+    bars = pd.DataFrame({"Close": [100.0, 105.0]}, index=idx)
+    q = _fake_yahoo({"regularMarketPrice": 100.0}, bars).quote("X")
     assert q["ext_session"] == "post" and abs(q["ext_change"] - 0.05) < 1e-9
 
 

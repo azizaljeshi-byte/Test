@@ -251,12 +251,13 @@ def card(snap: dict) -> str:
     day_html = "" if nan(day) else (
         f' <small><i class="mc-g" style="color:{OPP if day >= 0 else RISK}">{"▲" if day >= 0 else "▼"}</i>{pct(day, digits=1)}</small>')
     q = p.get("quote") or {}
-    if q.get("market_state") in ("PRE", "POST") and nan(q.get("ext_price")):
+    if q.get("market_state") in ("PRE", "POST") and (nan(q.get("ext_price")) or q.get("ext_stale")):
         day_html += (f' <small style="color:{MUTED}">· {"PRE" if q["market_state"] == "PRE" else "AH"} '
                      f'no trades yet</small>')
     if not nan(q.get("ext_price")) and not nan(q.get("ext_change")):
         ch = q["ext_change"]
-        day_html += (f' <small style="color:{MUTED}">· {"PRE" if q.get("ext_session") == "pre" else "AH"}</small> '
+        label = "PRE" if q.get("ext_session") == "pre" else ("AH (last night)" if q.get("ext_stale") else "AH")
+        day_html += (f' <small style="color:{MUTED}">· {label}</small> '
                      f'{q["ext_price"]:.2f} <small><i class="mc-g" style="color:{OPP if ch >= 0 else RISK}">'
                      f'{"▲" if ch >= 0 else "▼"}</i>{pct(ch, digits=1)}</small>')
     meta = []
