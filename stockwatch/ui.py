@@ -180,6 +180,18 @@ a.mc-a:hover .mc-card { border-color:var(--c); transform:translateY(-1px); box-s
 .mc-lad .lbl { position:absolute; font-size:.6rem; transform:translateX(-50%); white-space:nowrap; color:var(--soft); }
 .mc-lad .lbl.top { top:2px; } .mc-lad .lbl.bot { top:44px; }
 
+/* ---- outlook, history, news */
+.mc-seg { display:flex; height:10px; border-radius:5px; overflow:hidden; margin:.4rem 0 .3rem; gap:2px; }
+.mc-seg i { display:block; height:100%; }
+.mc-legend { display:flex; flex-wrap:wrap; gap:.2rem .9rem; font-size:.74rem; color:var(--soft); font-family:var(--mono); }
+.mc-legend b { font-weight:500; color:var(--ink); }
+.mc-ev { border:1px solid var(--c); border-radius:12px; padding:.6rem .75rem; margin:.6rem 0;
+  background:color-mix(in srgb, var(--c) 7%, transparent); }
+.mc-ev .t { font-family:var(--head); font-weight:600; color:var(--ink); }
+.mc-ev ul { margin:.25rem 0 0; padding-left:1.1rem; } .mc-ev li { font-size:.82rem; line-height:1.5; color:var(--ink); }
+.mc-tone { font-family:var(--mono); font-size:.6rem; letter-spacing:.08em; border:1px solid var(--c); color:var(--c);
+  border-radius:4px; padding:0 .25rem; margin-right:.35rem; vertical-align:middle; }
+
 /* ---- streamlit widgets */
 .stButton > button, .stFormSubmitButton > button { border:1px solid rgba(61,255,168,.6) !important; background:rgba(61,255,168,.07) !important;
   color:var(--opp) !important; font-weight:600; border-radius:12px; }
@@ -239,6 +251,9 @@ def card(snap: dict) -> str:
     day_html = "" if nan(day) else (
         f' <small><i class="mc-g" style="color:{OPP if day >= 0 else RISK}">{"▲" if day >= 0 else "▼"}</i>{pct(day, digits=1)}</small>')
     q = p.get("quote") or {}
+    if q.get("market_state") in ("PRE", "POST") and nan(q.get("ext_price")):
+        day_html += (f' <small style="color:{MUTED}">· {"PRE" if q["market_state"] == "PRE" else "AH"} '
+                     f'no trades yet</small>')
     if not nan(q.get("ext_price")) and not nan(q.get("ext_change")):
         ch = q["ext_change"]
         day_html += (f' <small style="color:{MUTED}">· {"PRE" if q.get("ext_session") == "pre" else "AH"}</small> '
@@ -254,6 +269,8 @@ def card(snap: dict) -> str:
         meta.append(f"RSI <b>{t['rsi']:.0f}</b>")
     if ev.get("days_to_earnings") is not None:
         meta.append(f"EARNINGS <b>T-{ev['days_to_earnings']}D</b>")
+    if ev.get("news_today"):
+        meta.append(f"NEWS TODAY <b>{ev['news_today']}</b>")
     if p["position"].get("weight_pct"):
         meta.append(f"WEIGHT <b>{p['position']['weight_pct']:.1f}%</b>")
     top = p["signals"][0] if p["signals"] else None
@@ -463,6 +480,8 @@ def trade_plan(plan: dict, sizing: dict | None, risk_pct: float, portfolio_value
             rows.append((f"Target {i + 1}", rel(t["price"]) + f"<br><small style='color:{MUTED}'>{escape(t['label'])}{r}</small>"))
         rows.append(("Reward / risk", f"{plan['rr']:.1f} : 1"))
     rows.append(("Horizon", escape(plan["horizon"])))
+    if plan.get("timeframe") and not exit_only:
+        rows.append(("Timeframe", escape(plan["timeframe"])))
     grid = "".join(f"<div><span>{k}</span><em style='font-style:normal;text-align:right'>{v}</em></div>" for k, v in rows)
 
     size_html = ""
@@ -472,12 +491,117 @@ def trade_plan(plan: dict, sizing: dict | None, risk_pct: float, portfolio_value
                      f"<b style='color:var(--ink)'>{sizing['shares']:.1f} shares</b> ({money(sizing['value'])})"
                      + (" — capped by the tier's maximum position size" if sizing["capped"] else "") + ".</p>")
     notes = "".join(f"<p class='note'>⚠ {escape(n)}</p>" for n in plan.get("notes", []))
+    hist_html = history_check(plan.get("history")) if not exit_only else ""
+    fwd = plan.get("forward") or []
+    fwd_html = (f'<div class="lab" style="margin-top:.7rem">WHERE THE COMPANY IS HEADING</div>'
+                f'<p style="margin-top:.25rem">{escape(" ".join(fwd))}</p>') if fwd else ""
     exits = "".join(f"<li>{escape(e)}</li>" for e in plan["exits"])
     return (f'<div class="mc-tp"><div class="hd"><div><div class="lab">TRADE PLAN</div>'
             f'<div class="stance" style="color:{color}">{escape(plan["stance"])}</div></div>'
             f'<span class="mc-chip" style="--c:{bias_color}">{bias}</span></div>'
             f'{_ladder(plan)}<div class="mc-kv" style="margin-top:.2rem">{grid}</div>'
-            f'<p>{escape(plan["outlook"])}</p>{notes}{size_html}'
+            f'<p>{escape(plan["outlook"])}</p>{fwd_html}{hist_html}{notes}{size_html}'
             f'<div class="lab" style="margin-top:.7rem">{"WHAT WOULD CHANGE THE PLAN" if plan["stance"] == "NO TRADE" else "WHEN TO SELL"}</div><ol>{exits}</ol>'
             f'<div class="fine">Rule-based levels from price structure and volatility, not a forecast or financial advice. '
             f'Check them against the chart before placing an order.</div></div>')
+
+
+def _segbar(parts: list[tuple[str, float, str]]) -> str:
+    """Stacked bar with a text legend, so the split is readable without relying on color."""
+    total = sum(v for _, v, _ in parts) or 1
+    bar = "".join(f'<i style="width:{v / total * 100:.1f}%;background:{c}"></i>' for _, v, c in parts if v > 0)
+    legend = "".join(f'<span><span style="color:{c}">■</span> {escape(l)} <b>{v / total * 100:.0f}%</b></span>'
+                     for l, v, c in parts)
+    return f'<div class="mc-seg">{bar}</div><div class="mc-legend">{legend}</div>'
+
+
+def history_check(h: dict | None) -> str:
+    if not h:
+        return ""
+    when = h.get("median_days_to_target")
+    detail = (f"Median {when:.0f} trading days to the target; median return after {h['horizon_days']} days "
+              f"{h['median_return'] * 100:+.1f}%." if when else
+              f"Median return after {h['horizon_days']} days {h['median_return'] * 100:+.1f}%.")
+    return (f'<div class="lab" style="margin-top:.7rem">OLDER SCENARIOS · {h["n"]} SIMILAR SETUPS</div>'
+            f'<p style="margin:.2rem 0;font-size:.8rem;color:var(--soft)">Matched on {escape(h["match"])}'
+            + (" (loosened to find enough cases)" if h.get("loose") else "") + "; replaying this plan's stop and target.</p>"
+            + _segbar([("target first", h["win_rate"], OPP), ("stop first", h["loss_rate"], RISK),
+                       ("neither", h["neither_rate"], MUTED)])
+            + f'<p style="font-size:.8rem;color:var(--soft);margin-top:.35rem">{escape(detail)}</p>')
+
+
+def outlook(st: dict, price: float) -> str:
+    """Street view, forward estimates, 3-12 month scenarios and the earnings setup."""
+    if not st:
+        return ""
+    out = ['<div class="mc-tp">']
+    c = st.get("consensus")
+    if c:
+        out.append(f'<div class="lab">STREET VIEW · {c["analysts"]} ANALYSTS</div>'
+                   f'<div class="stance">{escape(c["label"])}</div>'
+                   + _segbar([("buy", c["buy"], OPP), ("hold", c["hold"], INFO), ("sell", c["sell"], RISK)]))
+        if c.get("change_3m") is not None and abs(c["change_3m"]) >= 0.15:
+            out.append(f'<p style="font-size:.8rem;color:var(--soft)">'
+                       f'{"More bullish" if c["change_3m"] < 0 else "More cautious"} than three months ago.</p>')
+    tg = st.get("targets") or {}
+    if all(tg.get(k) for k in ("low", "median", "high")):
+        out.append('<div class="lab" style="margin-top:.8rem">PRICE TARGETS (12 MONTHS)</div>'
+                   + fair_value_bar({"low": tg["low"], "mid": tg["median"], "high": tg["high"]}, price)
+                   .replace("fair ", "median "))
+    g = st.get("growth") or {}
+    names = {"0q": "This quarter", "+1q": "Next quarter", "0y": "This year", "+1y": "Next year"}
+    rows = [[names.get(k, k), pct((v or {}).get("eps")), pct((v or {}).get("revenue")),
+             str(int(v["analysts"])) if (v or {}).get("analysts") else "—"] for k, v in g.items()]
+    if rows:
+        out.append('<div class="lab" style="margin-top:.4rem">EXPECTED GROWTH</div>'
+                   + table(["Period", "EPS growth", "Revenue growth", "Analysts"], rows))
+    r = st.get("revisions") or {}
+    if r.get("eps_30d") is not None or r.get("up30") is not None:
+        bits = []
+        if r.get("eps_30d") is not None:
+            bits.append(f"EPS estimate {pct(r['eps_30d'], digits=1)} in 30 days")
+        if r.get("eps_90d") is not None:
+            bits.append(f"{pct(r['eps_90d'], digits=1)} in 90 days")
+        if r.get("up30") is not None:
+            bits.append(f"{r['up30']} raised / {r.get('down30') or 0} cut this month")
+        out.append(f'<p style="font-size:.84rem"><b>Estimate revisions:</b> {escape(", ".join(bits))}.</p>')
+    sc = st.get("scenarios") or []
+    if sc:
+        out.append('<div class="lab" style="margin-top:.6rem">WHERE IT COULD BE</div>'
+                   + table(["", "Bear", "Base", "Bull", "P(up)"],
+                           [[f"{x['months']}m", num(x["bear"]), num(x["base"]), num(x["bull"]), f"{x['p_up']:.0%}"]
+                            for x in sc])
+                   + f'<p style="font-size:.74rem;color:var(--muted)">Bear and bull are the 16th and 84th percentiles '
+                     f'using {escape(st.get("sigma_source") or "price history")} volatility '
+                     f'({(st.get("sigma") or 0) * 100:.0f}% a year). The base case blends the median target with a '
+                     f'market-average return, because targets tend to run optimistic.</p>')
+    if st.get("implied_move_1m"):
+        out.append(f'<p style="font-size:.84rem"><b>Options market:</b> expects about ±{st["implied_move_1m"] * 100:.0f}% '
+                   f'over the next month.</p>')
+    e = st.get("earnings_setup")
+    if e:
+        col = {"favourable": OPP, "unfavourable": RISK}.get(e["verdict"], INFO)
+        items = "".join(f"<li>▲ {escape(x)}</li>" for x in e["for"]) + "".join(f"<li>▼ {escape(x)}</li>" for x in e["against"])
+        imp = (f" Options price a ±{e['implied_move'] * 100:.0f}% move on the report." if e.get("implied_move") else "")
+        out.append(f'<div class="mc-ev" style="--c:{col}"><div class="t">Next earnings in {e["days"]} days: '
+                   f'setup looks {escape(e["verdict"])}</div><ul>{items or "<li>No strong signals either way.</li>"}</ul>'
+                   + (f'<p style="font-size:.8rem;color:var(--soft);margin:.3rem 0 0">{escape(e["note"])}</p>' if e.get("note") else "")
+                   + (f'<p style="font-size:.8rem;color:var(--soft);margin:.3rem 0 0">{escape(imp.strip())}</p>'
+                      if imp and not e.get("note") else "")
+                   + "</div>")
+    out.append("</div>")
+    return "".join(out)
+
+
+TONE = {"positive": ("POS", OPP), "negative": ("NEG", RISK), "neutral": ("NEW", INFO)}
+
+
+def news_list(items: list[dict], limit: int = 8) -> str:
+    rows = []
+    for n in items[:limit]:
+        tag, col = TONE.get(n.get("tone"), TONE["neutral"])
+        title = (f'<a href="{escape(n["url"])}" target="_blank">{escape(n["title"])}</a>' if n.get("url")
+                 else escape(n["title"]))
+        rows.append(f'<div class="mc-log mc-news"><span class="mc-tone" style="--c:{col}">{tag}</span>{title}<br>'
+                    f'<small>{escape(n["published"][5:16].replace("T", " "))} · {escape(n.get("publisher") or "")}</small></div>')
+    return "".join(rows)

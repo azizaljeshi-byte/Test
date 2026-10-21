@@ -87,6 +87,10 @@ class DataProvider(Protocol):
         """SEC EDGAR data, see sec.fetch."""
         ...
 
+    def street(self, ticker: str) -> dict:
+        """Analyst view and options market, see street.analyze for the keys."""
+        ...
+
     def research(self, ticker: str) -> dict:
         """Slow-moving deep data, every key optional:
             "earnings": [{"quarter": date, "eps_actual", "eps_estimate", "surprise_pct"}]  newest first
@@ -169,26 +173,62 @@ class YahooProvider:
         return _yahoo_research(self._yf, ticker)
 
     def quote(self, ticker: str) -> dict:
+        """Extended-hours price from the quote fields, falling back to 1-minute then 5-minute bars that
+        include pre/post-market trading. Records which source answered, or why none did."""
         t = self._yf.Ticker(ticker)
-        info = t.info or {}
+        errors = []
+        try:
+            info = t.info or {}
+        except Exception as e:
+            info, errors = {}, [f"quote: {e}"]
         state = str(info.get("marketState") or us_session()).upper()
         state = {"PREPRE": "CLOSED", "POSTPOST": "CLOSED"}.get(state, state)
         regular = _f(info.get("regularMarketPrice"))
         session = price = when = None
+        source = "quote"
         # pre-market quotes are only meaningful before the open; post-market ones persist until the next pre-market
         if state == "PRE" and _f(info.get("preMarketPrice")):
             session, price, when = "pre", _f(info["preMarketPrice"]), info.get("preMarketTime")
         elif state in ("POST", "CLOSED") and _f(info.get("postMarketPrice")):
             session, price, when = "post", _f(info["postMarketPrice"]), info.get("postMarketTime")
         if price is None and state != "REGULAR":
-            session, price, when = self._extended_from_bars(t, state)
+            for period, interval in (("1d", "1m"), ("5d", "5m")):
+                try:
+                    session, price, when, last_regular = self._extended_from_bars(t, period, interval)
+                except Exception as e:
+                    errors.append(f"{interval} bars: {e}")
+                    continue
+                if price is not None:
+                    source, regular = f"{interval} bars", regular or last_regular
+                    break
+        if price is None and state != "REGULAR" and not errors:
+            errors.append("no extended-hours trades reported yet")
         return {"market_state": state, "regular_price": regular, "ext_session": session, "ext_price": price,
                 "ext_change": price / regular - 1 if price and regular else None,
-                "ext_time": datetime.fromtimestamp(when, tz=timezone.utc) if isinstance(when, (int, float)) else when}
+                "ext_time": datetime.fromtimestamp(when, tz=timezone.utc) if isinstance(when, (int, float)) else when,
+                "source": source if price is not None else None, "error": "; ".join(errors) or None,
+                "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+
+    @staticmethod
+    def _extended_from_bars(t, period: str, interval: str):
+        """Last bar outside regular hours, plus the last regular-session close to compare it with."""
+        bars = t.history(period=period, interval=interval, prepost=True)
+        if bars.empty:
+            return None, None, None, None
+        idx = bars.index if bars.index.tz is not None else bars.index.tz_localize("UTC")
+        sessions = [us_session(ts.to_pydatetime()) for ts in idx]
+        regular = [i for i, sess in enumerate(sessions) if sess == "REGULAR"]
+        last_regular = float(bars["Close"].iloc[regular[-1]]) if regular else None
+        if sessions[-1] not in ("PRE", "POST"):
+            return None, None, None, last_regular
+        return sessions[-1].lower(), float(bars["Close"].iloc[-1]), idx[-1].to_pydatetime(), last_regular
 
     def filings(self, ticker: str) -> dict:
         from . import sec
         return sec.fetch(ticker)
+
+    def street(self, ticker: str) -> dict:
+        return _yahoo_street(self._yf, ticker)
 
     def bulk_history(self, tickers: tuple[str, ...], period: str = "2y") -> dict[str, pd.DataFrame]:
         """Daily bars for many tickers in a few requests (used by the market scan)."""
@@ -215,17 +255,72 @@ class YahooProvider:
                 "postMarketPrice", "postMarketTime", "exchangeTimezoneName")
         return {k: info.get(k) for k in keys}
 
-    @staticmethod
-    def _extended_from_bars(t, state: str):
-        """Fallback when the quote lacks extended prices: last 5-minute bar outside regular hours."""
-        bars = t.history(period="5d", interval="5m", prepost=True)
-        if bars.empty:
-            return None, None, None
-        last = bars.index[-1].to_pydatetime()
-        session = us_session(last)
-        if session not in ("PRE", "POST"):
-            return None, None, None
-        return session.lower(), float(bars["Close"].iloc[-1]), last
+
+
+def _yahoo_street(yf, ticker: str) -> dict:
+    t = yf.Ticker(ticker)
+    out: dict = {"eps": {}, "revenue": {}, "eps_trend": {}, "revisions": {}, "recs": [], "targets": {}, "options": []}
+
+    def attempt(name, fn):
+        try:
+            fn()
+        except Exception as e:
+            log.info("%s failed for %s: %s", name, ticker, e)
+
+    def periodic(key, df, cols):
+        if df is not None and not df.empty:
+            for period, r in df.iterrows():
+                out[key][str(period)] = {k: _f(r.get(src)) for k, src in cols.items()}
+
+    attempt("earnings estimate", lambda: periodic("eps", t.earnings_estimate, {
+        "avg": "avg", "low": "low", "high": "high", "year_ago": "yearAgoEps", "analysts": "numberOfAnalysts",
+        "growth": "growth"}))
+    attempt("revenue estimate", lambda: periodic("revenue", t.revenue_estimate, {
+        "avg": "avg", "low": "low", "high": "high", "year_ago": "yearAgoRevenue", "analysts": "numberOfAnalysts",
+        "growth": "growth"}))
+    attempt("eps trend", lambda: periodic("eps_trend", t.eps_trend, {
+        "current": "current", "7d": "7daysAgo", "30d": "30daysAgo", "60d": "60daysAgo", "90d": "90daysAgo"}))
+    attempt("eps revisions", lambda: periodic("revisions", t.eps_revisions, {
+        "up7": "upLast7days", "up30": "upLast30days", "down7": "downLast7Days", "down30": "downLast30days"}))
+
+    def recs():
+        df = t.recommendations
+        if df is not None and not df.empty:
+            out["recs"] = [{k: (str(r[k]) if k == "period" else int(r.get(k) or 0))
+                            for k in ("period", "strongBuy", "buy", "hold", "sell", "strongSell")}
+                           for _, r in df.iterrows()]
+    attempt("recommendations", recs)
+    attempt("price targets", lambda: out["targets"].update(
+        {k: _f(v) for k, v in (t.analyst_price_targets or {}).items()}))
+
+    def options():
+        expiries = list(t.options or ())
+        spot = out["targets"].get("current")
+        if not expiries or not spot:
+            return
+        today = date.today()
+        dated = [(date.fromisoformat(e), e) for e in expiries]
+        cal = (t.calendar or {}).get("Earnings Date") or []
+        wanted = {"1 month": min(dated, key=lambda d: abs((d[0] - today).days - 30))}
+        upcoming = sorted(d for d in cal if d >= today)
+        if upcoming:
+            after = [d for d in dated if d[0] >= upcoming[0]]
+            if after:
+                wanted["earnings"] = after[0]
+        for label, (exp_date, exp) in wanted.items():
+            chain = t.option_chain(exp)
+            row = {"label": label, "expiry": exp, "days": (exp_date - today).days}
+            for side, df in (("call", chain.calls), ("put", chain.puts)):
+                if df is None or df.empty:
+                    continue
+                atm = df.iloc[(df["strike"] - spot).abs().argsort()[:1]].iloc[0]
+                mid = (atm["bid"] + atm["ask"]) / 2 if atm["bid"] > 0 and atm["ask"] > 0 else atm["lastPrice"]
+                row[f"{side}_mid"], row[f"{side}_iv"], row["strike"] = _f(mid), _f(atm["impliedVolatility"]), _f(atm["strike"])
+            if row.get("call_mid") and row.get("put_mid"):
+                row["implied_move"] = (row["call_mid"] + row["put_mid"]) / spot
+            out["options"].append(row)
+    attempt("options", options)
+    return out
 
 
 def _yahoo_research(yf, ticker: str) -> dict:
@@ -420,6 +515,36 @@ class DemoProvider:
     def bulk_history(self, tickers: tuple[str, ...], period: str = "2y") -> dict[str, pd.DataFrame]:
         return {t: self.history(t).iloc[-504:] for t in tickers}
 
+    def street(self, ticker: str) -> dict:
+        rng = self._rng(ticker + ":s")
+        price = float(self.history(ticker)["Close"].iloc[-1])
+        eps0, g0, g1 = float(rng.uniform(1, 8)), float(rng.uniform(-0.1, 0.35)), float(rng.uniform(-0.05, 0.4))
+        drift30, drift90 = float(rng.normal(0, 0.03)), float(rng.normal(0, 0.06))
+        up, down = int(rng.integers(0, 8)), int(rng.integers(0, 6))
+        recs = []
+        for i, period in enumerate(["0m", "-1m", "-2m", "-3m"]):
+            sb, b = int(rng.integers(2, 12)), int(rng.integers(3, 15))
+            recs.append({"period": period, "strongBuy": sb, "buy": b, "hold": int(rng.integers(2, 12)),
+                         "sell": int(rng.integers(0, 3)), "strongSell": int(rng.integers(0, 2))})
+        iv = float(rng.uniform(0.25, 0.9))
+        return {
+            "eps": {"0q": {"avg": eps0 / 4, "growth": g0, "analysts": 20},
+                    "0y": {"avg": eps0, "growth": g0, "analysts": 25, "year_ago": eps0 / (1 + g0)},
+                    "+1y": {"avg": eps0 * (1 + g1), "growth": g1, "analysts": 22}},
+            "revenue": {"0y": {"growth": g0 * 0.8}, "+1y": {"growth": g1 * 0.7}},
+            "eps_trend": {"0y": {"current": eps0, "30d": eps0 / (1 + drift30), "90d": eps0 / (1 + drift90)},
+                          "+1y": {"current": eps0 * (1 + g1), "30d": eps0 * (1 + g1) / (1 + drift30),
+                                  "90d": eps0 * (1 + g1) / (1 + drift90)}},
+            "revisions": {"0y": {"up30": up, "down30": down, "up7": min(up, 2), "down7": min(down, 1)}},
+            "recs": recs,
+            "targets": {"current": price, "low": price * float(rng.uniform(0.6, 0.9)),
+                        "mean": price * float(rng.uniform(0.95, 1.35)), "median": price * float(rng.uniform(0.95, 1.3)),
+                        "high": price * float(rng.uniform(1.3, 1.9))},
+            "options": [{"label": "1 month", "days": 30, "implied_move": iv * (30 / 365) ** 0.5 * 0.8, "call_iv": iv},
+                        {"label": "earnings", "days": int(rng.integers(5, 60)),
+                         "implied_move": float(rng.uniform(0.04, 0.14)), "call_iv": iv * 1.2}],
+        }
+
     _HEADLINES = [
         ("{t} beats estimates and raises full-year guidance", 1),
         ("{t} wins multi-year government contract", 1),
@@ -450,7 +575,7 @@ class CachedProvider:
     so they're kept longer, which also keeps the Yahoo request count down."""
 
     TTL = {"history": 300, "fundamentals": 6 * 3600, "events": 3600, "research": 12 * 3600, "quote": 60,
-           "filings": 3 * 3600, "bulk_history": 900}
+           "filings": 3 * 3600, "bulk_history": 900, "street": 3 * 3600}
 
     def __init__(self, inner: DataProvider):
         self.inner = inner
@@ -495,6 +620,9 @@ class CachedProvider:
 
     def bulk_history(self, tickers: tuple[str, ...], period: str = "2y") -> dict[str, pd.DataFrame]:
         return self._get("bulk_history", tuple(tickers), period)
+
+    def street(self, ticker: str) -> dict:
+        return self._get("street", ticker)
 
 
 def get_provider(name: str) -> DataProvider:

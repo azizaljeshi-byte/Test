@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from . import catalysts, deepdive, fundamental, relative, sec, technical, tradeplan
+from . import analogs, catalysts, deepdive, fundamental, relative, sec, street, technical, tradeplan
 from .config import Holding, Portfolio
 from .data import SECTOR_ETFS, DataProvider
 from .signals import OPPORTUNITY, RISK, Signal
@@ -189,8 +189,9 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
 
     # relative strength nudges the technical score; benchmarks are cached across tickers
     sector_etf = SECTOR_ETFS.get(f.get("sector") or "")
+    market_hist = _optional(provider.history, portfolio.settings.benchmark)
     rs_adj, rs, rs_sig = relative.analyze(
-        hist, _optional(provider.history, portfolio.settings.benchmark),
+        hist, market_hist,
         _optional(provider.history, sector_etf) if sector_etf else None, sector_etf, h.tier)
     ts = float(min(100, max(0, ts + rs_adj)))
     tech.update(rs)
@@ -215,6 +216,16 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
         except Exception as e:
             log.warning("%s research failed for %s: %s", key, h.ticker, e)
 
+    raw_street = None if light else _optional(provider.street, h.ticker)
+    if raw_street:
+        try:
+            research["street"], street_sig = street.analyze(
+                raw_street, price, hist, market_hist, research.get("earnings") or {}, research.get("valuation") or {},
+                events.get("days_to_earnings"), not h.is_watchlist)
+            deep_sig += street_sig
+        except Exception as e:
+            log.warning("street analysis failed for %s: %s", h.ticker, e)
+
     raw_sec = None if light else _optional(provider.filings, h.ticker)
     if raw_sec:
         try:
@@ -234,8 +245,15 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
     ev.verdict = _verdict(ev)
     try:
         val = research.get("valuation") or {}
-        ev.plan = tradeplan.build(hist, tech, fund, fs, ev.verdict, h.tier, h.is_watchlist, val.get("levels"),
-                                  val.get("fair_value"), events, quote)
+        plan = tradeplan.build(hist, tech, fund, fs, ev.verdict, h.tier, h.is_watchlist, val.get("levels"),
+                               val.get("fair_value"), events, quote)
+        if plan:
+            entry = plan["entry"]
+            history = analogs.replay(hist, (entry - plan["stop"]) / entry,
+                                     (plan["targets"][0]["price"] - entry) / entry, h.tier)
+            plan = tradeplan.refine(plan, history, research.get("street"), events, h.tier, not h.is_watchlist,
+                                    tech, fs)
+        ev.plan = plan
     except Exception as e:
         log.warning("trade plan failed for %s: %s", h.ticker, e)
     return ev

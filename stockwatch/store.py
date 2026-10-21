@@ -97,6 +97,16 @@ class Store:
         r = self.conn.execute("SELECT * FROM snapshots WHERE ticker=? ORDER BY id DESC LIMIT 1", (ticker,)).fetchone()
         return {**dict(r), "payload": json.loads(r["payload"])} if r else None
 
+    def update_quote(self, ticker: str, quote: dict) -> None:
+        """Patch the latest snapshot's extended-hours quote without a full re-scan."""
+        r = self.conn.execute("SELECT id, payload FROM snapshots WHERE ticker=? ORDER BY id DESC LIMIT 1",
+                              (ticker,)).fetchone()
+        if r:
+            payload = json.loads(r["payload"])
+            payload["quote"] = quote
+            self.conn.execute("UPDATE snapshots SET payload=? WHERE id=?", (json.dumps(payload, default=str), r["id"]))
+            self.conn.commit()
+
     def previous_snapshot(self, ticker: str) -> dict | None:
         """The scan before the latest one, for "what changed" comparisons."""
         r = self.conn.execute("SELECT * FROM snapshots WHERE ticker=? ORDER BY id DESC LIMIT 1 OFFSET 1",

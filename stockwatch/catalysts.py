@@ -74,9 +74,14 @@ def analyze(events: dict, owned: bool, tier: int, today: date | None = None) -> 
 
     # --- news headlines (one signal per direction: the most serious recent headline)
     worst = best = None
+    m["news_today"] = 0
     for n in events.get("news") or []:
         published = _aware(n["published"])
-        m["news"].append({**n, "published": published.isoformat(timespec="minutes")})
+        tone = ("negative" if _matches(n["title"], SEVERE_NEGATIVE + NEGATIVE)
+                else "positive" if _matches(n["title"], POSITIVE) else "neutral")
+        m["news"].append({**n, "published": published.isoformat(timespec="minutes"), "tone": tone})
+        if (now - published).total_seconds() <= 36 * 3600:
+            m["news_today"] += 1
         if (now - published).total_seconds() > NEWS_WINDOW_HOURS * 3600:
             continue
         title = n["title"]

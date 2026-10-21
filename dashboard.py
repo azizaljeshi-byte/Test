@@ -19,7 +19,7 @@ from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
 from stockwatch.data import NY, get_provider, us_session
 from stockwatch.engine import evaluate
 from stockwatch.relative import market_regime
-from stockwatch.scanner import run_once
+from stockwatch.scanner import refresh_quotes, run_once
 from stockwatch.store import Store
 
 st.set_page_config(page_title="StockWatch · Mission Control", page_icon="🛸", layout="wide")
@@ -65,6 +65,15 @@ def scan_now():
     run_once(portfolio, data, store)
     st.session_state.last_auto = time.time()
 
+
+# outside regular hours, keep extended-hours prices fresh without waiting for a full sweep
+if us_session() in ("PRE", "POST") and tickers:
+    fetched = [((x["payload"].get("quote") or {}).get("fetched_at") or "") for x in store.latest_snapshots()
+               if x["ticker"] in tickers]
+    stale_before = datetime.now(NY).astimezone().timestamp() - 180
+    if fetched and any(not f or datetime.fromisoformat(f).timestamp() < stale_before for f in fetched):
+        with st.spinner("Updating pre-market / after-hours prices..."):
+            refresh_quotes(portfolio, data, store)
 
 snaps = [s for s in store.latest_snapshots() if s["ticker"] in tickers]
 last_scan = max((s["scanned_at"] for s in snaps), default=None)
@@ -201,6 +210,13 @@ if view == "target":
     if note:
         st.markdown(f'<div class="mc-log"><small>YOUR NOTE</small><br>{escape(note)}</div>', unsafe_allow_html=True)
     st.markdown(ui.brief(briefing.stock(snap, prevs.get(ticker))), unsafe_allow_html=True)
+    research = p.get("research") or {}
+    today_news = [n for n in ev.get("news") or []
+                  if (datetime.now(NY) - datetime.fromisoformat(n["published"])).total_seconds() <= 36 * 3600]
+    st.markdown('<div class="mc-section">Today\'s news</div>', unsafe_allow_html=True)
+    st.markdown(ui.news_list(today_news) if today_news else
+                '<div class="mc-d">No headlines in the last day. Older news is further down.</div>', unsafe_allow_html=True)
+
     plan = p.get("plan") or {}
     if plan:
         portfolio_value = sum(x["payload"]["position"].get("value", 0) for x in snaps if not x["payload"]["watchlist"])
@@ -210,9 +226,18 @@ if view == "target":
         st.select_slider("Risk per trade (% of portfolio lost if the stop is hit)", [0.25, 0.5, 1.0, 1.5, 2.0],
                          value=risk_pct, key="risk_pct")
 
+    street_m = research.get("street") or {}
+    if street_m:
+        st.markdown('<div class="mc-section">Outlook · 3 to 12 months</div>', unsafe_allow_html=True)
+        st.markdown(ui.outlook(street_m, snap["price"]), unsafe_allow_html=True)
+    elif ticker not in tickers:
+        if st.button("Run the full analysis (street view, outlook, SEC)"):
+            with st.spinner(f"Analysing {ticker}..."):
+                store.save_snapshot(evaluate(Holding(ticker, 2, 0), portfolio, data))
+            st.rerun()
+
     with st.expander("Company overview & report card", expanded=False):
         st.markdown(ui.overview_card(briefing.overview(snap), ticker), unsafe_allow_html=True)
-    research = p.get("research") or {}
     lv = (research.get("valuation") or {}).get("levels") or {}
 
     try:
@@ -363,12 +388,8 @@ if view == "target":
                 f'{escape(str(r.get("to_grade") or ""))}</div>' for r in ev["rating_changes"]), unsafe_allow_html=True)
 
     if ev.get("news"):
-        with st.expander("Incoming transmissions (news)", expanded=False):
-            st.markdown("".join(
-                f'<div class="mc-log mc-news"><small>{escape(n["published"][5:16].replace("T", " "))} · '
-                f'{escape(n.get("publisher") or "")}</small><br>'
-                + (f'<a href="{escape(n["url"])}" target="_blank">{escape(n["title"])}</a>' if n.get("url") else escape(n["title"]))
-                + "</div>" for n in ev["news"]), unsafe_allow_html=True)
+        with st.expander("All recent news", expanded=False):
+            st.markdown(ui.news_list(ev["news"], limit=20), unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- S&P 500 scan
 if view == "market":
@@ -414,6 +435,11 @@ if view == "log":
             ("Ticker list", "Google Sheet" if base.sheet_url else "secret / YAML + app edits"),
             ("Tickers", len(tickers)),
         ]) + "</div>", unsafe_allow_html=True)
+        st.caption("Extended-hours quote status per stock (from the last refresh):")
+        st.markdown(ui.table(["Ticker", "Session", "Ext price", "Source", "Fetched (UTC)", "Problem"], [
+            [x["ticker"], q.get("market_state") or "—", ui.num(q.get("ext_price")), q.get("source") or "—",
+             (q.get("fetched_at") or "—")[11:19], (q.get("error") or "")[:60]]
+            for x in snaps for q in [x["payload"].get("quote") or {}]]), unsafe_allow_html=True)
         probe = st.text_input("Test a live quote", value=next(iter(sorted(tickers)), "AAPL"), key="probe").strip().upper()
         if st.button("Fetch raw quote"):
             inner = getattr(data, "inner", data)

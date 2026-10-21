@@ -103,11 +103,40 @@ SEC asks automated tools to identify themselves, so set `SEC_USER_AGENT` to your
 
 The levels are mechanical, from price structure and volatility. They're a consistent starting point, not a forecast.
 
+The plan is then refined (`tradeplan.refine`) with three checks.
+
+**1. Older scenarios** (`stockwatch/analogs.py`):
+- **Matching:** finds past days in the stock's own 5-year history with the same trend state, a similar RSI and the same position relative to the 52-week high.
+- **Replay:** applies the plan's stop and target distances forward from each matching day, counting nearby days as one episode.
+- **Results:** how often the target came first, how often the stop came first, and the median days to the target.
+- **Effect on the plan:**
+  - The median days set the timeframe and the time stop.
+  - A new entry where fewer than 40% of 10+ similar setups worked becomes "wait for confirmation".
+
+**2. Earnings setup** (`stockwatch/street.py`). A favourable / mixed / unfavourable verdict scored from:
+- the beat rate
+- the direction of estimate revisions
+- the average report-day reaction
+- the run-up into the report against the market
+- the valuation premium to peers
+
+Options-implied moves are compared with the stock's usual reaction. Within a week of the report:
+- **Unfavourable setup:** no new buying, and a Tier 2 position is flagged for trimming.
+- **Favourable setup:** a half position before the report is reasonable.
+
+**3. Where the company is heading:**
+- **Street view:** buy/hold/sell counts and their change over 3 months, price targets, and EPS and revenue growth expected this year and next.
+- **Estimate revisions:** the change over 30 and 90 days, plus how many analysts raised vs cut estimates this month.
+- **Scenarios:** 3, 6 and 12-month bear / base / bull ranges with the probability of being higher. They use options-implied volatility (historical volatility as a fallback), and the base case blends the median target with a market-average return.
+- **Effect on the plan:** these feed the bullish / neutral / bearish call. A negative street that is cutting estimates blocks new entries.
+
+**Today's news** opens each details page, with each headline tagged positive, negative or neutral.
+
 **Briefings** (`stockwatch/briefing.py`):
 - **Each stock** gets a plain-English summary: why it has its verdict, what changed since the last scan, and what to watch next (earnings, key levels, the 200-day trigger, fair value, stops).
 - **The Radar tab** opens with a portfolio-level mission brief.
 
-**Extended hours:** each sweep also reads the latest pre-market or after-hours price. It comes from Yahoo's quote, or from 5-minute bars that include extended hours when the quote lacks it.
+**Extended hours:** each sweep, and every page load during pre-market or after-hours (when prices are over 3 minutes old), reads the latest extended-hours price. It comes from Yahoo's quote, falling back to 1-minute and then 5-minute bars that include extended hours. **Log → System diagnostics** shows, for each stock, the session, the price, which source answered, and any problem.
 Cards show `PRE` or `AH` next to the regular close, and the header shows the current session.
 A move of 3% or more outside regular hours raises a signal; 5% or more on a stock you hold raises an alert (often an earnings reaction).
 Scores and indicators still use regular-session prices.

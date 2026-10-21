@@ -48,6 +48,9 @@ class FixedProvider:
     def filings(self, ticker):
         return {}
 
+    def street(self, ticker):
+        return {}
+
 
 STRONG_FUNDAMENTALS = dict(pe_forward=15, peg=0.9, revenue_growth=0.25, earnings_growth=0.3,
                            operating_margin=0.3, roe=0.3, free_cash_flow=1e9, debt_to_equity=0.2,
@@ -652,3 +655,94 @@ def test_position_sizing_risk_budget_and_cap():
     capped = tradeplan.size(plan, 100_000, 1.0, 7)
     assert capped["capped"] and capped["value"] == pytest.approx(7000)
     assert tradeplan.size(plan, 0, 1.0, 7) is None
+
+
+# ---- street view, scenarios, earnings setup, older scenarios, plan refinement
+
+from stockwatch import analogs, street
+
+
+def test_consensus_and_scenarios():
+    c = street.consensus([{"period": "0m", "strongBuy": 5, "buy": 10, "hold": 4, "sell": 1, "strongSell": 0},
+                          {"period": "-1m"}, {"period": "-2m"},
+                          {"period": "-3m", "strongBuy": 1, "buy": 5, "hold": 10, "sell": 3, "strongSell": 1}])
+    assert c["label"] == "Buy" and c["buy"] == 15 and c["sell"] == 1 and c["change_3m"] < -0.5
+    sc = street.scenarios(100.0, 0.30, 130.0)
+    assert [x["months"] for x in sc] == [3, 6, 12]
+    year = sc[-1]
+    assert year["bear"] < 100 < year["base"] < year["bull"] and 0.5 < year["p_up"] < 0.8
+    assert abs(year["base"] - 100 * (1 + 0.5 * 0.30 + 0.5 * street.MARKET_RETURN)) < 1e-9   # blended, not the raw target
+
+
+def test_street_signals_revisions_and_growth():
+    raw = {"recs": [], "targets": {"median": 120.0, "low": 80.0},
+           "eps": {"0y": {"growth": 0.05}, "+1y": {"growth": 0.25}},
+           "eps_trend": {"0y": {"current": 2.06, "30d": 2.0, "90d": 1.9}},
+           "revisions": {"0y": {"up30": 6, "down30": 1}}, "options": []}
+    m, sig = street.analyze(raw, 100.0, frame(np.linspace(90, 100, 300)), None, {}, {}, None, owned=True)
+    codes = {s.code for s in sig}
+    assert {"estimates_rising", "growth_accelerating"} <= codes
+    assert abs(m["revisions"]["eps_30d"] - 0.03) < 1e-9 and m["upside_median"] == pytest.approx(0.2)
+    assert m["sigma_source"] == "price history" and len(m["scenarios"]) == 3
+
+
+def test_earnings_setup_verdicts():
+    earn = {"reported": 4, "beats": 4, "quarters": [{"reaction": 0.05}, {"reaction": 0.03}]}
+    good = street.earnings_setup(5, earn, {"eps_30d": 0.04}, frame(np.linspace(100, 98, 300)),
+                                 frame(np.linspace(100, 110, 300)), 0.06, {})
+    assert good["verdict"] == "favourable" and len(good["for"]) >= 3
+    bad_earn = {"reported": 4, "beats": 1, "quarters": [{"reaction": -0.06}]}
+    runup = frame(np.r_[np.full(279, 100.0), np.linspace(100, 125, 21)])
+    bad = street.earnings_setup(5, bad_earn, {"eps_30d": -0.05}, runup, frame(np.full(300, 100.0)), 0.15,
+                                {"pe_vs_peers": 0.8})
+    assert bad["verdict"] == "unfavourable" and "unusually large" in bad["note"]
+    assert street.earnings_setup(None, earn, {}, runup, None, None, {}) is None
+
+
+def test_analog_replay_counts_outcomes():
+    rng = np.random.default_rng(3)
+    close = 100 * np.exp(np.cumsum(rng.normal(0.0008, 0.015, 1200)))
+    h = analogs.replay(frame(close), stop_pct=0.05, target_pct=0.08, tier=2)
+    assert h and h["n"] >= 6 and h["horizon_days"] == 30
+    assert abs(h["win_rate"] + h["loss_rate"] + h["neither_rate"] - 1) < 1e-9
+    assert analogs.replay(frame(close[:200]), 0.05, 0.08, 2) is None
+
+
+def test_refine_uses_history_earnings_and_forward_view():
+    base = _plan(UPTREND_DIP, "BUY SETUP")
+    tech = {"trend": "up", "atr": 2.0}
+    weak_history = {"n": 20, "win_rate": 0.3, "loss_rate": 0.6, "neither_rate": 0.1, "median_days_to_target": 12}
+    r = tradeplan.refine(base, weak_history, {}, {}, 2, False, tech, 70)
+    assert r["stance"] == "WAIT FOR CONFIRMATION" and "only 30% of 20" in r["notes"][-1]
+    assert "12 trading days" in r["timeframe"] and any("about 18 trading days" in e for e in r["exits"])
+    st = {"earnings_setup": {"days": 3, "verdict": "unfavourable", "for": [], "against": ["x"]},
+          "consensus": {"score": 2.0, "label": "Buy", "buy": 10, "hold": 3, "sell": 0},
+          "targets": {"median": 200.0}, "upside_median": 0.3, "growth": {"+1y": {"eps": 0.2}},
+          "revisions": {"eps_30d": 0.05}, "scenarios": [{"months": 12, "bear": 1, "base": 2, "bull": 3, "p_up": 0.7}]}
+    held = tradeplan.refine({**base, "stance": "HOLD"}, None, st, {}, 2, True, tech, 70)
+    assert any("consider trimming before the report" in n for n in held["notes"])
+    assert held["bias"] == "bullish" and any("rates it Buy" in f for f in held["forward"])
+    entry = tradeplan.refine(base, None, st, {}, 2, False, tech, 70)
+    assert entry["stance"] == "WAIT FOR CONFIRMATION" and "earnings report" in entry["trigger"]
+
+
+def test_refresh_quotes_patches_latest_snapshot(tmp_path):
+    from stockwatch.scanner import refresh_quotes
+    store = Store(tmp_path / "q.db")
+    p = make_portfolio(Holding("AAA", 2, 1))
+    store.save_snapshot(evaluate(p.holdings[0], p, FixedProvider(frame(np.linspace(10, 20, 300)), {})))
+
+    class Q:
+        def quote(self, t):
+            return {"market_state": "PRE", "ext_price": 21.0, "ext_change": 0.05, "ext_session": "pre"}
+    assert refresh_quotes(p, Q(), store) == 1
+    assert store.snapshot("AAA")["payload"]["quote"]["ext_price"] == 21.0
+
+
+def test_news_tone_and_today_count():
+    now = datetime.now(timezone.utc)
+    m, _ = catalysts.analyze({"news": [{"title": "X beats estimates", "published": now - timedelta(hours=3)},
+                                       {"title": "X faces lawsuit", "published": now - timedelta(hours=50)},
+                                       {"title": "X holds annual meeting", "published": now - timedelta(hours=1)}]},
+                             owned=True, tier=1)
+    assert [n["tone"] for n in m["news"]] == ["positive", "negative", "neutral"] and m["news_today"] == 2

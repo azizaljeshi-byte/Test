@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 from . import notify
 from .config import load_portfolio
@@ -27,6 +29,20 @@ def run_once(portfolio, provider, store: Store) -> list[Evaluation]:
     notify.send(alerts)
     log.info("scanned %d tickers, %d new alerts", len(evals), len(alerts))
     return evals
+
+
+def refresh_quotes(portfolio, provider, store: Store) -> int:
+    """Fast path for pre-market / after-hours: refresh only the extended-hours quotes."""
+    def one(h):
+        try:
+            return h.ticker, provider.quote(h.ticker)
+        except Exception as e:
+            return h.ticker, {"error": str(e), "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        quotes = list(pool.map(one, portfolio.holdings))
+    for ticker, q in quotes:
+        store.update_quote(ticker, q)
+    return sum(1 for _, q in quotes if q.get("ext_price") is not None)
 
 
 def main(argv=None):

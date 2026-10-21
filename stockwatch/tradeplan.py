@@ -188,3 +188,94 @@ def summary(plan: dict) -> str:
     if plan["stance"] == "NO TRADE":
         return f"no trade: {plan['trigger']}"
     return f"{plan['stance'].lower()} · stop {plan['stop']:.2f} · target {t1:.2f}"
+
+
+ENTRY_STANCES = {"BUY NOW", "BUY THE BREAKOUT", "BUY ON PULLBACK"}
+
+
+def refine(plan: dict, history: dict | None, street: dict | None, events: dict | None, tier: int, held: bool,
+           tech: dict, fs: float) -> dict:
+    """Tighten the plan with what happened in similar past setups, the earnings setup and the
+    forward view, so it weighs where the company is heading and not only today's chart."""
+    plan = {**plan, "notes": list(plan.get("notes", [])), "exits": list(plan["exits"]), "history": history}
+    st = street or {}
+    t1 = plan["targets"][0]["price"]
+
+    # ---- older scenarios: hit rate and a realistic timeframe
+    default_days = 126 if tier == 1 else 30
+    days = None
+    if history and history["n"] >= 6 and history.get("median_days_to_target"):
+        days = history["median_days_to_target"]
+        weeks = max(round(days / 5), 1)
+        plan["timeframe"] = (f"Target 1 was reached in a median of {days:.0f} trading days (about {weeks} "
+                             f"week{'s' if weeks != 1 else ''}) in {history['n']} similar past setups")
+    else:
+        plan["timeframe"] = f"No reliable history; plan on up to {default_days} trading days"
+    deadline = int(min(max(round((days or default_days) * 1.5), 10), default_days * 2))
+    plan["time_stop_days"] = deadline
+    plan["exits"] = [e for e in plan["exits"] if not e.startswith("Time stop")]
+    if plan["stance"] not in ("REDUCE / EXIT", "NO TRADE"):
+        plan["exits"].append(f"Time stop: if {t1:.2f} isn't reached within about {deadline} trading days "
+                             f"(~{deadline / 5:.0f} weeks), reassess rather than wait.")
+    if history and history["n"] >= 10:
+        win = history["win_rate"]
+        if plan["stance"] in ENTRY_STANCES and win < 0.40:
+            plan["notes"].append(f"History is against this entry: only {win:.0%} of {history['n']} similar setups "
+                                 f"reached the target before the stop. Waiting for confirmation instead.")
+            plan["stance"] = "WAIT FOR CONFIRMATION"
+            plan["trigger"] = plan.get("trigger") or f"a close above {plan['entry_high'] + 0.5 * tech['atr']:.2f}"
+        elif plan["stance"] in ENTRY_STANCES and win >= 0.60:
+            plan["notes"].append(f"History supports it: {win:.0%} of {history['n']} similar setups reached the target first.")
+        elif held and history["loss_rate"] >= 0.55:
+            plan["notes"].append(f"In {history['n']} similar past setups the stop was hit first {history['loss_rate']:.0%} "
+                                 f"of the time; keep the stop tight.")
+
+    # ---- earnings: will the report likely work for or against us?
+    setup = st.get("earnings_setup")
+    if setup and setup["days"] <= 7:
+        if setup["verdict"] == "unfavourable":
+            if plan["stance"] in ENTRY_STANCES or plan["stance"] == "ADD":
+                plan["stance"] = "WAIT FOR CONFIRMATION"
+                plan["trigger"] = f"the earnings report in {setup['days']} days; reassess the day after"
+                plan["notes"].append("Earnings setup is unfavourable, so no new buying before the report.")
+            elif held:
+                plan["notes"].append("Earnings setup is unfavourable: " + ("consider trimming before the report."
+                                     if tier == 2 else "hold the core position but don't add before the report."))
+        elif setup["verdict"] == "favourable" and (plan["stance"] in ENTRY_STANCES or held):
+            plan["notes"].append("Earnings setup is favourable; a half position before the report is reasonable, "
+                                 "the rest after it confirms.")
+
+    # ---- forward view: street consensus, estimate direction and the 3-12 month ranges
+    forward, score = [], 0.0
+    score += {"up": 1, "down": -1}.get(tech.get("trend"), 0)
+    score += 1 if fs >= 60 else -1 if fs < 45 else 0
+    c = st.get("consensus")
+    if c:
+        med = (st.get("targets") or {}).get("median")
+        forward.append(f"The street rates it {c['label']} ({c['buy']} buy, {c['hold']} hold, {c['sell']} sell)"
+                       + (f" with a median target of {med:.2f} ({st['upside_median'] * 100:+.0f}%)."
+                          if _ok(med) and _ok(st.get("upside_median")) else "."))
+        score += 0.5 if c["score"] <= 2.4 else -1 if c["score"] > 3.0 else 0
+    g = (st.get("growth") or {})
+    g0, g1 = (g.get("0y") or {}).get("eps"), (g.get("+1y") or {}).get("eps")
+    if _ok(g0) or _ok(g1):
+        forward.append("Expected EPS growth: " + ", ".join(x for x in (
+            f"this year {g0 * 100:+.0f}%" if _ok(g0) else None, f"next year {g1 * 100:+.0f}%" if _ok(g1) else None) if x) + ".")
+        score += 0.5 if _ok(g1) and g1 > 0.10 else -0.5 if _ok(g1) and g1 < 0 else 0
+    r30 = (st.get("revisions") or {}).get("eps_30d")
+    if _ok(r30) and abs(r30) >= 0.01:
+        forward.append(f"Estimates moved {r30 * 100:+.1f}% in the last 30 days.")
+        score += 1 if r30 >= 0.03 else -1 if r30 <= -0.03 else 0
+    year = next((x for x in st.get("scenarios") or [] if x["months"] == 12), None)
+    if year:
+        forward.append(f"12-month range: bear {year['bear']:.2f}, base {year['base']:.2f}, bull {year['bull']:.2f}; "
+                       f"about {year['p_up']:.0%} chance of being higher.")
+        score += 0.5 if year["p_up"] >= 0.6 else -0.5 if year["p_up"] < 0.45 else 0
+    plan["forward"] = forward
+    plan["forward_score"] = score
+    plan["bias"] = "bullish" if score >= 1.5 else "bearish" if score <= -1.5 else "neutral"
+    if plan["stance"] in ENTRY_STANCES and c and c["score"] > 3.0 and _ok(r30) and r30 < 0:
+        plan["notes"].append("The street is negative and cutting estimates; the chart setup alone isn't enough.")
+        plan["stance"] = "WAIT FOR CONFIRMATION"
+        plan["trigger"] = plan.get("trigger") or "estimate revisions turning up"
+    return plan
