@@ -135,3 +135,8 @@ def test_portfolio_from_env(monkeypatch):
     monkeypatch.setenv("STOCKWATCH_PORTFOLIO", "holdings:\n  - {ticker: tsla, tier: 2, shares: 5}\n")
     p = load_portfolio()
     assert p.source is None and p.holdings[0].ticker == "TSLA"
+
+
+def test_recent_listing_not_penalized_for_missing_averages():
+    score, m, _ = technical.analyze(frame(np.linspace(20, 30, 60)))
+    assert np.isnan(m["sma200"]) and score > 50  # was 40 when missing averages counted as bearish

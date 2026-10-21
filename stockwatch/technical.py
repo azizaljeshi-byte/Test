@@ -80,10 +80,12 @@ def analyze(df: pd.DataFrame, trailing_atr_mult: float = 3.0, owned: bool = True
     uptrend = bool(above200 and last["SMA50"] > last["SMA200"])
     downtrend = bool(not above200 and last["SMA50"] < last["SMA200"])
 
-    # --- trend (the backbone of the score)
-    score += 12 if above200 else -12
-    score += 8 if above50 else -8
-    score += 6 if last["SMA50"] > last["SMA200"] else -6
+    # --- trend (the backbone of the score); recent listings lack long averages, so skip them
+    if not np.isnan(last["SMA200"]):
+        score += 12 if above200 else -12
+        score += 6 if last["SMA50"] > last["SMA200"] else -6
+    if not np.isnan(last["SMA50"]):
+        score += 8 if above50 else -8
 
     if crossed_above(ind["SMA50"], ind["SMA200"], 5):
         signals.append(Signal(OPPORTUNITY, "technical", "golden_cross",

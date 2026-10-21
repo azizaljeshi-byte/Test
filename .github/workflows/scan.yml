@@ -1,9 +1,9 @@
 name: StockWatch scan
 
 on:
-  schedule:
-    # every 15 min, Mon-Fri, ~US market hours (UTC). GitHub may delay scheduled runs.
-    - cron: "*/15 13-21 * * 1-5"
+  # Manual only for now. To scan automatically, add the secrets from the README and uncomment:
+  # schedule:
+  #   - cron: "*/15 13-21 * * 1-5"   # every 15 min, Mon-Fri, ~US market hours (UTC)
   workflow_dispatch: {}
 
 concurrency:
