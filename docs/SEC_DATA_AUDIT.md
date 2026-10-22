@@ -80,6 +80,9 @@ The default examples cover:
 
 ## What it doesn't do
 
+- **Data quality:** whether each figure is fit to use (revisions, stale or conflicting figures, checks against
+  the filing itself) is Phase 1B: `docs/SEC_DATA_QUALITY.md`.
+
 - **Not yet run on real SEC data:** the tests use synthetic SEC-shaped data. They show the checks behave
   as intended, not that SEC access or the tag mapping works for real companies. The first real run
   (above) is what verifies that.
