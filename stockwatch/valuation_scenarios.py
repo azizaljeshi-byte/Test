@@ -443,7 +443,13 @@ def research_ticker(ticker, as_of, cfg, *, get=None, lookup=None, price_fn=None)
         q = sq.quality_company(ticker, company, submissions, as_of)
         packet = cfg.get('companies', {}).get(ticker.upper(), {})
         out = evaluate(q, company, packet, as_of, cfg)
-        out['phase2a1_risk_context'] = lab.value_company(ticker, company, submissions, price_fn(ticker, as_of), as_of)['risk']
+        try:
+            out['phase2a1_risk_context'] = lab.value_company(
+                ticker, company, submissions, price_fn(ticker, as_of), as_of)['risk']
+        except Exception as exc:
+            # Supplemental market context must never erase the independently evaluated ledger.
+            out['phase2a1_risk_context'] = {'status': UNAVAILABLE,
+                                           'reason': f'Optional risk context failed: {type(exc).__name__}: {exc}'}
         return out
     except Exception as exc:
         return {'ticker': ticker.upper(), 'as_of': str(as_of), 'status': UNAVAILABLE,

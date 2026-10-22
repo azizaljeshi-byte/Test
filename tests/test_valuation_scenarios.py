@@ -306,3 +306,27 @@ def test_retrieval_and_cli_distinguish_gap_diagnostics_from_missing_sources(monk
     monkeypatch.setattr(vs, 'research_ticker', lambda *args: {'ticker': 'SYNTH', 'as_of': str(DAY),
         'status': vs.UNAVAILABLE, 'gaps': ['source not retrieved'], 'scenarios': {}})
     assert vs.main(['SYNTH', '--markdown', str(text)]) == 2
+
+
+@pytest.mark.parametrize('with_packet', [False, True])
+def test_optional_price_failure_preserves_the_core_ledger(with_packet):
+    config = cfg()
+    if with_packet:
+        config['companies']['SYNTH'] = packet()
+
+    def get(url):
+        return company() if 'companyfacts' in url else {'sic': '7372'}
+
+    def failing_price(ticker, day):
+        raise TimeoutError('Yahoo unavailable')
+
+    result = vs.research_ticker('SYNTH', DAY, config, get=get, lookup=lambda t: (1, None), price_fn=failing_price)
+    context = result.pop('phase2a1_risk_context')
+    expected = vs.evaluate(quality(), company(), config['companies'].get('SYNTH', {}), DAY, config)
+    assert result == expected  # status, family, SEC sources, gaps, scenarios and sensitivity are untouched
+    assert context['status'] == vs.UNAVAILABLE and 'TimeoutError: Yahoo unavailable' in context['reason']
+    if with_packet:
+        assert result['status'] == vs.COMPUTED and len(result['scenarios']) == 3
+    else:
+        assert result['status'] == vs.UNAVAILABLE and result['gaps'] and not result['scenarios']
+    assert 'Optional risk context failed' in vs.markdown([result | {'phase2a1_risk_context': context}])
