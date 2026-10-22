@@ -10,6 +10,7 @@ from datetime import date, timedelta
 import hashlib
 import json
 import math
+from decimal import Decimal
 import time
 import urllib.request
 from urllib.parse import urlsplit
@@ -102,7 +103,7 @@ def treasury_10y(sources, as_of):
                 if day + timedelta(days=1) > as_of:
                     continue
                 text = entry.findtext('.//'+DATA+'BC_10YEAR')
-                val = float(text)/100 if text and text.strip() else None
+                val = float(Decimal(text)/Decimal(100)) if text and text.strip() else None
                 if val is not None and (not math.isfinite(val) or not -.1 <= val <= 1):
                     raise ValueError('invalid Treasury yield')
                 rows.append((day, val, treasury_url(year), hashlib.sha256(raw).hexdigest()))
@@ -176,6 +177,7 @@ def beta_candidate(stock, benchmark, as_of):
     try:
         for series in (stock, benchmark):
             if (not isinstance(series, dict) or not all(series.get(k) for k in ('source', 'provider', 'license_reference'))
+                    or series.get('currency') != 'USD'
                     or not safe_reference(series.get('source')) or series.get('basis') != 'split_and_dividend_adjusted'):
                 return bad('Beta requires sourced permitted adjusted return series; raw/dividend-misaligned prices rejected.')
         if stock.get('ticker') != 'MSFT' or benchmark.get('ticker') != 'SPY':
@@ -204,7 +206,7 @@ def beta_candidate(stock, benchmark, as_of):
             return bad('Nonfinite beta/return variance; no estimate accepted.')
     except (KeyError, ValueError, TypeError, AttributeError, ZeroDivisionError, OverflowError):
         return bad('Missing or malformed reproducible beta series; no vendor beta substituted.')
-    return {'field': 'beta', 'status': RECONCILE, 'unit': 'ratio', 'kind': 'derived_market_candidate', 'value': beta,
+    return {'field': 'beta', 'status': RECONCILE, 'currency': 'USD', 'unit': 'ratio', 'kind': 'derived_market_candidate', 'value': beta,
             'source': [stock['source'], benchmark['source']], 'window': [str(days[0]),str(days[-1])],
             'frequency': 'monthly simple returns', 'return_count': len(x), 'benchmark': 'SPY',
             'adjustment_basis': 'split_and_dividend_adjusted', 'as_of': str(as_of),
@@ -243,13 +245,19 @@ def sec_capital(sources, as_of):
             value = chosen['val']
             if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or value < 0 or not date.fromisoformat(target) <= date.fromisoformat(chosen['filed']) <= as_of:
                 status = UNAVAILABLE
-            out[key] = {'field':key,'value':value,'unit':unit,'currency':'USD' if unit=='USD' else None,
+            out[key] = {'field':key,'value':value if status != UNAVAILABLE else None,'unit':unit,'currency':'USD' if unit=='USD' else None,
                         'kind':'issuer_accounting_observation','status':status,'source':source,'filing_check':check,
                         'available_on':chosen['filed'],'as_of':str(as_of), 'freshness_days':(as_of-date.fromisoformat(target)).days,
                         'reason':contested[1] if contested else 'Exact reported concept; economic debt/lease/surplus/share scope still needs review.'}
     except Exception:
         for key in CAPITAL:
             out.setdefault(key,missing(key,'MSFT same-date original-filing evidence unavailable; no zero inferred.'))
+    for row in out.values():
+        if row['status'] == UNAVAILABLE and row.get('source'):
+            row['source'] = {k:v for k,v in row['source'].items() if k != 'value'}
+            row['filing_check'] = {k:v for k,v in row['filing_check'].items() if k != 'value'}
+            row['reason'] = ('Rejected accounting observation: filing mismatch, revision, stale date or invalid value; '
+                             + row['reason'])
     return out
 
 
@@ -293,7 +301,11 @@ def evaluate(sources, as_of, treasury=None, market=None, beta=None):
     capital = sec_capital(sources,as_of)
     price = market_close_candidate(market,as_of)
     rate = dated_treasury(treasury,as_of)
-    beta = beta or missing('beta','No independently reviewed adjusted stock/benchmark return series; no vendor beta default.','ratio')
+    # Only raw paired series are accepted; output-shaped/vendor dictionaries cannot bypass recomputation.
+    if isinstance(beta, dict) and set(beta) == {'stock', 'benchmark'}:
+        beta = beta_candidate(beta['stock'], beta['benchmark'], as_of)
+    else:
+        beta = missing('beta','Raw sourced stock/SPY series required for recomputation; no supplied beta value accepted.','ratio')
     fields = [price,rate,beta] + list(capital.values())
     for key,reason in {
         'spot_fully_diluted_shares':'Reported outstanding/EPS-average shares do not reconcile treasury-stock method, options/RSUs, classes or future issuance.',
@@ -307,8 +319,8 @@ def evaluate(sources, as_of, treasury=None, market=None, beta=None):
         fields.append(missing(key,reason))
     gates = [{'gate':'price_share_basis','status':RECONCILE if price['status']==RECONCILE else UNAVAILABLE,
               'reason':'Market close and spot fully diluted/share/corporate-action basis must reconcile together.'},
-             {'gate':'capital_bridge','status':RECONCILE if any(r['status']==USABLE for r in capital.values()) else UNAVAILABLE,
-              'reason':'No automatic debt sum: total debt, current maturities, short borrowings and commercial paper may overlap; lease inclusion and surplus claims need note review.'},
+             {'gate':'capital_bridge','status':UNAVAILABLE,
+              'reason':'No enterprise-to-equity bridge exists. No automatic debt sum: total debt, current maturities, short borrowings and commercial paper may overlap; lease inclusion and surplus claims need note review.'},
              {'gate':'discount_inputs','status':RECONCILE if rate['status']==USABLE else UNAVAILABLE,
               'reason':'Treasury alone cannot establish WACC; beta, marginal debt yield, capital weights and owner ERP/tax policy unresolved.'},
              {'gate':'approved_forward_assumptions','status':UNAVAILABLE,'reason':'No forward case/policy approvals ingested; never auto-execute DCF.'}]
@@ -316,7 +328,7 @@ def evaluate(sources, as_of, treasury=None, market=None, beta=None):
             'fields':fields,'gates':gates,'blockers':[g['gate'] for g in gates if g['status']!=USABLE],
             'lease_reconciliations':{f:lease_check(capital,f) for f in ('finance_leases','operating_leases')},
             'summary': ['Dated market close plus spot fully diluted/corporate-action basis: unresolved.',
-                        'Same-date debt/lease/surplus bridge: original concept matches do not establish economic scope.',
+                        'No enterprise-to-equity bridge exists; individual sourced components and lease arithmetic do not establish economic scope.',
                         'Official 10Y Treasury: '+rate['status']+'; beta, marginal borrowing yield and owner ERP/tax remain unresolved.',
                         'No approved forward cases or depreciation/capex-scope reconciliation; valuation stays blocked.'],
             'supported_computations':['Original-filing concept matches; exact lease total/component arithmetic when all components pass.'],

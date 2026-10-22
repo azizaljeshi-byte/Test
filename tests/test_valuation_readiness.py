@@ -79,7 +79,7 @@ def series(ticker, multiplier=1):
         value *= 1+multiplier*(.01 if i%2 else -.005)
         rows.append({'date':str(day),'available_on':str(day),'close':value})
     return {'ticker':ticker,'source':f'https://example.test/{ticker}','provider':'synthetic only',
-            'license_reference':'synthetic permission only','basis':'split_and_dividend_adjusted','observations':rows}
+            'currency':'USD','license_reference':'synthetic permission only','basis':'split_and_dividend_adjusted','observations':rows}
 
 
 def test_reproducible_beta_uses_adjusted_aligned_monthly_returns_but_is_not_adopted_wacc():
@@ -198,3 +198,75 @@ def test_supplied_treasury_cannot_bypass_freshness_chronology_or_source_checks(c
     rate=vr.treasury_10y(vr.TreasurySources(read=lambda u:xml_rates(('2027-02-28','4.0'))),DAY)
     rate.update(changes)
     assert vr.dated_treasury(rate,DAY)['status']==vr.UNAVAILABLE
+
+
+@pytest.mark.parametrize('mode', ['revision', 'filing_mismatch', 'stale'])
+def test_rejected_capital_never_exposes_computable_value(monkeypatch, mode):
+    if mode == 'revision':
+        src = capital_sources()
+        quality = vr.sq.quality_company('MSFT', src.read(ve.FACTS_URL), src.read(ve.SUBMISSIONS_URL), DAY)
+        monkeypatch.setattr(vr.sq, 'quality_company', lambda *args: quality)
+        monkeypatch.setattr(vr.sq, '_contest', lambda *args: (True, 'Reported amount revised'))
+        monkeypatch.setattr(vr.ve, 'filing_check', lambda *args: {'status':'unverified'})
+    elif mode == 'filing_mismatch':
+        monkeypatch.setattr(vr.ve, 'filing_check', lambda *args: {'status':'mismatch'})
+    day = date(2027, 10, 1) if mode == 'stale' else DAY
+    rows = vr.sec_capital(capital_sources(), day)
+    assert rows['cash']['status'] == vr.UNAVAILABLE
+    assert rows['cash']['value'] is None
+    assert rows['cash']['source'] and rows['cash']['reason']
+    assert 'value' not in rows['cash']['source']
+    assert 'value' not in rows['cash']['filing_check']
+    assert vr.lease_check(rows, 'finance_leases')['status'] == vr.UNAVAILABLE
+
+
+def test_components_never_imply_bridge_exists():
+    result = vr.evaluate(capital_sources(), DAY)
+    gate = next(g for g in result['gates'] if g['gate'] == 'capital_bridge')
+    assert gate['status'] == vr.UNAVAILABLE
+    assert 'No enterprise-to-equity bridge exists' in gate['reason']
+    assert any('No enterprise-to-equity bridge exists' in s for s in result['summary'])
+
+
+@pytest.mark.parametrize('payload', [None, {}, {'status':'usable','value':1},
+                                     {'stock':None,'benchmark':{}}, {'stock':{},'benchmark':{},'value':1}])
+def test_beta_evaluate_refuses_forged_and_malformed_payload(payload):
+    result = vr.evaluate(capital_sources(), DAY, beta=payload)
+    beta = next(f for f in result['fields'] if f['field']=='beta')
+    assert beta['status'] == vr.UNAVAILABLE and beta['value'] is None
+    assert not result['valuation_cases']
+
+
+@pytest.mark.parametrize('mode', ['valid','future','stale','currency','secret_url'])
+def test_beta_evaluate_recomputes_raw_evidence_and_replays(mode):
+    a,b = series('MSFT',2), series('SPY')
+    day = date(2026,2,1)
+    if mode == 'future': a['observations'][-1]['available_on']='2027-01-01'
+    if mode == 'stale': day=date(2027,1,1)
+    if mode == 'currency': b['currency']='EUR'
+    if mode == 'secret_url': a['source']='https://example.test/data?key=secret'
+    src=capital_sources()
+    result=vr.evaluate(src,day,beta={'stock':a,'benchmark':b})
+    beta=next(f for f in result['fields'] if f['field']=='beta')
+    assert beta['status'] == (vr.RECONCILE if mode=='valid' else vr.UNAVAILABLE)
+    if mode=='valid':
+        assert beta['value']==pytest.approx(2)
+        assert vr.evaluate(ve.Sources(copy.deepcopy(src.snapshot)),day,beta={'stock':a,'benchmark':b})==result
+    assert not result['valuation_cases'] and result['reverse_implied_growth'] is None
+    assert 'secret' not in json.dumps(result)
+
+
+@pytest.mark.parametrize('latest,state', [('',vr.UNAVAILABLE),('4.10',vr.USABLE)])
+def test_treasury_latest_blank_never_falls_back_and_decimal_ratio_replays(latest,state):
+    src=vr.TreasurySources(read=lambda u:xml_rates(('2026-10-20','4.0'),('2026-10-21',latest)))
+    result=vr.treasury_10y(src,date(2026,10,22))
+    assert result['status']==state and result['period_end']=='2026-10-21'
+    assert result['value']==(None if not latest else .041)
+    assert vr.treasury_10y(vr.TreasurySources(copy.deepcopy(src.snapshot)),date(2026,10,22))==result
+
+
+def test_conflicting_latest_treasury_never_falls_back_on_replay():
+    src=vr.TreasurySources(read=lambda u:xml_rates(('2026-10-20','4'),('2026-10-21','4.1'),('2026-10-21','4.2')))
+    result=vr.treasury_10y(src,date(2026,10,22))
+    assert result['status']==vr.RECONCILE and result['value'] is None
+    assert vr.treasury_10y(vr.TreasurySources(copy.deepcopy(src.snapshot)),date(2026,10,22))==result

@@ -61,3 +61,31 @@ Private snapshots are optional and are not uploaded by the workflow. Reports con
 Synthetic fixtures test dated Treasury percent conversion, same-day exclusion, stale/missing/conflicting/feed-drift/outage/hash refusal; price class/split/adjustment/availability guards; exact beta reproduction and missing/alignment/zero-variance refusal; original-filing same-date capital matches, missing claims, lease sum/date conflicts, explicit overlap refusal; replay/isolation; readable scaled currency/FY labels and OCF counterevidence. Prior cash/annual/TTM regressions remain. Tests contain no actual MSFT values.
 
 Outstanding: authenticated/authorized new hosted source run, independent source/filing comparison, permitted contemporaneous market capture, spot fully diluted and award reconciliation, complete economic debt/lease/surplus/claim scope, justified beta and marginal borrowing yield, and explicit owner policy/forward-case approvals. No future valuation execution is enabled by this PR.
+
+### PR #20 review corrections
+
+The additive `msft-readiness.1` / `msft-dossier.3` schema is retained: no new
+status is introduced. Rejected/unavailable capital observations now always have
+`value: null`; their source and rejection reason remain, without a second numeric
+field. Consumers must require usable status. Individual sourced components and
+lease arithmetic never establish an enterprise-to-equity bridge: that gate stays
+unavailable and explicitly says no bridge exists.
+
+`evaluate(beta=...)` accepts only a mapping containing `stock` and `benchmark`
+raw series, recomputes through `beta_candidate`, and rejects output-shaped beta
+records. Both series require USD, aligned adjusted consecutive monthly closes,
+source/permission metadata and valid as-of availability/freshness. Successful
+calculation remains provisional `reconcile`, never an approved WACC input.
+
+Treasury published percentages are converted with decimal arithmetic before
+storage as a ratio (4.10 percent becomes 0.041); this does not add source precision.
+The latest eligible date controls: a blank latest yield is unavailable even if a
+prior positive observation is fresh, and conflicting latest observations require
+reconciliation. Neither condition silently falls back; replay preserves it.
+
+Although GitHub workflow YAML is unchanged, **each live dossier run now attempts
+outbound official home.treasury.gov request(s)**: the as-of year and, near New
+Year, the previous year. Requests have a 20-second timeout and fail closed on
+connectivity/source errors; runtime proxies may block access. This is per live
+run, not an annual scheduled request. Snapshot replay never accesses the network.
+No new secrets, paid provider or unattended schedules are introduced.
