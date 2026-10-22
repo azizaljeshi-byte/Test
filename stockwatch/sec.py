@@ -64,11 +64,19 @@ DEFAULT_USER_AGENT = "StockWatch personal research (set SEC_USER_AGENT)"
 _warned_user_agent = False
 
 
+def _env_user_agent() -> str:
+    # One line with single spaces: a value pasted over two lines (name, then email) is otherwise
+    # refused as an HTTP header, and every SEC request fails.
+    return " ".join((os.getenv("SEC_USER_AGENT") or "").split())
+
+
 def user_agent_status() -> str:
     """"configured", "missing" or "invalid" (it needs a name and an email). Never returns the value itself."""
-    ua = (os.getenv("SEC_USER_AGENT") or "").strip()
+    ua = _env_user_agent()
     if not ua:
         return "missing"
+    if not ua.isprintable():
+        return "invalid"   # control characters can't go in a header
     has_email = re.search(r"[^\s@]+@[^\s@]+\.[^\s@]+", ua)
     return "configured" if has_email and len(ua.split()) >= 2 else "invalid"   # a name and an email
 
@@ -80,7 +88,7 @@ def _user_agent() -> str:
         _warned_user_agent = True
         log.warning("SEC_USER_AGENT is %s: SEC requests use a generic identifier and SEC may refuse some. "
                     "Set it to a name and email, e.g. \"Your Name you@example.com\".", status)
-    return os.getenv("SEC_USER_AGENT").strip() if status == "configured" else DEFAULT_USER_AGENT
+    return _env_user_agent() if status == "configured" else DEFAULT_USER_AGENT
 
 
 def _get(url: str) -> dict:

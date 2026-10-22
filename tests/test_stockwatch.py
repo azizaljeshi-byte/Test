@@ -706,6 +706,30 @@ def test_sec_user_agent_status_and_fallback_never_expose_the_value(monkeypatch):
     assert "**not configured** (missing)" in sec_audit.markdown([], today=date(2026, 10, 22))
 
 
+def test_sec_user_agent_pasted_over_two_lines_is_sent_as_one_valid_header(monkeypatch):
+    import http.client
+    sent = []
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def urlopen(req, timeout):
+        sent.append(req.get_header("User-agent"))
+        return Resp(b"{}")
+    monkeypatch.setattr(sec.urllib.request, "urlopen", urlopen)
+    monkeypatch.setenv("SEC_USER_AGENT", "Jane Doe\r\n  jane.doe@example.com\n")
+    assert sec.user_agent_status() == "configured"
+    sec._get("https://data.sec.gov/z.json")
+    assert sent[-1] == "Jane Doe jane.doe@example.com"
+    assert not http.client._is_illegal_header_value(sent[-1].encode())   # what urllib checks before sending
+    monkeypatch.setenv("SEC_USER_AGENT", "Jane Doe jane.doe@example.com\x07")
+    assert sec.user_agent_status() == "invalid"
+
+
 def test_market_screen_and_run_on_demo():
     universe = market.load_universe()
     assert len(universe) > 450 and {"ticker", "name", "sector", "cik"} <= set(universe.columns)
