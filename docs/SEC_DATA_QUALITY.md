@@ -30,7 +30,7 @@ Every figure gets one:
   - Two values for one period in the same filing: none is shown as the figure.
   - Two period starts for one period end (a fiscal-year change).
   - Another tag for the same measure with a different amount.
-- **Scope, not conflict:** tags that measure something wider or narrower, listed in `SCOPE` with a percentage difference. Examples: total vs noncurrent debt, depreciation alone vs D&A, including restricted cash.
+- **Scope, not conflict:** individual tag scope descriptions are listed in `SCOPE`. Cross-tag comparisons in both selected figures and the balance sheet use the same helper and explicit field-specific `SCOPE_PAIRS`; a description alone never establishes that a pair is compatible. Unrecognized differing pairs need reconciliation. Examples of established pairs: total vs noncurrent debt, cash vs cash including restricted cash, and net income vs profit including noncontrolling interests.
 - **Staleness against the company, not today:**
   - **Annual figures:** stale when the company has already reported a newer fiscal year for revenue, net income or operating cash flow. An annual figure isn't stale just because the next fiscal year hasn't ended.
   - **Balance-sheet figures:** stale when older than the latest balance sheet.
@@ -44,7 +44,7 @@ Every figure gets one:
 - **Balance sheet on one date** (the latest cash or equity date): cash, short-term investments, short- and long-term debt, and operating and finance leases.
   - A component not reported for that date is unknown. It is never carried forward from an older date.
   - Two values for the date in one filing make a component unknown, with no number shown. A value revised in a later filing needs reconciliation.
-  - Different same-date concepts are compared too: only explicit field-specific pairs in `BALANCE_SCOPE_PAIRS` establish known scope differences. A tag's individual `SCOPE` description never exempts an unrecognized pair; other differing amounts need reconciliation.
+  - Different same-date concepts are compared too, using the same `SCOPE_PAIRS` rule as selected figures. A tag's individual `SCOPE` description never exempts an unrecognized pair; other differing amounts need reconciliation.
   - Lease current portions are shown separately.
   - Where all three are tagged, LongTermDebt is checked against its noncurrent plus current portions.
   - Total interest-bearing debt isn't computed: that's a Phase 2 choice.

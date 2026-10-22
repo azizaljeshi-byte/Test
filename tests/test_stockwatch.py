@@ -2018,3 +2018,28 @@ def test_sec_quality_balance_scope_requires_established_field_pair(monkeypatch):
     row = next(x for x in r['balance_sheet']['rows'] if x['key'] == 'debt_long')
     assert row['status'] == sq.RECONCILE
     assert any('other tags disagree: NoncurrentPortionOfNoncurrentBorrowings' in n for n in row['notes'])
+
+
+def test_sec_quality_selection_and_balance_share_scope_rules(monkeypatch):
+    import copy
+    monkeypatch.setitem(sq.SCOPE, 'MarketableSecuritiesCurrent', 'individually described scope')
+    company = copy.deepcopy(QUALITY_COMPANY)
+    company['facts']['us-gaap']['CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents'] = {
+        'units': {'USD': [_qi(450e6, '2026-06-30')]}}
+    r = sq.quality_company('Q', company, None, QDAY)
+    rows = {x['key']: x for x in r['balance_sheet']['rows']}
+    for section in (r['fields']['short_term_investments'], rows['short_term_investments']):
+        assert section['status'] == sq.RECONCILE
+        assert any('other tags disagree' in n for n in section.get('issues', section.get('notes', [])))
+    for section in (r['fields']['cash'], rows['cash']):
+        assert section['status'] == sq.USABLE
+        assert any('different scope' in n for n in section.get('issues', section.get('notes', [])))
+    assert r['fields']['cash']['selected']['accn'] == rows['cash']['accn']
+    # Other field categories get no implicit equivalence from a global tag description.
+    company = {'facts': {'us-gaap': {
+        'PaymentsToAcquirePropertyPlantAndEquipment': {'units': {'USD': [_q(10e6, *FY25)]}},
+        'PaymentsToAcquireProductiveAssets': {'units': {'USD': [_q(20e6, *FY25)]}}}}}
+    r = sq.quality_company('Q', company, None, date(2026, 3, 1))
+    assert r['fields']['capex']['status'] == sq.RECONCILE
+    assert any('other tags disagree' in n for n in r['fields']['capex']['issues'])
+    assert r['fields']['capex']['ttm']['status'] == sq.RECONCILE

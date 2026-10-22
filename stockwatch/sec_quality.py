@@ -75,13 +75,21 @@ SCOPE = {
 BALANCE = ("cash", "short_term_investments", "debt_current", "debt_long", "operating_leases", "finance_leases")
 # Only these field-specific pairs establish a wider/narrower relationship. SCOPE describes
 # individual concepts and cannot, by itself, establish that two different concepts are compatible.
-BALANCE_SCOPE_PAIRS = {
+SCOPE_PAIRS = {
+    "net_income": {frozenset(("NetIncomeLoss", "ProfitLoss"))},
     "cash": {frozenset(("CashAndCashEquivalentsAtCarryingValue",
                          "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"))},
     "debt_long": {frozenset(("LongTermDebtNoncurrent", "LongTermDebt"))},
     "operating_leases": {frozenset(("OperatingLeaseLiability", "OperatingLeaseLiabilityNoncurrent"))},
     "finance_leases": {frozenset(("FinanceLeaseLiability", "FinanceLeaseLiabilityNoncurrent"))},
 }
+
+
+def _known_scope_pair(key: str, first: str, second: str) -> bool:
+    """A description of one tag never establishes a relationship with an arbitrary other tag."""
+    return frozenset((first.split(":")[-1], second.split(":")[-1])) in SCOPE_PAIRS.get(key, set())
+
+
 LEASE_CURRENT = {"operating_leases": "OperatingLeaseLiabilityCurrent", "finance_leases": "FinanceLeaseLiabilityCurrent"}
 DILUTION = {
     "options": ("Stock options outstanding",
@@ -284,7 +292,7 @@ def select(company: dict, key: str, as_of: date, ref: dict) -> dict:
             out["alternatives"].append({"concept": c.split(":")[-1], "value": same[-1]["val"]})
     name = concept.split(":")[-1]
     differ = [a for a in out["alternatives"] if _differs(a["value"], latest["val"])]
-    scoped = [a for a in differ if a["concept"] in SCOPE or name in SCOPE]
+    scoped = [a for a in differ if _known_scope_pair(key, name, a["concept"])]
     clash = [a for a in differ if a not in scoped]
     if scoped:
         flags.append((USABLE, "other tags with a different scope: " + ", ".join(
@@ -442,7 +450,7 @@ def balance_sheet(company: dict, as_of: date) -> dict:
                     flags.append((RECONCILE, f"also tagged on this date: {other} {_money(g['val'])} "
                                              "(separate items: listed, not added up)"))
                 elif _differs(f["val"], g["val"]):
-                    scoped = frozenset((name, other)) in BALANCE_SCOPE_PAIRS.get(key, set())
+                    scoped = _known_scope_pair(key, name, other)
                     flags.append((USABLE if scoped else RECONCILE,
                                   f"other tags {'with a different scope' if scoped else 'disagree'}: "
                                   f"{other} {_money(g['val'])} vs {name} {_money(f['val'])}"
