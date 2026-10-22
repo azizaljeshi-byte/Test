@@ -96,12 +96,28 @@ def economics(annual, as_of):
                       'ocf_less_cash_capex': values['operating_cash_flow']-values['capex'],
                       'sources': {k: fs[k]['filing_check']['url'] for k in needed}})
     years.sort(key=lambda y: y['end'], reverse=True)
-    # A later accession can contain different periods; one unambiguous aligned row per fiscal year only.
-    unique = []
+    # Collapse only identical same-year copies; differing values/periods are ambiguous.
+    clusters = []
     for y in years:
-        if not unique or sq._gap(unique[-1]['end'], y['end']) > 300:
-            unique.append(y)
-    years = unique[:3]
+        if not clusters or sq._gap(clusters[-1][0]['end'], y['end']) > 300:
+            clusters.append([y])
+        else:
+            clusters[-1].append(y)
+    years, ambiguities = [], []
+    for copies in clusters:
+        first = copies[0]
+        conflict = any((other['start'], other['end']) != (first['start'], first['end'])
+                       or any(not math.isclose(other['values'][k], first['values'][k], rel_tol=1e-9, abs_tol=1e-8)
+                              for k in first['values']) for other in copies[1:])
+        if conflict:
+            ambiguities.append({'end': first['end'], 'accessions': [y['accn'] for y in copies],
+                                'reason': 'Conflicting same-year values or fiscal periods; not used.'})
+            break  # do not skip a disputed recent year to manufacture an older trend
+        if years and not 350 <= sq._gap(years[-1]['end'], first['end']) <= 380:
+            break  # retain the recent consecutive run, never bridge an older gap
+        years.append(first | {'corroborating_accessions': [y['accn'] for y in copies]})
+        if len(years) == 3:
+            break
     positives, negatives, neutral = [], [], []
     paired = len(years) >= 2 and all(350 <= sq._gap(a['end'], b['end']) <= 380 for a, b in zip(years, years[1:]))
     fresh = bool(years) and (as_of-date.fromisoformat(years[0]['end'])).days <= 550
@@ -121,7 +137,7 @@ def economics(annual, as_of):
         if newest['sbc_revenue'] > oldest['sbc_revenue']:
             negatives.append('SBC consumed a larger share of revenue; this is an expense/claims consideration, not a measured spot dilution rate.')
     return {'status': 'OBSERVED MULTI-YEAR ECONOMICS' if paired and fresh else 'INSUFFICIENT VERIFIED HISTORY',
-            'years': years, 'positive_findings': positives[:3], 'opposing_findings': negatives[:3], 'neutral_findings': neutral,
+            'years': years, 'ambiguous_years': ambiguities, 'positive_findings': positives[:3], 'opposing_findings': negatives[:3], 'neutral_findings': neutral,
             'limits': ['No observation is promoted to moat, durable demand or growth forecast.',
                        'Annual trends require exact same-period/accession accounting inputs and consecutive fiscal years.',
                        'No generic leverage ratio is computed from unreconciled debt/lease scope.',
@@ -182,8 +198,12 @@ def markdown(r):
     d = r['decision']
     lines = ['# MSFT research decision', '', f"As of {r['as_of']} · valuation: **{d['valuation_disposition']}**", '',
              f"Business economics: **{d['business_economics']}**", '', d['horizon'], '', d['uncertainty'], '', '## Evidence for and against', '']
+    if r['source_failure']:
+        lines[4:4] = ['**Source warning:** ' + r['source_failure'], '']
+    if r['business_economics'].get('ambiguous_years'):
+        lines += ['Conflicting duplicate fiscal years were excluded; see the annual evidence ledger.', '']
     for label, key in [('Positive observations', 'positive_findings'), ('Opposing observations', 'opposing_findings')]:
-        lines += [f'**{label}**'] + ['- '+x for x in d[key]]
+        lines += ['', f'**{label}**', ''] + ['- '+x for x in d[key]]
         if not d[key]:
             lines += ['- None established from sufficiently verified multi-year inputs; do not infer absence of risk or merit.']
     lines += ['', '**What would change the assessment**'] + ['- '+x for x in d['would_change_assessment']]
@@ -197,8 +217,6 @@ def markdown(r):
     for key in ('readiness_gates', 'coverage_counts', 'matching_investigations', 'annual_evidence', 'ttm_evidence'):
         lines += [f'### {key.replace("_", " ")}', '', '```json', json.dumps(r[key], indent=2, allow_nan=False), '```', '']
     lines += ['</details>', '', '## Limits', ''] + ['- '+x for x in r['caveats']]
-    if r['source_failure']:
-        lines += ['', r['source_failure']]
     return '\n'.join(lines) + '\n'
 
 

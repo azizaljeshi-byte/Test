@@ -145,3 +145,98 @@ def test_unit_namespace_shadowing_is_resolved_locally_not_from_later_declaration
     assert units['wrong'] == '{urn:wrong}USD'
     assert units['right'] == '{'+sq.ISO4217+'}USD'
     assert 'undeclared' not in units and units['shares'] == sq.XBRLI+'shares'
+
+
+def test_recent_consecutive_pair_survives_older_gap_without_bridging_it():
+    rows = md.build(sources(), DAY)['annual_evidence']
+    gap = [r for r in rows if r['source']['end'] in ('2025-12-31', '2024-12-31', '2022-12-31')]
+    result = md.economics(gap, DAY)
+    assert result['status'] == 'OBSERVED MULTI-YEAR ECONOMICS'
+    assert [y['end'] for y in result['years']] == ['2025-12-31', '2024-12-31']
+    single = [r for r in gap if r['source']['end'] != '2024-12-31']
+    result = md.economics(single, DAY)
+    assert result['status'] == 'INSUFFICIENT VERIFIED HISTORY'
+    assert [y['end'] for y in result['years']] == ['2025-12-31']
+    assert not result['positive_findings']
+
+
+def test_identical_duplicate_years_keep_provenance_but_conflicts_fail_closed():
+    rows = md.build(sources(), DAY)['annual_evidence']
+    duplicate = copy.deepcopy([r for r in rows if r['source']['end'] == '2025-12-31'])
+    other_accn = '0000789019-26-000099'
+    for r in duplicate:
+        r['source']['accn'] = other_accn
+        r['filing_check']['url'] = sq._archive(ve.CIK, other_accn) + '/synthetic.xml'
+    same = md.economics(rows + duplicate, DAY)
+    assert same['status'] == 'OBSERVED MULTI-YEAR ECONOMICS'
+    assert len(same['years']) == 3 and not same['ambiguous_years']
+    assert set(same['years'][0]['corroborating_accessions']) == {'0000789019-26-000001', other_accn}
+    next(r for r in duplicate if r['field'] == 'revenue')['value'] = 150
+    bad = md.economics(rows + duplicate, DAY)
+    assert bad['status'] == 'INSUFFICIENT VERIFIED HISTORY' and not bad['years']
+    assert bad['ambiguous_years'][0]['end'] == '2025-12-31'
+    assert not bad['positive_findings'] and not bad['opposing_findings']
+
+
+def quarterly_sources(mode='ok'):
+    """True annual + current 10-Q YTD - prior 10-Q YTD, independently filed/matched."""
+    c = fixture()
+    rev = c['facts']['us-gaap']['Revenues']['units']['USD']
+    prior = {'val': 40., 'start': '2025-01-01', 'end': '2025-06-30', 'form': '10-Q',
+             'filed': '2025-08-01', 'accn': '0000789019-25-000002'}
+    current = {'val': 60., 'start': '2026-01-01', 'end': '2026-06-30', 'form': '10-Q',
+               'filed': '2026-08-01', 'accn': '0000789019-26-000002'}
+    rev += [prior, current]
+    if mode == 'revised':
+        rev.append(current | {'val': 80., 'filed': '2026-08-10', 'accn': '0000789019-26-000003'})
+    def get(url):
+        return c if url == ve.FACTS_URL else {'cik': ve.CIK, 'sic': '7372'}
+    def get_bytes(url):
+        if mode == 'absent' and current['accn'].replace('-', '') in url:
+            raise OSError('synthetic missing current 10-Q')
+        if url.endswith('/index.json'):
+            return b'{"directory":{"item":[{"name":"synthetic.xml"}]}}'
+        contexts, facts = [], []
+        for tag, byunit in c['facts']['us-gaap'].items():
+            for fact in byunit['units']['USD']:
+                if fact['accn'].replace('-', '') not in url:
+                    continue
+                i = len(contexts)
+                end = '2026-06-29' if mode == 'mismatch' and fact is current else fact['end']
+                period = f"<startDate>{fact['start']}</startDate><endDate>{end}</endDate>" if fact.get('start') else f'<instant>{end}</instant>'
+                contexts.append(f'<context id="c{i}"><period>{period}</period></context>')
+                facts.append(f'<g:{tag} contextRef="c{i}" unitRef="u">{fact["val"]}</g:{tag}>')
+        return ('<xbrl xmlns="http://www.xbrl.org/2003/instance" xmlns:g="http://fasb.org/us-gaap/2025" '
+                'xmlns:i="http://www.xbrl.org/2003/iso4217"><unit id="u"><measure>i:USD</measure></unit>'
+                + ''.join(contexts + facts) + '</xbrl>').encode()
+    return ve.Sources(get=get, get_bytes=get_bytes)
+
+
+def test_true_quarterly_ttm_matches_each_filing_and_rejects_bad_components():
+    day = date(2026, 8, 15)
+    def revenue(src):
+        c = src.read(ve.FACTS_URL)
+        q = sq.quality_company('MSFT', c, src.read(ve.SUBMISSIONS_URL), day)
+        return next(r for r in md.ttm_rows(q, src, day, {}) if r['field'] == 'revenue')
+    result = revenue(quarterly_sources())
+    assert result['status'] == sq.USABLE and result['value'] == 120  # FY100 + YTD60 - prior40
+    parts = result['parts']
+    assert len(parts) == 3
+    assert {p['source']['form'] for p in parts} == {'10-K', '10-Q'}
+    assert len({p['source']['accn'] for p in parts}) == 3
+    assert all(p['unit'] == 'USD' and p['filing_check']['status'] == 'matches' for p in parts)
+    assert {p['source']['end'] for p in parts} == {'2025-12-31', '2025-06-30', '2026-06-30'}
+    for mode in ('absent', 'revised', 'mismatch'):
+        refused = revenue(quarterly_sources(mode))
+        assert refused['status'] != sq.USABLE and refused['value'] is None, mode
+
+
+def test_markdown_headings_are_separate_blocks_and_failure_is_near_conclusion():
+    report = md.build(sources(changed=True), DAY)
+    text = md.markdown(report)
+    assert '\n\n**Opposing observations**\n\n' in text
+    assert '\n\n**Positive observations**\n\n' in text
+    failed = md.build(ve.Sources({'version': ve.VERSION, 'ticker': 'MSFT', 'sources': {}}), DAY)
+    text = md.markdown(failed)
+    assert text.index('INSUFFICIENT EVIDENCE') < text.index('**Source warning:**') < text.index('Business economics:')
+    assert text.count(failed['source_failure']) == 1
