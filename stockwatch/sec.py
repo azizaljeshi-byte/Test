@@ -150,6 +150,10 @@ def cik_lookup(ticker: str, now: float | None = None) -> tuple[int | None, str |
         if user_agent_status() != "configured":
             why += f"; SEC_USER_AGENT is {user_agent_status()}, and SEC may refuse unidentified requests"
         return None, why
+    if _ticker_list["failed"]:
+        # the latest refresh failed, so the list may predate a recent listing: absence isn't verified
+        return None, (f"not in SEC's ticker list as last downloaded (refresh failing: {_ticker_list['error']}); "
+                      "a recent listing may be missing")
     return None, "not in SEC's ticker list"
 
 

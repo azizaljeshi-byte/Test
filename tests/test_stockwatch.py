@@ -650,6 +650,8 @@ def test_sec_ticker_list_failure_is_reported_and_retried_not_remembered(monkeypa
     fail[0] = True                                                      # a later failure keeps the last good list
     later = t0 + sec.TICKER_LIST_RETRY + sec.TICKER_LIST_TTL + 10
     assert sec.cik_lookup("RIVN", now=later) == (1874178, None) and len(calls) == 3
+    cik, why = sec.cik_lookup("NEWCO", now=later)                     # absence from a stale list isn't verified
+    assert cik is None and "as last downloaded (refresh failing" in why and "recent listing" in why
 
 
 def test_every_workflow_job_that_runs_stockwatch_identifies_itself_to_sec():
