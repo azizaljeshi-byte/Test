@@ -3,7 +3,13 @@
 Read `docs/HANDOFF.md` first: features, code map, data sources, configuration, decisions and known limits.
 
 ## Working on this repo
-- Branch: `claude/stock-dashboard-alerts-rr9r83` (the repo's default branch). Streamlit Cloud deploys from it; after a push, the owner reboots the app.
+Claude, ChatGPT and Codex share this repo through branches and pull requests. Roles and the full workflow are in `docs/COLLABORATION.md`.
+
+- **Default branch:** `claude/stock-dashboard-alerts-rr9r83`. Streamlit Cloud deploys from it, so merging is deploying. **Never commit or push to it directly.**
+- **Branches:** work on a feature branch off the latest default branch, named `claude/<topic>`, one topic per branch. Don't push to `chatgpt/*` or `codex/*` branches.
+- **Pull requests:** open one into the default branch and fill in `.github/pull_request_template.md`. ChatGPT reviews first, then Codex. Answer every blocking finding with a fix pushed to the same branch, or a reply saying why not.
+- **Merging:** never merge, not even your own pull request. The owner merges and then reboots the app.
+- **Methodology:** don't change scoring, signals, verdicts, trade plans or their thresholds unless the owner asks. When a change does, say so in the pull request.
 - Tests: `python -m pytest -q` (no network needed; Yahoo, SEC and Finnhub are faked). Keep them green and add tests for new logic.
 - Offline UI: `STOCKWATCH_DEMO=1 streamlit run dashboard.py`. Check UI changes at phone width (390px) with Playwright; the Chromium executable is under `/opt/pw-browsers/`.
 - Lint: `python -m pyflakes stockwatch/*.py dashboard.py tests/*.py`.

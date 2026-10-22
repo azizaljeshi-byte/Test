@@ -1,0 +1,51 @@
+# How we work on StockWatch
+
+Three AI tools (Claude, ChatGPT and Codex) and the project owner work on this repo together. GitHub is the
+shared source of truth: every change is a branch and a pull request, and every decision is written on the
+pull request where everyone can see it. None of the tools talk to each other directly.
+
+## Roles
+
+| Who | Does | Doesn't |
+|---|---|---|
+| **Project owner** | Decides what gets built and approves any change to the investment methodology. Merges pull requests, then reboots the Streamlit app. Manages secrets and repo settings. | |
+| **Claude** (Claude Code) | Builds changes the owner asks for on `claude/<topic>` branches. Runs the tests, opens the pull request, answers review comments and pushes fixes to the same branch. | Merge, push to the default branch, or push to another tool's branch. |
+| **ChatGPT** | **First independent review.** Checks that the pull request does what its description says, that the methodology impact is stated honestly, that the wording is plain English for a phone reader, and what could go wrong after deploy. Builds on `chatgpt/<topic>` branches when the owner assigns it work. | Merge, or push to another tool's branch. |
+| **Codex** | **Second independent review**, after ChatGPT. Reviews the code itself: correctness, edge cases, tests, rate limits, secrets, and that missing data stays "unknown". Builds on `codex/<topic>` branches when the owner assigns it work. | Merge, or push to another tool's branch. |
+
+Whoever writes a pull request never counts as its reviewer. When ChatGPT or Codex writes one, the other two
+review it.
+
+## The workflow
+
+1. **Start from the default branch.** The default branch is `claude/stock-dashboard-alerts-rr9r83`, the
+   repo's default and the branch Streamlit Cloud deploys from. Branch off its latest commit, one topic per
+   branch: `claude/<topic>`, `chatgpt/<topic>` or `codex/<topic>`.
+2. **Never commit to the default branch directly.** Merging is deploying: whatever lands there goes live on
+   the owner's phone after the next reboot.
+3. **Open a pull request into the default branch** and fill in the template (`.github/pull_request_template.md`):
+   purpose, files changed, tests, methodology impact and deployment risk.
+4. **Reviews happen on the pull request**, ChatGPT first, then Codex.
+   - **Label each finding:** **blocking** (must be fixed before merge) or **non-blocking** (a suggestion).
+   - **Reviewers don't push to the author's branch:** they comment, and the author fixes and pushes to the same branch.
+   - **Answer every blocking finding:** the author fixes it or replies saying why not.
+5. **The owner merges** once the reviews are done, then reboots the app. No tool merges, including its own
+   pull request.
+6. **Keep history readable:** don't force-push or rewrite a branch someone else is reviewing. Fixes go on top as new commits.
+
+## The investment methodology is protected
+
+Unless the owner asks for it explicitly, pull requests must not change how stocks are scored, judged or
+traded. That logic lives in `stockwatch/technical.py`, `fundamental.py`, `relative.py`, `signals.py`,
+`catalysts.py`, `deepdive.py`, `street.py`, `analogs.py`, `tradeplan.py`, `turbo.py`, `market.py`, and the
+verdict rules in `engine.py`. It also covers thresholds such as the reassess rebound and the radar rings in `ui.py`.
+
+When a pull request does touch it, the description must say so and explain which numbers or calls change and
+why. Reviewers should check that claim against the diff.
+
+## Checks every pull request must pass
+
+- **Tests:** `python -m pytest -q` (no network needed). Add tests for new logic.
+- **Lint:** `python -m pyflakes stockwatch/*.py dashboard.py tests/*.py`.
+- **Screen changes:** check them at phone width (390px), offline with `STOCKWATCH_DEMO=1 streamlit run dashboard.py`.
+- **No secrets:** the repo is public. Never commit keys, the ntfy topic, the Google Sheet link or holdings.
