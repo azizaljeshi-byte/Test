@@ -322,7 +322,7 @@ def _contest(facts: list[dict], part: dict, unit: str) -> tuple[str, str] | None
     by_filing: dict = {}
     for f in same:
         by_filing.setdefault(f.get("accn"), set()).add(f["val"])
-    period = f"{part['start']} to {part['end']}"
+    period = f"{part['start']} to {part['end']}" if part.get("start") else part["end"]
     dup = {a: v for a, v in by_filing.items() if len(v) > 1}
     if dup:
         return UNKNOWN, f"one filing gives several values for {period} (" + "; ".join(
@@ -421,6 +421,11 @@ def balance_sheet(company: dict, as_of: date) -> dict:
         flags: list[tuple[str, str]] = []
         name = concept.split(":")[-1]
         row.update(value=f["val"], concept=name, filed=f.get("filed"), accn=f.get("accn"))
+        # the same rule as select(): two values in one filing leave no number, a revision needs a person
+        if (contested := _contest(by_concept[concept], f, unit)):
+            flags.append(contested)
+            if contested[0] == UNKNOWN:
+                row["value"] = None
         if len(on) > 1:
             flags.append((RECONCILE if key == "debt_current" else USABLE, "also tagged on this date: "
                           + ", ".join(f"{c.split(':')[-1]} {_money(g['val'])}" for c, g in on[1:])
@@ -436,7 +441,12 @@ def balance_sheet(company: dict, as_of: date) -> dict:
     # where both are tagged, total long-term debt should equal its noncurrent plus current portions
     parts = {c: _at(_candidates(company, [c], "USD", as_of)[0].get(c, []), day)
              for c in ("LongTermDebt", "LongTermDebtNoncurrent", "LongTermDebtCurrent")}
-    if all(parts.values()):
+    contested = [c for c, f in parts.items()
+                 if f and _contest(_candidates(company, [c], "USD", as_of)[0][c], f, "USD")]
+    if all(parts.values()) and contested:
+        next(r for r in rows if r["key"] == "debt_long")["notes"].append(
+            "total vs noncurrent + current not checked: " + ", ".join(contested) + " has contested values")
+    elif all(parts.values()):
         total, nc, cur = (parts[c]["val"] for c in parts)
         long_row = next(r for r in rows if r["key"] == "debt_long")
         if _differs(total, nc + cur):
@@ -460,16 +470,24 @@ def _latest_period(facts: list[dict]) -> dict | None:
     return min(newest_filed_first, key=lambda f: _days(f) or 0)
 
 
-def _observed(key: str, label: str, f: dict | None, concept: str | None, ref: dict, missing: str) -> dict:
+def _observed(key: str, label: str, facts: list[dict], concept: str | None, ref: dict, missing: str) -> dict:
+    """The latest period's share or dilution figure. Two values in one filing for that period leave no
+    number (unknown); a revision needs reconciliation; an old figure is stale."""
+    f = _latest_period(facts)
     if not f:
         return {"key": key, "label": label, "status": UNKNOWN, "source": None, "notes": [missing]}
-    row = {"key": key, "label": label, "status": USABLE, "source": _source(f, concept), "notes": []}
+    row = {"key": key, "label": label, "source": _source(f, concept), "notes": []}
+    flags: list[tuple[str, str]] = []
+    if (contested := _contest(facts, f, "shares")):
+        flags.append(contested)
+        if contested[0] == UNKNOWN:
+            row["source"]["value"] = None
     behind = _behind(f, ref)
     if behind is not None and behind > INSTANT_STALE:
-        row["status"] = STALE
-        row["notes"].append(f"from {f['end']}, {behind} days before the company's latest "
-                            f"{'fiscal year' if str(f.get('form', '')).startswith(ANNUAL_FORMS) else 'report'}; "
-                            "not current")
+        flags.append((STALE, f"from {f['end']}, {behind} days before the company's latest "
+                             f"{'fiscal year' if str(f.get('form', '')).startswith(ANNUAL_FORMS) else 'report'}; "
+                             "not current"))
+    row.update(status=_status(flags), notes=[t for _, t in flags])
     return row
 
 
@@ -481,8 +499,7 @@ def shares(company: dict, as_of: date, ref: dict) -> dict:
         label, _kind, unit, concepts = FIELDS[key]
         by_concept = _candidates(company, concepts, unit, as_of)[0]
         c = next(iter(by_concept), None)
-        f = _latest_period(by_concept[c]) if c else None
-        rows.append(_observed(key, label, f, c, ref, "not reported"))
+        rows.append(_observed(key, label, by_concept.get(c, []), c, ref, "not reported"))
     label, _kind, unit, concepts = FIELDS["shares_outstanding"]
     cover = _candidates(company, concepts, unit, as_of)[0].get(concepts[0], [])
     if cover:
@@ -503,8 +520,7 @@ def shares(company: dict, as_of: date, ref: dict) -> dict:
     dilution = []
     for key, (label, concept) in DILUTION.items():
         facts = _candidates(company, [concept], "shares", as_of)[0].get(concept, [])
-        dilution.append(_observed(key, label, _latest_period(facts), concept, ref,
-                                  "not tagged as one company-wide figure"))
+        dilution.append(_observed(key, label, facts, concept, ref, "not tagged as one company-wide figure"))
     return {"rows": rows, "dilution": dilution, "fully_diluted": {
         "status": UNKNOWN, "reason": "not computed: options, awards and convertibles can't be added to the share "
                                      "count without their terms (strike prices, conversion terms, hedges)"}}

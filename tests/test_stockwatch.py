@@ -1882,3 +1882,41 @@ def test_sec_quality_filing_check_only_matches_usd():
     assert rows["operating_cash_flow"]["result"] == "unverified"                   # only a segment and an undeclared unit
     assert "undeclared unit" in rows["operating_cash_flow"]["reason"]
     assert rows["capex"]["result"] == "unverified" and "only in EUR, not USD" in rows["capex"]["reason"]
+
+
+def test_sec_quality_contested_share_and_balance_sheet_figures_are_not_passed_off():
+    def company(cash, basic, debt):
+        return {"facts": {"us-gaap": {
+            "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": cash}},
+            "LongTermDebt": {"units": {"USD": debt}},
+            "LongTermDebtNoncurrent": {"units": {"USD": [_qi(450e6, "2026-06-30")]}},
+            "LongTermDebtCurrent": {"units": {"USD": [_qi(50e6, "2026-06-30")]}},
+            "WeightedAverageNumberOfSharesOutstandingBasic": {"units": {"shares": basic}}}}}
+    q2 = ("2026-04-01", "2026-06-30")
+    # one 10-Q, two values for the same date or quarter: no number is shown
+    one = company([_qi(400e6, "2026-06-30"), _qi(410e6, "2026-06-30")],
+                  [_q(900e6, *q2, "10-Q", "2026-07-30", "0000000001-26-000020"),
+                   _q(950e6, *q2, "10-Q", "2026-07-30", "0000000001-26-000020")],
+                  [_qi(500e6, "2026-06-30"), _qi(520e6, "2026-06-30")])
+    r = sq.quality_company("C", one, None, QDAY)
+    rows = {x["key"]: x for x in r["balance_sheet"]["rows"]}
+    assert rows["cash"]["status"] == sq.UNKNOWN and rows["cash"]["value"] is None
+    assert "no number is trusted" in rows["cash"]["notes"][0]
+    assert r["fields"]["cash"]["status"] == sq.RECONCILE and r["fields"]["cash"]["selected"]["value"] is None
+    # LongTermDebt is contested, so the total-vs-parts check isn't claimed either way
+    assert "not checked: LongTermDebt has contested values" in rows["debt_long"]["notes"][-1]
+    basic = next(x for x in r["shares"]["rows"] if x["key"] == "basic_shares")
+    assert basic["status"] == sq.UNKNOWN and basic["source"]["value"] is None
+    assert "0000000001-26-000020: 900,000,000 shares, 950,000,000 shares" in basic["notes"][0]
+    # amended in a later filing: shown, but needs reconciliation with both filings named
+    revised = company([_qi(400e6, "2026-06-30"), _qi(410e6, "2026-06-30", "10-Q/A", "2026-08-30", "0000000001-26-000030")],
+                      [_q(900e6, *q2, "10-Q", "2026-07-30", "0000000001-26-000020"),
+                       _q(950e6, *q2, "10-Q/A", "2026-08-30", "0000000001-26-000030")],
+                      [_qi(500e6, "2026-06-30")])
+    r = sq.quality_company("C", revised, None, QDAY)
+    rows = {x["key"]: x for x in r["balance_sheet"]["rows"]}
+    assert rows["cash"]["status"] == sq.RECONCILE and rows["cash"]["value"] == 410e6
+    assert "400.0M (0000000001-26-000020" in rows["cash"]["notes"][0]
+    assert "adds up: LongTermDebt 500.0M" in rows["debt_long"]["notes"][-1]
+    basic = next(x for x in r["shares"]["rows"] if x["key"] == "basic_shares")
+    assert basic["status"] == sq.RECONCILE and basic["source"]["value"] == 950e6

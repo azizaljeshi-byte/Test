@@ -43,6 +43,7 @@ Every figure gets one:
   - **The fiscal year's own problems** (conflicting tags, a scope choice) carry over from the figure selection.
 - **Balance sheet on one date** (the latest cash or equity date): cash, short-term investments, short- and long-term debt, and operating and finance leases.
   - A component not reported for that date is unknown. It is never carried forward from an older date.
+  - Two values for the date in one filing make a component unknown, with no number shown. A value revised in a later filing needs reconciliation.
   - Lease current portions are shown separately.
   - Where all three are tagged, LongTermDebt is checked against its noncurrent plus current portions.
   - Total interest-bearing debt isn't computed: that's a Phase 2 choice.
@@ -50,6 +51,7 @@ Every figure gets one:
   - Basic and diluted weighted averages for the latest quarter.
   - Every cover-page count on its date.
   - Options outstanding, unvested awards, antidilutive securities and convertible shares, where tagged as one company-wide figure.
+  - The same rule for each latest-period share or dilution figure: two values in one filing give unknown with no number, and a revision needs reconciliation.
   - Fully diluted shares are always **unknown**: the pieces can't be added without their terms.
 - **Financial companies and share classes:**
   - **Banks** (SIC 6020–6036), **insurers** (6300–6411) and other financials (6000–6799) get the generic measures marked not applicable, plus a list of the data a sector model would need instead.
