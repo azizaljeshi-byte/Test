@@ -66,13 +66,13 @@ def test_deteriorating_residual_despite_growth_is_ranked_first_with_math_and_sou
     assert cc['direction']['revenue_usd_change'] == 'up'
     text = md.markdown(r)
     assert text.index('Two consecutive fiscal-year declines') < text.index('OCF exceeded cash PP&E spending')
-    assert 'USD -4.000' in text and '-9.85 pp' in text
+    assert 'USD -4.00' in text and '-9.9 pp' in text
     assert '2025-12-31' in text and 'not proof of causation' in text
     assert all(y['sources']['capex'].startswith('https://www.sec.gov/') for y in cc['annual'])
     assert all(f['kind'] == 'derived_accounting_observation' for f in cc['findings'])
     assert 'not measured outcomes' in text and 'incremental cash returns' in text
     assert r['decision']['valuation_disposition'] == 'INSUFFICIENT EVIDENCE' and not r['valuation_cases']
-    assert r['reverse_implied_growth'] is None and r['version'] == 'msft-dossier.2'
+    assert r['reverse_implied_growth'] is None and r['version'] == 'msft-dossier.3'
 
 
 @pytest.mark.parametrize('mode', ['one', 'gap', 'revised', 'missing', 'outage'])

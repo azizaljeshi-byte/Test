@@ -73,3 +73,8 @@ Each finding identifies baseline periods, measured dollars and percentage-point 
 Interpretive questions are explicitly unverified: incremental-return evidence, maintenance versus growth spending, finance-lease-funded capacity, debt/lease scope, depreciation versus total D&A, SBC and share claims. All price-attractiveness readiness/approval gates remain missing and **INSUFFICIENT EVIDENCE** remains the valuation disposition. Improving, flat or mixed cases are distinguished without manufacturing deterioration or claims of safety. Missing data never becomes a negative business score.
 
 Regression fixtures reproduce the growth/margin-expansion plus deteriorating cash-residual *pattern* with synthetic numbers, not actual MSFT figures. Tests cover math, ordering/content, improving/flat/mixed, two-year versus three-year claims, latest-year revision/missing source, gaps, ambiguous copies, original-filing refusal, zero/negative denominators and earlier as-of replay. Existing research/trading-isolation tests remain in force. New actual-company validation requires a post-review/owner-merge manual hosted run.
+
+
+## Phase 3 readiness contract
+
+Current additive contract is `msft-dossier.3`; see [Valuation readiness](VALUATION_READINESS.md) for the new ledger, official Treasury adapter, deliberately disabled public-market ingestion, private replay and presentation improvements. Earlier Phase 2 `.2` behavior is documented above as history; all valuation refusal/approval gates remain.

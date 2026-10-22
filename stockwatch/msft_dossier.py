@@ -11,7 +11,7 @@ import json
 import math
 from pathlib import Path
 
-from . import sec_access as access, sec_quality as sq, valuation_evidence as ve, valuation_lab as lab
+from . import sec_access as access, sec_quality as sq, valuation_evidence as ve, valuation_lab as lab, valuation_readiness as readiness
 from .sec_audit import FIELDS
 
 KEYS = ('revenue', 'operating_income', 'operating_cash_flow', 'capex', 'sbc', 'dna',
@@ -145,6 +145,19 @@ def economics(annual, as_of):
 
 
 
+
+def movement(value):
+    """Display only: structured numeric values retain original precision."""
+    scale, suffix = (1e9, 'B') if abs(value) >= 1e9 else (1e6, 'M') if abs(value) >= 1e6 else (1., '')
+    return f"USD {value/scale:+,.2f}{suffix}"
+
+
+def fiscal_pair(start, end):
+    a, b = date.fromisoformat(start), date.fromisoformat(end)
+    if (a.month,a.day) == (b.month,b.day):
+        return f"FY{a.year} → FY{b.year} (ended {b.day:02d} {b.strftime('%b')})"
+    return f"FY{a.year} (ended {a.day:02d} {a.strftime('%b')}) → FY{b.year} (ended {b.day:02d} {b.strftime('%b')})"
+
 def cash_conversion(quality, annual):
     """Accounting changes in the verified consecutive window, with no causal/valuation inference."""
     result = {'status': 'INSUFFICIENT VERIFIED HISTORY', 'reason': 'Requires consecutive, fresh, filing-matched core history.', 'annual': [], 'yoy': [], 'direction': {}, 'findings': [],
@@ -192,27 +205,31 @@ def cash_conversion(quality, annual):
     latest = result['yoy'][-1]
     def finding(code, text):
         result['findings'].append({'code': code, 'kind': 'derived_accounting_observation', 'text': text})
-    persistent = len(result['yoy']) == 2 and (
-        all(sign(y['ocf_minus_cash_ppe_usd_change']) < 0 for y in result['yoy']) or
-        all(sign(y['residual_revenue_change_pp']) < 0 for y in result['yoy']))
-    span = f"FY {result['annual'][0]['end']} to {result['annual'][-1]['end']}"
-    changes_text = '; '.join(f"{y['from']} → {y['to']}: OCF minus cash PP&E spending USD {y['ocf_minus_cash_ppe_usd_change']:+,.3f}, residual/revenue {y['residual_revenue_change_pp']:+.3g} pp" for y in result['yoy'])
-    if persistent:
-        finding('persistent_residual_deterioration', f'Two consecutive fiscal-year declines in the residual level and/or residual margin ({span}). {changes_text}.')
+    level_down = len(result['yoy']) == 2 and all(sign(y['ocf_minus_cash_ppe_usd_change']) < 0 for y in result['yoy'])
+    margin_down = len(result['yoy']) == 2 and all(sign(y['residual_revenue_change_pp']) < 0 for y in result['yoy'])
+    changes_text = '; '.join(f"{fiscal_pair(y['from'], y['to'])}: OCF minus cash PP&E spending {movement(y['ocf_minus_cash_ppe_usd_change'])}, residual/revenue {y['residual_revenue_change_pp']:+.1f} pp" for y in result['yoy'])
+    if level_down or margin_down:
+        what = ('both OCF minus cash PP&E spending and residual/revenue' if level_down and margin_down else
+                'OCF minus cash PP&E spending' if level_down else 'residual/revenue')
+        finding('persistent_residual_deterioration', f'Two consecutive fiscal-year declines in {what}. {changes_text}.')
+    label = fiscal_pair(latest['from'],latest['to'])
     if (sign(latest['revenue_usd_change']) > 0 and sign(latest['operating_margin_change_pp']) > 0
             and (sign(latest['ocf_minus_cash_ppe_usd_change']) < 0 or sign(latest['residual_revenue_change_pp']) < 0)):
-        finding('growth_cash_divergence', f"FY {latest['from']} → {latest['to']}: revenue USD {latest['revenue_usd_change']:+,.3f} and operating margin {latest['operating_margin_change_pp']:+.3g} pp increased while OCF minus cash PP&E spending changed USD {latest['ocf_minus_cash_ppe_usd_change']:+,.3f} and residual/revenue {latest['residual_revenue_change_pp']:+.3g} pp. This is arithmetic divergence, not proof of causation or future returns.")
+        text = f"{label}: revenue {movement(latest['revenue_usd_change'])} and operating margin {latest['operating_margin_change_pp']:+.1f} pp increased while OCF minus cash PP&E spending changed {movement(latest['ocf_minus_cash_ppe_usd_change'])} and residual/revenue {latest['residual_revenue_change_pp']:+.1f} pp."
+        if sign(latest['ocf_revenue_change_pp']) > 0:
+            text += f" OCF/revenue nevertheless improved {latest['ocf_revenue_change_pp']:+.1f} pp."
+        finding('growth_cash_divergence', text + ' Arithmetic divergence is not proof of causation or future returns.')
     if sign(latest['cash_ppe_revenue_change_pp']) > 0 or sign(latest['cash_ppe_ocf_change_pp']) > 0:
         ocf_change = latest['cash_ppe_ocf_change_pp']
-        ocf_text = f"{ocf_change:+.3g} pp" if ocf_change is not None else 'unavailable (nonpositive OCF in a comparison year)'
-        finding('rising_cash_capital_intensity', f"FY {latest['from']} → {latest['to']}: cash PP&E/revenue {latest['cash_ppe_revenue_change_pp']:+.3g} pp; cash PP&E/OCF {ocf_text}. Investment consumes a rising share of revenue and/or OCF; maintenance, growth and lease-funded spending are unresolved.")
+        ocf_text = f"{ocf_change:+.1f} pp" if ocf_change is not None else 'unavailable (nonpositive OCF in a comparison year)'
+        finding('rising_cash_capital_intensity', f"{label}: cash PP&E/revenue {latest['cash_ppe_revenue_change_pp']:+.1f} pp; cash PP&E/OCF {ocf_text}. Investment consumes a rising share of revenue and/or OCF; maintenance, growth and lease-funded spending are unresolved.")
     result['status'] = 'OBSERVED ACCOUNTING CHANGES'
     result['reason'] = 'Derived only within the verified consecutive fiscal-year window.'
     result['consecutive_years'] = len(result['annual'])
     result['ratio_limit'] = 'Cash PP&E/OCF requires positive OCF; percentage changes require positive baseline levels.'
     return result
 
-def build(sources, as_of):
+def build(sources, as_of, treasury=None):
     base = ve.evaluate(sources, as_of)
     annual, ttm, failure = [], [], None
     try:
@@ -228,6 +245,7 @@ def build(sources, as_of):
         failure = 'Official MSFT source history unavailable/invalid; no business-quality conclusion inferred.'
     quality = economics(annual, as_of)
     conversion = cash_conversion(quality, annual)
+    ready = readiness.evaluate(sources, as_of, treasury=treasury)
     history_ok = quality['status'] == 'OBSERVED MULTI-YEAR ECONOMICS'
     investigations = []
     for key in WATCH:
@@ -244,7 +262,7 @@ def build(sources, as_of):
     counts = {'verified': sum(r['status'] == sq.USABLE for r in rows),
               'provisional': sum(r['status'] == 'unverified' and r['value'] is not None for r in rows)}
     counts['unavailable'] = len(rows)-sum(counts.values())
-    return {'version': 'msft-dossier.2', 'ticker': 'MSFT', 'as_of': str(as_of),
+    return {'version': 'msft-dossier.3', 'ticker': 'MSFT', 'as_of': str(as_of),
             'decision': {'valuation_disposition': ve.INSUFFICIENT, 'business_economics': quality['status'],
                          'positive_findings': quality['positive_findings'], 'opposing_findings': quality['opposing_findings'],
                          'priority_findings': conversion['findings'], 'cash_conversion_status': conversion['status'],
@@ -256,7 +274,7 @@ def build(sources, as_of):
                                                     'Reconcile lease investment, share claims and depreciation scope before extending cash-return conclusions.',
                                                     'Complete independently sourced market/capital inputs and explicit owner approval of forward cases.']},
             'readiness_gates': gates, 'valuation_cases': {}, 'reverse_implied_growth': None,
-            'cash_conversion': conversion, 'business_economics': quality, 'annual_evidence': annual, 'ttm_evidence': ttm,
+            'valuation_readiness': ready, 'cash_conversion': conversion, 'business_economics': quality, 'annual_evidence': annual, 'ttm_evidence': ttm,
             'selected_coverage': rows, 'coverage_counts': counts, 'matching_investigations': investigations,
             'source_failure': failure, 'source_manifest': {u: {k: v for k, v in item.items() if k != 'body'}
                                                           for u, item in sources.snapshot['sources'].items()},
@@ -282,6 +300,9 @@ def markdown(r):
         lines += ['', f'**{label}**', ''] + ['- '+x for x in d[key]]
         if not d[key]:
             lines += ['- None established from sufficiently verified multi-year inputs; do not infer absence of risk or merit.']
+    if r.get('valuation_readiness'):
+        lines += ['', '**Valuation readiness blockers:** ' + ', '.join(r['valuation_readiness']['blockers']), '']
+        lines += ['- '+x for x in r['valuation_readiness']['summary']]
     if d.get('unverified_interpretation_questions'):
         lines += ['', '**Unverified interpretation — questions, not measured outcomes**', '']
         lines += ['- '+x for x in d['unverified_interpretation_questions']]
@@ -293,7 +314,7 @@ def markdown(r):
         lines.append(f"| {y['start']} to {y['end']} | {y['values']['revenue']:,.0f} | {y['operating_margin']:.1%} | {y['ocf_less_cash_capex']:,.0f} | {y['capex_revenue']:.1%} | {y['sbc_revenue']:.1%} | [{y['accn']}]({y['sources']['revenue']}) |")
     lines += ['', '</details>', '', '<details><summary>Readiness, annual versus TTM evidence, and matching gaps</summary>', '']
     # Structured ledger is secondary and contains source links/units/status; no raw XML/source bodies.
-    for key in ('cash_conversion', 'readiness_gates', 'coverage_counts', 'matching_investigations', 'annual_evidence', 'ttm_evidence'):
+    for key in ('valuation_readiness', 'cash_conversion', 'readiness_gates', 'coverage_counts', 'matching_investigations', 'annual_evidence', 'ttm_evidence'):
         lines += [f'### {key.replace("_", " ")}', '', '```json', json.dumps(r[key], indent=2, allow_nan=False), '```', '']
     lines += ['</details>', '', '## Limits', ''] + ['- '+x for x in r['caveats']]
     return '\n'.join(lines) + '\n'
@@ -305,17 +326,25 @@ def main(argv=None):
     p.add_argument('--as-of', type=date.fromisoformat, default=datetime.now(access.NY).date())
     p.add_argument('--snapshot', type=Path)
     p.add_argument('--save-private-sources', type=Path, help='optional local replay snapshot; do not upload publicly')
+    p.add_argument('--treasury-snapshot', type=Path, help='offline official Treasury capture; no network on SEC snapshot replay')
+    p.add_argument('--save-private-treasury', type=Path, help='optional private Treasury source capture')
     args = p.parse_args(argv)
     transport = access.OfficialTransport()
     sources = ve.Sources(json.loads(args.snapshot.read_text()) if args.snapshot else None,
                          get=transport.json, get_bytes=transport.read)
-    r = build(sources, args.as_of)
+    treasury_sources = (readiness.TreasurySources(json.loads(args.treasury_snapshot.read_text())) if args.treasury_snapshot else
+                        None if args.snapshot else readiness.TreasurySources())
+    rate = readiness.treasury_10y(treasury_sources, args.as_of) if treasury_sources else None
+    r = build(sources, args.as_of, treasury=rate)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.with_suffix('.json').write_text(json.dumps(r, indent=2, allow_nan=False) + '\n')
     args.output.with_suffix('.md').write_text(markdown(r))
     if args.save_private_sources:
         args.save_private_sources.parent.mkdir(parents=True, exist_ok=True)
         args.save_private_sources.write_text(json.dumps(sources.snapshot, allow_nan=False))
+    if args.save_private_treasury and treasury_sources:
+        args.save_private_treasury.parent.mkdir(parents=True, exist_ok=True)
+        args.save_private_treasury.write_text(json.dumps(treasury_sources.snapshot, allow_nan=False))
     print(json.dumps({'valuation': r['decision']['valuation_disposition'], 'business': r['decision']['business_economics'],
                       'coverage': r['coverage_counts']}))
     return 0 if r['business_economics']['status'] == 'OBSERVED MULTI-YEAR ECONOMICS' else 2
