@@ -1282,3 +1282,98 @@ def test_first_sweep_shows_each_stock_as_it_lands_without_doubling_snapshots(mon
     run_once(pf, get_provider("demo"), store)
     assert all(len(store.history(t)) == 2 for t in ("AAA", "BBB"))     # later sweeps: one snapshot each
     assert store.previous_snapshot("AAA") is not None
+
+
+# ---- SEC data audit (read-only; Phase 1 of the valuation work)
+
+from stockwatch import sec_audit
+
+
+def _fy(year, val, form="10-K", filed=None, start=None):
+    return {"start": start or f"{year}-01-01", "end": f"{year}-12-31", "val": val, "form": form,
+            "filed": filed or f"{year + 1}-02-15"}
+
+
+def _inst(day, val, form="10-K", filed="2026-02-15"):
+    return {"end": day, "val": val, "form": form, "filed": filed}
+
+
+AUDIT_COMPANY = {"entityName": "Audit Example Corp", "cik": 999, "facts": {
+    "dei": {"EntityCommonStockSharesOutstanding": {"units": {"shares": [
+        # two classes reported for the same date; the app keeps one of them
+        _inst("2026-07-20", 300e6, "10-Q", "2026-07-30"), _inst("2026-07-20", 600e6, "10-Q", "2026-07-30")]}}},
+    "us-gaap": {
+        # revenue tag switch: SalesRevenueNet until FY2021, the newer tag from FY2022 (plus 10-Q YTD for TTM)
+        "SalesRevenueNet": {"units": {"USD": [_fy(2020, 700e6), _fy(2021, 800e6)]}},
+        "RevenueFromContractWithCustomerExcludingAssessedTax": {"units": {"USD": [
+            _fy(2022, 900e6), _fy(2023, 1000e6), _fy(2024, 1100e6), _fy(2025, 1200e6),
+            {"start": "2025-01-01", "end": "2025-06-30", "val": 560e6, "form": "10-Q", "filed": "2025-07-30"},
+            {"start": "2026-01-01", "end": "2026-06-30", "val": 640e6, "form": "10-Q", "filed": "2026-07-30"}]}},
+        # FY2023 operating cash flow first filed at 100, re-filed at 110 a year later; FY2024 amended (10-K/A)
+        "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": [
+            _fy(2023, 100e6), _fy(2023, 110e6, filed="2025-02-15"), _fy(2024, 120e6),
+            _fy(2024, 120e6, form="10-K/A", filed="2025-05-01")]}},
+        # a 10:1 split: FY2024 shares first filed at 100M, re-filed at 1,000M in the FY2025 10-K
+        "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": [
+            _fy(2024, 100e6), _fy(2024, 1000e6, filed="2026-02-15"), _fy(2025, 1000e6),
+            {"start": "2026-01-01", "end": "2026-06-30", "val": 1000e6, "form": "10-Q", "filed": "2026-07-30"}]}},
+        # only reported in euros
+        "ShareBasedCompensation": {"units": {"EUR": [_fy(2025, 50e6)]}},
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [
+            _inst("2024-12-31", 300e6, filed="2025-02-15"), _inst("2025-12-31", 350e6),
+            _inst("2026-06-30", 400e6, "10-Q", "2026-07-30")]}},
+    }}}
+AUDIT_SUBMISSIONS = {"name": "Audit Example Corp", "sic": "6021", "sicDescription": "National Commercial Banks",
+                     "fiscalYearEnd": "1231", "tickers": ["AEX", "AEX.B"]}
+
+
+def test_sec_audit_finds_history_restatements_splits_and_units():
+    r = sec_audit.audit_company("aex", AUDIT_COMPANY, AUDIT_SUBMISSIONS, today=date(2026, 10, 22))
+    f = r["fields"]
+    rev = f["revenue"]
+    assert rev["years"] == 6 and rev["status"] == "ok" and rev["used_by_app"]
+    assert "reporting tag changed" in rev["issues"][0] and "SalesRevenueNet (2020-2021)" in rev["issues"][0]
+    assert rev["ttm"] == {"value": pytest.approx(1280e6), "end": "2026-06-30"}     # 640 + 1200 - 560
+    ocf = f["operating_cash_flow"]
+    fy23 = next(y for y in ocf["annual"] if y["end"] == "2023-12-31")
+    assert fy23["restated"] and fy23["first"] == 100e6 and fy23["latest"] == 110e6
+    assert any("restated" in i and "2023" in i for i in ocf["issues"])
+    assert any("amended" in i and "2024" in i for i in ocf["issues"])
+    shares = f["diluted_shares"]
+    fy24 = next(y for y in shares["annual"] if y["end"] == "2024-12-31")
+    assert fy24["split"] == 10 and not fy24["restated"]                 # a split is not a restatement
+    assert shares["ttm"] is None                                        # share counts are not summed
+    assert f["sbc"]["status"] == "other units only" and "EUR" in f["sbc"]["issues"][0]
+    assert f["dna"]["status"] == "missing" and not f["dna"]["used_by_app"]
+    assert f["cash"]["years"] == 2 and f["cash"]["latest"]["end"] == "2026-06-30"
+    findings = " ".join(r["findings"])
+    assert "2 different cover-page share counts" in findings            # two classes, app keeps one
+    assert "-70% away from diluted weighted shares" in findings          # 300M kept vs 1,000M diluted
+    assert "financial company (SIC 6021)" in findings
+    assert "Stock-based compensation" in findings and "Depreciation" in findings
+    assert r["app_extraction"]["shares"] in (300e6, 600e6)
+
+
+def test_sec_audit_report_and_unavailable_tickers():
+    def get(url):
+        if "companyfacts" in url:
+            return AUDIT_COMPANY
+        raise OSError("submissions down")
+    ok = sec_audit.audit_ticker("AEX", today=date(2026, 10, 22), get=get, cik_for=lambda t: 999)
+    assert ok["status"] == "ok" and ok["sic"] is None                   # submissions missing: unknown, not invented
+    gone = sec_audit.audit_ticker("ZZZZ", get=get, cik_for=lambda t: None)
+    assert gone == {"ticker": "ZZZZ", "status": "unavailable", "reason": "no SEC CIK for this ticker"}
+    down = sec_audit.audit_ticker("AEX", get=lambda url: (_ for _ in ()).throw(OSError("403")), cik_for=lambda t: 1)
+    assert down["status"] == "unavailable" and "403" in down["reason"]
+    md = sec_audit.markdown([ok, gone], today=date(2026, 10, 22))
+    assert "| Revenue | yes | ✓ 6y ⚠ |" in md and "Unavailable: no SEC CIK" in md
+    import re
+    assert not re.search(r"\bnan\b", md.lower())                       # no missing number shown as nan
+
+
+def test_sec_audit_is_not_wired_into_the_app():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    for path in [root / "dashboard.py", *sorted((root / "stockwatch").glob("*.py"))]:
+        if path.name != "sec_audit.py":
+            assert "sec_audit" not in path.read_text(), path.name

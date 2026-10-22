@@ -1,0 +1,41 @@
+name: SEC data audit (read-only)
+
+# Manual only: produces the Phase 1 financial-data audit report (Issue #2) from SEC EDGAR,
+# which this repo's cloud sessions can't reach. It reads public SEC data and changes nothing.
+# The job output is public: enter public example tickers only, never a list of private holdings.
+on:
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Space-separated public example tickers (output is public; no private holdings)"
+        required: true
+        default: "MSFT MU RIVN BRK-B JPM AVGO"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+      TICKERS: ${{ inputs.tickers }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Audit SEC financial data
+        # a ticker SEC can't serve is listed as unavailable in the report, so don't fail the job on it
+        run: |
+          python -m stockwatch.sec_audit $TICKERS --markdown sec-audit.md --json sec-audit.json || true
+          cat sec-audit.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sec-data-audit
+          path: |
+            sec-audit.md
+            sec-audit.json

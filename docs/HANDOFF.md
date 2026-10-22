@@ -2,7 +2,7 @@
 
 This summarises the whole project so far, for picking it up in a new conversation. It describes the state as of
 commit `b232d30` on branch `claude/stock-dashboard-alerts-rr9r83` (also the repo's default branch): 28 commits,
-about 6,700 lines of Python, 84 passing tests. The README has the user-facing setup guide; this file covers what's
+about 6,700 lines of Python, 87 passing tests. The README has the user-facing setup guide; this file covers what's
 built, why, and what to watch out for.
 
 ## 1. What it is
@@ -137,10 +137,12 @@ against each other. On top of that, every stock gets a plain-English briefing an
 | `stockwatch/store.py` | SQLite: snapshots, alerts (deduplicated by ticker+code within a cooldown), ticker overrides, market scans, watermark |
 | `stockwatch/notify.py` | console / ntfy / Telegram / email |
 | `stockwatch/finnhub.py` | Finnhub fallback client (paced under 60 requests a minute) |
+| `stockwatch/sec_audit.py` | read-only SEC financial-data audit (valuation Phase 1, `docs/SEC_DATA_AUDIT.md`); not imported by the app |
 | `stockwatch/config.py` | portfolio loading: Google Sheet, then `STOCKWATCH_PORTFOLIO` secret, then `portfolio.yaml`, then `portfolio.example.yaml` |
 | `stockwatch/ui.py` | all CSS and HTML builders (cards, panels, tables, ladders) |
 | `.github/workflows/scan.yml` | scheduled scan and push job, plus the daily S&P job |
-| `tests/test_stockwatch.py` | 84 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses |
+| `.github/workflows/sec-audit.yml` | manual-only job that runs the SEC data audit on example tickers |
+| `tests/test_stockwatch.py` | 87 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses |
 
 **Data flow:** the provider fetches (cached), `engine.evaluate` builds an `Evaluation` (scores, signals, research,
 plan), `store.save_snapshot` writes JSON to SQLite, and the dashboard reads only the store. Alerts of severity 2 or
@@ -179,7 +181,7 @@ back empty are cached until their TTL runs out, so **reboot the app after adding
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                                   # 84 tests, no network needed
+python -m pytest -q                                   # 87 tests, no network needed
 STOCKWATCH_DEMO=1 streamlit run dashboard.py          # offline UI with synthetic data
 python -m stockwatch.scanner --once --demo            # one sweep from the CLI
 python -m stockwatch.market --demo                    # S&P scan from the CLI
