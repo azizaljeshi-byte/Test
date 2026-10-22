@@ -2,7 +2,7 @@
 
 This summarises the whole project so far, for picking it up in a new conversation. It describes the state as of
 commit `b232d30` on branch `claude/stock-dashboard-alerts-rr9r83` (also the repo's default branch): 28 commits,
-about 8,000 lines of Python, 180 passing tests. The README has the user-facing setup guide; this file covers what's
+about 8,000 lines of Python, 183 passing tests. The README has the user-facing setup guide; this file covers what's
 built, why, and what to watch out for.
 
 ## 1. What it is
@@ -121,8 +121,8 @@ against each other. On top of that, every stock gets a plain-English briefing an
     - **Per-stock table:** quote source and errors, and whether fundamentals are "ok" or "blocked".
     - **Buttons:** "Test Finnhub key" and "Fetch raw quote".
 20. **Research view** (`?view=research`, Issue #14). Read-only; nothing in it feeds scores, plans, alerts or the portfolio.
-    - **Valuation:** which evidence each real company has on file for the Phase 2A-2 models (all empty, so ASSUMPTIONS REQUIRED and no fair value), a "Check SEC data" button for any ticker, and a separately marked SYNTHETIC worked example with a dilution toggle.
-    - **Chart patterns:** the pinned AMZN 2013-2018 example (INSUFFICIENT EVIDENCE: 4 matches a window, 0 out-of-sample checks) with each match's chart and outcomes, and a button to run the lab on a ticker.
+    - **Valuation:** which evidence each real company has on file, measured against its own model family (industrial or bank; cash-burning and unsupported companies have no model), all empty so ASSUMPTIONS REQUIRED and no fair value, a "Check SEC data" button for any ticker, and a separately marked SYNTHETIC worked example with a dilution toggle.
+    - **Chart patterns:** the pinned AMZN 2013-2018 example (INSUFFICIENT EVIDENCE: 4 matches a window, 0 out-of-sample checks) with each match's chart and outcomes, and a button to run the lab on a ticker. Its source label comes from the provider the app actually runs on, so demo bars are never labelled as market data.
     - **On-demand only:** both buttons run on a background thread, one check at a time per app process; results are kept 12 hours, failures can be retried at once. A chart run on decades of history takes up to a minute or two of CPU.
 
 ## 3. Code map
@@ -151,7 +151,7 @@ against each other. On top of that, every stock gets a plain-English briefing an
 | `stockwatch/ui.py` | all CSS and HTML builders (cards, panels, tables, ladders) |
 | `.github/workflows/scan.yml` | scheduled scan and push job, plus the daily S&P job |
 | `.github/workflows/sec-audit.yml` | manual-only job that runs the SEC data audit on example tickers |
-| `tests/test_stockwatch.py`, `tests/test_valuation_scenarios.py`, `tests/test_chart_patterns.py`, `tests/test_research_lab.py` | 180 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses, isolated research and the Research view's boundaries |
+| `tests/test_stockwatch.py`, `tests/test_valuation_scenarios.py`, `tests/test_chart_patterns.py`, `tests/test_research_lab.py` | 183 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses, isolated research and the Research view's boundaries |
 
 **Data flow:** the provider fetches (cached), `engine.evaluate` builds an `Evaluation` (scores, signals, research,
 plan), `store.save_snapshot` writes JSON to SQLite, and the dashboard reads only the store. Alerts of severity 2 or
@@ -190,7 +190,7 @@ back empty are cached until their TTL runs out, so **reboot the app after adding
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                                   # 180 tests, no network needed
+python -m pytest -q                                   # 183 tests, no network needed
 STOCKWATCH_DEMO=1 streamlit run dashboard.py          # offline UI with synthetic data
 python -m stockwatch.scanner --once --demo            # one sweep from the CLI
 python -m stockwatch.market --demo                    # S&P scan from the CLI

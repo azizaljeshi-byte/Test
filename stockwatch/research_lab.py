@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
-from . import chart_patterns as cp, sec_quality as sq, valuation_scenarios as vs
+from . import chart_patterns as cp, sec_quality as sq, valuation_lab as lab, valuation_scenarios as vs
 
 NY = ZoneInfo("America/New_York")
 CHART_EXAMPLE = Path(__file__).resolve().parents[1] / "docs" / "examples" / "chart-pattern-amzn.json"
@@ -37,8 +37,9 @@ def pct(v, signed=True) -> str:
 
 # ------------------------------------------------------------ valuation: evidence packets
 
-# What a complete Phase 2A-2 packet needs, grouped the way the owner would fill it in.
-EVIDENCE_GROUPS = [
+# What a complete Phase 2A-2 packet needs, per model family, grouped the way the owner would fill it in.
+# Presence only: the engine still validates every record (dates, units, sources, reconciliations) on a run.
+INDUSTRIAL_GROUPS = [
     ("Price and shares", "observations", ("price", "shares")),
     ("Balance sheet", "observations", ("cash", "investments", "debt", "debt_noncurrent", "debt_current",
                                        "finance_lease_liabilities", "preferred", "noncontrolling")),
@@ -48,36 +49,58 @@ EVIDENCE_GROUPS = [
                                       "capital_tax")),
     ("Bear / base / bull drivers", "scenarios", ("bear", "base", "bull")),
 ]
-BANK_GROUP = ("Bank inputs", "observations", ("tangible_common_equity", "common_equity", "goodwill",
-                                              "other_intangibles", "cet1_ratio", "credit_loss_ratio",
-                                              "funding_cost", "historical_rotce"))
+BANK_GROUPS = [   # what valuation_scenarios._evaluate_bank reads; no balance-sheet bridge or WACC
+    ("Shares", "observations", ("shares",)),
+    ("Tangible common equity", "observations", ("tangible_common_equity", "common_equity", "goodwill",
+                                                "other_intangibles", "intangibles_tax_adjustment")),
+    ("Capital, credit and funding", "observations", ("cet1_ratio", "credit_loss_ratio", "funding_cost",
+                                                     "historical_rotce")),
+    ("Cost of equity", "observations", ("treasury_10y", "beta")),
+    ("Reconciliations", "contracts", ("share_basis", "bank_tce")),
+    ("Bear / base / bull ROTCE cases", "scenarios", ("bear", "base", "bull")),
+]
+REQUIREMENTS = {lab.COMPOUNDER: INDUSTRIAL_GROUPS, lab.CYCLICAL: INDUSTRIAL_GROUPS, lab.BANK: BANK_GROUPS}
+NO_MODEL = {lab.CASH_BURN: "cash-burning: runway and dilution only, no valuation model",
+            lab.UNSUPPORTED: "not supported in 2A: no valuation model for this kind of company",
+            lab.INSUFFICIENT: "too little history to choose a model"}
+# The family each configured company got in the last live SEC run (sec-audit run #19, 2026-10-22, commit
+# 8aefede). A fresh "Check SEC data" result replaces it on the page.
+LAST_FAMILIES = {"MSFT": lab.COMPOUNDER, "AVGO": lab.COMPOUNDER, "MU": lab.CYCLICAL, "JPM": lab.BANK,
+                 "RIVN": lab.CASH_BURN, "BRK-B": lab.UNSUPPORTED}
+LAST_FAMILIES_SOURCE = "last live SEC run, 2026-10-22"
 
 
 def load_scenario_config() -> dict:
     return yaml.safe_load(vs.CONFIG_PATH.read_text())
 
 
-def completeness(cfg: dict) -> list[dict]:
-    """Which evidence each configured company has. Presence only: values are checked on a live run."""
+def completeness(cfg: dict, families: dict[str, tuple[str, str]] | None = None) -> list[dict]:
+    """Which evidence each configured company has for its own model family's requirements.
+
+    `families` maps ticker -> (family, where it came from); others fall back to LAST_FAMILIES.
+    """
     out = []
     for ticker, packet in (cfg.get("companies") or {}).items():
         packet = packet or {}
-        groups = []
-        for name, section, keys in EVIDENCE_GROUPS + [BANK_GROUP]:
+        family, source = (families or {}).get(ticker) or (LAST_FAMILIES.get(ticker), LAST_FAMILIES_SOURCE)
+        row = {"ticker": ticker, "family": family or "not classified yet",
+               "family_source": source if family else "run Check SEC data", "groups": [], "missing": []}
+        if family in NO_MODEL:
+            out.append(row | {"status": vs.UNAVAILABLE, "note": "no model", "reason": NO_MODEL[family]})
+            continue
+        for name, section, keys in REQUIREMENTS.get(family, INDUSTRIAL_GROUPS):
             have = sum(1 for k in keys if (packet.get(section) or {}).get(k))
-            groups.append({"group": name, "have": have, "need": len(keys),
-                           "state": "provided" if have == len(keys) else "partial" if have else "missing"})
-        done = {g["group"] for g in groups if g["state"] == "provided"}
-        industrial = {name for name, _, _ in EVIDENCE_GROUPS}
-        bank = {BANK_GROUP[0], "Cost of capital", "Bear / base / bull drivers"}
-        if not any(g["have"] for g in groups):
+            row["groups"].append({"group": name, "have": have, "need": len(keys),
+                                  "state": "provided" if have == len(keys) else "partial" if have else "missing"})
+        row["missing"] = [g["group"] for g in row["groups"] if g["state"] != "provided"]
+        if not any(g["have"] for g in row["groups"]):
             status = vs.REQUIRED
-        elif industrial <= done or bank <= done:
-            status = "READY TO CHECK"   # complete enough to run; the live check still validates every record
+        elif row["missing"] or family not in REQUIREMENTS:
+            status = "INCOMPLETE"   # an unclassified company can't be called ready: its requirements aren't known
         else:
-            status = "INCOMPLETE"
-        out.append({"ticker": ticker, "status": status, "groups": groups,
-                    "missing": [g["group"] for g in groups if g["state"] != "provided" and g["group"] in industrial]})
+            status = "READY TO CHECK"   # complete enough to run; the live check still validates every record
+        out.append(row | {"status": status, "note": f"{len(row['groups']) - len(row['missing'])}/{len(row['groups'])} groups",
+                          "reason": ", ".join(row["missing"]) or "nothing"})
     return out
 
 
@@ -179,6 +202,17 @@ def valuation_check(ticker: str, as_of: date | None = None) -> dict:
     return report
 
 
+def checked_families(jobs: "Jobs", tickers) -> dict[str, tuple[str, str]]:
+    """Families from this session's finished "Check SEC data" runs, newer than LAST_FAMILIES."""
+    out = {}
+    for t in tickers:
+        job = jobs.get("valuation", t)
+        family = ((job or {}).get("result") or {}).get("family") or {}
+        if job and job["state"] == "done" and family.get("family"):
+            out[t] = (family["family"], f"Check SEC data, {job['when']} UTC")
+    return out
+
+
 def sec_rows(report: dict) -> list[list]:
     rows = []
     for field, x in (report.get("sec_inputs") or {}).items():
@@ -204,15 +238,35 @@ def chart_example(path: Path = CHART_EXAMPLE) -> dict:
         return {"error": f"pinned example unreadable: {e}"}
 
 
-def chart_run(provider, ticker: str, source: str, today: date | None = None) -> dict:
+def price_source(provider) -> dict:
+    """Name the prices a chart run will use, from the app's actual provider object, never a setting or flag."""
+    inner = getattr(provider, "inner", provider)
+    name = type(inner).__name__
+    ttl = getattr(provider, "TTL", {}).get("history")
+    cached = (f"; the app reuses a copy up to {ttl} seconds old, so the latest bar can lag" if ttl else "")
+    if name == "DemoProvider":
+        return {"market_data": False, "provider": name,
+                "text": "DEMO prices: synthetic bars generated by the app, not market observations"}
+    if name == "YahooProvider":
+        return {"market_data": True, "provider": name,
+                "text": "Yahoo daily history, split- and dividend-adjusted (auto_adjust)" + cached
+                        + "; today's vendor history, not a point-in-time archive"}
+    return {"market_data": False, "provider": name, "text": f"{name}: not a recognised market-data source"}
+
+
+def chart_run(provider, ticker: str, today: date | None = None) -> dict:
     """The chart lab on the app's adjusted daily history, with SPY as the market regime."""
     today = today or datetime.now(NY).date()
+    source = price_source(provider)
     frame = provider.history(ticker, period="max")
     bench = provider.history("SPY", period="max")
     # today's daily bar may still be forming: use completed sessions only
     frame, bench = frame.loc[frame.index.date < today], bench.loc[bench.index.date < today]
-    report = cp.research(frame, adjusted=True, ticker=ticker, benchmark=bench)
-    report["source"] = source
+    try:
+        report = cp.research(frame, adjusted=True, ticker=ticker, benchmark=bench)
+    except ValueError as e:   # say which prices were refused, so demo bars are never mistaken for a market feed
+        raise ValueError(f"{e} [{source['text']}]") from e
+    report["source"], report["market_data"] = source["text"], source["market_data"]
     return report
 
 

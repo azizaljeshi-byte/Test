@@ -23,14 +23,54 @@ def wait(jobs, kind, ticker):
 
 
 def test_empty_packets_show_assumptions_required_and_never_a_value():
-    rows = rl.completeness(rl.load_scenario_config())
-    assert {r['ticker'] for r in rows} >= {'MSFT', 'AVGO', 'MU', 'JPM'}
-    assert all(r['status'] == 'ASSUMPTIONS REQUIRED' and len(r['missing']) == len(rl.EVIDENCE_GROUPS) for r in rows)
-    partial = {'observations': {'price': {'value': 1}}}
-    assert rl.completeness({'companies': {'X': partial}})[0]['status'] == 'INCOMPLETE'
-    full = {section: {k: {'value': 1} for _, s, keys in rl.EVIDENCE_GROUPS if s == section for k in keys}
-            for section in ('observations', 'contracts', 'scenarios')}
-    assert rl.completeness({'companies': {'X': full}})[0]['status'] == 'READY TO CHECK'
+    rows = {r['ticker']: r for r in rl.completeness(rl.load_scenario_config())}
+    for t in ('MSFT', 'AVGO', 'MU', 'JPM'):
+        assert rows[t]['status'] == 'ASSUMPTIONS REQUIRED' and rows[t]['note'] == '0/6 groups'
+    # each company is measured against its own family's requirements
+    assert rows['MSFT']['missing'] == [g[0] for g in rl.INDUSTRIAL_GROUPS]
+    assert rows['JPM']['family'] == 'bank' and rows['JPM']['missing'] == [g[0] for g in rl.BANK_GROUPS]
+    assert 'Balance sheet' not in rows['JPM']['missing']
+    # families with no valuation model aren't asked for evidence at all
+    assert rows['RIVN']['status'] == rows['BRK-B']['status'] == 'UNAVAILABLE' and not rows['RIVN']['groups']
+    assert rows['RIVN']['reason'].startswith('cash-burning')
+
+
+def packet_for(groups, drop=None):
+    packet = {}
+    for name, section, keys in groups:
+        for k in keys:
+            if (name, k) != drop:
+                packet.setdefault(section, {})[k] = {'value': 1}
+    return packet
+
+
+def test_bank_and_industrial_readiness_use_their_own_requirements():
+    bank = {'X': ('bank', 'test')}
+    full_bank = packet_for(rl.BANK_GROUPS)
+    row = rl.completeness({'companies': {'X': full_bank}}, bank)[0]
+    assert row['status'] == 'READY TO CHECK' and row['missing'] == [] and row['note'] == '6/6 groups'
+    # a complete industrial packet doesn't make a bank ready: its tangible-equity inputs are still missing
+    row = rl.completeness({'companies': {'X': packet_for(rl.INDUSTRIAL_GROUPS)}}, bank)[0]
+    assert row['status'] == 'INCOMPLETE' and 'Tangible common equity' in row['missing']
+    row = rl.completeness({'companies': {'X': packet_for(rl.BANK_GROUPS, ('Reconciliations', 'bank_tce'))}}, bank)[0]
+    assert row['status'] == 'INCOMPLETE' and row['missing'] == ['Reconciliations'] and row['note'] == '5/6 groups'
+    # and a complete bank packet doesn't make an industrial company ready
+    ind = {'X': ('cash compounder', 'test')}
+    assert rl.completeness({'companies': {'X': full_bank}}, ind)[0]['status'] == 'INCOMPLETE'
+    assert rl.completeness({'companies': {'X': packet_for(rl.INDUSTRIAL_GROUPS)}}, ind)[0]['status'] == 'READY TO CHECK'
+    assert rl.completeness({'companies': {'X': {}}}, ind)[0]['status'] == 'ASSUMPTIONS REQUIRED'
+    # an unclassified company is never called ready, however full its packet
+    row = rl.completeness({'companies': {'NEW': packet_for(rl.INDUSTRIAL_GROUPS)}})[0]
+    assert row['family'] == 'not classified yet' and row['status'] == 'INCOMPLETE'
+
+
+def test_a_fresh_sec_check_replaces_the_stored_family():
+    jobs = rl.Jobs(ttl=60)
+    jobs.submit('valuation', 'MSFT', lambda: {'family': {'family': 'bank'}})
+    wait(jobs, 'valuation', 'MSFT')
+    fam = rl.checked_families(jobs, ['MSFT', 'JPM'])
+    assert fam['MSFT'][0] == 'bank' and fam['MSFT'][1].startswith('Check SEC data') and 'JPM' not in fam
+    assert rl.completeness({'companies': {'MSFT': {}}}, fam)[0]['missing'] == [g[0] for g in rl.BANK_GROUPS]
 
 
 def test_synthetic_example_matches_the_hand_check_and_dilution_weight():
@@ -59,14 +99,17 @@ def test_pinned_chart_example_reads_as_insufficient_evidence():
     assert 'error' in rl.chart_example(ROOT / 'missing.json')
 
 
-def test_chart_run_uses_completed_sessions_and_labels_the_source():
+def bars(n=900):
     rng = np.random.default_rng(1)
-    n = 900
     close = 100 * np.exp(np.cumsum(rng.normal(0, .01, n)))
-    frame = pd.DataFrame({'Open': close, 'High': close * 1.01, 'Low': close * .99, 'Close': close,
-                          'Volume': rng.integers(1000, 2000, n)}, index=pd.bdate_range('2020-01-01', periods=n))
+    return pd.DataFrame({'Open': close, 'High': close * 1.01, 'Low': close * .99, 'Close': close,
+                         'Volume': rng.integers(1000, 2000, n)}, index=pd.bdate_range('2020-01-01', periods=n))
 
-    class Fake:
+
+def test_chart_run_uses_completed_sessions_and_labels_the_source():
+    frame = bars()
+
+    class YahooProvider:   # stands in for the real class: the label follows the provider's type
         calls = []
 
         def history(self, ticker, period='5y'):
@@ -74,10 +117,48 @@ def test_chart_run_uses_completed_sessions_and_labels_the_source():
             return frame
 
     today = frame.index[-1].date()
-    rep = rl.chart_run(Fake(), 'TEST', 'unit-test prices', today=today)
+    rep = rl.chart_run(YahooProvider(), 'TEST', today=today)
     assert rep['as_of'] == str(frame.index[-2].date())   # the forming bar for `today` is left out
-    assert rep['source'] == 'unit-test prices' and rep['status'] == 'INSUFFICIENT EVIDENCE'
-    assert Fake.calls == [('TEST', 'max'), ('SPY', 'max')]
+    assert rep['market_data'] is True and rep['source'].startswith('Yahoo daily history')
+    assert rep['status'] == 'INSUFFICIENT EVIDENCE'
+    assert YahooProvider.calls == [('TEST', 'max'), ('SPY', 'max')]
+
+    class DemoProvider(YahooProvider):
+        pass
+    rep = rl.chart_run(DemoProvider(), 'TEST', today=today)
+    assert rep['market_data'] is False and rep['source'].startswith('DEMO prices')
+
+    class BadDemo(DemoProvider):
+        def history(self, ticker, period='5y'):
+            f = frame.copy()
+            f.iloc[5, 1] = f.iloc[5, 3] * .5   # High below Close
+            return f
+    BadDemo.__name__ = 'DemoProvider'
+    with pytest.raises(ValueError, match='DEMO prices'):
+        rl.chart_run(BadDemo(), 'TEST', today=today)
+
+
+def test_price_source_follows_the_selected_provider_not_a_flag(monkeypatch):
+    from stockwatch import data
+    # the app's own selection: demo by environment, demo by settings.data_provider, or Yahoo
+    for env, setting, expect in (('1', 'yahoo', 'demo'), (None, 'demo', 'demo'), (None, 'yahoo', 'yahoo')):
+        if env:
+            monkeypatch.setenv('STOCKWATCH_DEMO', env)
+        else:
+            monkeypatch.delenv('STOCKWATCH_DEMO', raising=False)
+        name = data.selected_provider(setting)
+        src = rl.price_source(data.get_provider(name))
+        assert name == expect and src['market_data'] is (expect == 'yahoo')
+        if expect == 'demo':
+            assert 'not market observations' in src['text']
+        else:
+            assert 'auto_adjust' in src['text'] and 'fetched now' not in src['text']
+            assert f"{data.CachedProvider.TTL['history']} seconds old" in src['text']
+    assert rl.price_source(object())['market_data'] is False
+    # the page passes its own provider and never decides the label itself
+    page = (ROOT / 'dashboard.py').read_text()
+    research = page[page.index('def _research_submit'):page.index('@st.fragment(run_every="5s")')]
+    assert 'research_lab.chart_run(data, ticker)' in research and 'STOCKWATCH_DEMO' not in research
 
 
 def test_valuation_check_treats_an_sec_outage_as_retryable(monkeypatch):

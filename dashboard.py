@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import threading
 import time
 from datetime import datetime
@@ -17,7 +16,7 @@ from plotly.subplots import make_subplots
 
 from stockwatch import briefing, finnhub, live, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
-from stockwatch.data import NY, get_provider, us_session
+from stockwatch.data import NY, get_provider, selected_provider, us_session
 from stockwatch.engine import evaluate
 from stockwatch.relative import market_regime
 from stockwatch.store import Store
@@ -49,7 +48,7 @@ def cached_portfolio(code_version: str):
 
 base = cached_portfolio(CODE_VERSION)
 store = get_store(CODE_VERSION)
-data = provider("demo" if os.getenv("STOCKWATCH_DEMO") else base.settings.data_provider, CODE_VERSION)
+data = provider(selected_provider(base.settings.data_provider), CODE_VERSION)
 # with a Google Sheet, the sheet is the only list; dashboard additions are for setups without one
 portfolio = base if base.sheet_url else store.apply_overrides(base)
 tickers = {h.ticker for h in portfolio.holdings}
@@ -67,7 +66,7 @@ def tracker(name: str, code_version: str) -> live.Tracker:
     return live.Tracker(provider(name, code_version))
 
 
-tracking = tracker("demo" if os.getenv("STOCKWATCH_DEMO") else base.settings.data_provider, CODE_VERSION)
+tracking = tracker(selected_provider(base.settings.data_provider), CODE_VERSION)
 
 
 def _in_background(fn, *args, name: str):
@@ -752,10 +751,8 @@ def _research_submit(kind: str):
         def fn():
             return research_lab.valuation_check(ticker)
     else:
-        source = ("DEMO prices (synthetic), not market data" if os.getenv("STOCKWATCH_DEMO") else
-                  "Yahoo adjusted daily history, fetched now; not a point-in-time archive")
-        def fn():
-            return research_lab.chart_run(data, ticker, source)
+        def fn():   # the source label comes from `data` itself, whichever provider the app picked
+            return research_lab.chart_run(data, ticker)
     st.session_state.rl_note = research_jobs(CODE_VERSION).submit(kind, ticker, fn)
     st.session_state[f"rl_{kind}_shown"] = ticker
 
@@ -823,6 +820,9 @@ def _pattern_report(rep: dict, key: str):
                 f'{escape(src["start"])} to {escape(src["end"])}, {src["rows"]} trading days · '
                 f'<a href="{escape(src["url"])}">source file</a> (sha256 {escape(src["sha256"][:12])}…) · '
                 f'{escape(src["adjustment"])}') if src else "unknown"
+    if rep.get("market_data") is False:
+        st.markdown(ui.flag("NOT MARKET DATA", escape(src or "unknown source") + ". Nothing below describes a real stock.",
+                            ui.RISK), unsafe_allow_html=True)
     as_of = rep.get("as_of")
     age = (f" · {(datetime.now(NY).date() - datetime.fromisoformat(as_of).date()).days / 365.25:.1f} years old"
            if as_of else "")
@@ -887,16 +887,18 @@ if view == "research":
 
     if area == "Valuation":
         st.markdown('<div class="mc-section">Real companies · evidence on file</div>', unsafe_allow_html=True)
-        rows = research_lab.completeness(research_lab.load_scenario_config())
-        st.markdown(ui.table(["Company", "Status", "Evidence"], [
-            [c["ticker"], c["status"], f"{len(c['groups']) - 1 - len(c['missing'])} of {len(c['groups']) - 1} groups"]
-            for c in rows]), unsafe_allow_html=True)
-        st.caption("No company has sourced forecasts, cost-of-capital or share-reconciliation evidence yet, so no fair "
-                   "value is shown.")
+        cfg_rl = research_lab.load_scenario_config()
+        rows = research_lab.completeness(cfg_rl, research_lab.checked_families(research_jobs(CODE_VERSION),
+                                                                               cfg_rl.get("companies") or {}))
+        st.markdown("".join(ui.flag(c["status"], f"<strong>{escape(c['ticker'])}</strong> · {escape(c['family'])} · "
+                                    + escape("no valuation model" if c["note"] == "no model" else
+                                             f"evidence: {c['note']}")) for c in rows), unsafe_allow_html=True)
+        st.caption("Each company is measured against its own model's needs: banks need tangible equity, capital and "
+                   "returns instead of a balance-sheet bridge. No company has sourced evidence yet, so no fair value "
+                   "is shown.")
         with st.expander("What each company still needs", expanded=False):
-            st.markdown("\n".join(f"- **{c['ticker']}**: {', '.join(c['missing']) or 'nothing'}" for c in rows)
-                        + "\n\nBanks need the bank inputs (tangible common equity, capital, credit, funding, returns) "
-                          "instead of the balance-sheet bridge.")
+            st.markdown("\n".join(f"- **{c['ticker']}** ({c['family']}, from {c['family_source']}): {c['reason']}"
+                                  for c in rows))
         st.markdown('<div class="mc-section">Check a company against SEC data</div>', unsafe_allow_html=True)
         st.caption("Shows which valuation family fits, the quality of each SEC input and what's missing. "
                    "Runs only when you tap the button.")
