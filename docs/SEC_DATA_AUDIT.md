@@ -22,7 +22,8 @@ For each valuation input (below), from SEC's XBRL "company facts":
 - **Restatements:** a year re-filed more than 0.5% away from its first filing.
 - **Amended filings:** values that come from a 10-K/A.
 - **Stock splits:** a split is confirmed for a year only when shares were re-filed up by a whole
-  multiple and EPS down by the same multiple, or the reverse. Then those rows aren't restatements. A
+  multiple and EPS down by the same multiple (a forward split, shown as "10:1"), or shares down and
+  EPS up (a reverse split, shown as "1-for-10 reverse"). Then those rows aren't restatements. A
   whole multiple without that inverse move is reported as "possibly a split, not confirmed" and still
   counts as a restatement.
 - **Units:** fields reported only in another currency are "other units only", never converted.

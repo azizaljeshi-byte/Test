@@ -209,10 +209,11 @@ def _field_issues(f: dict) -> list[str]:
     amended = [r["end"][:4] for r in counted if r["amended"]]
     if amended:
         issues.append("amended filing (10-K/A) for FY " + ", ".join(amended))
-    splits = [f"{r['split']}:1 (FY {r['end'][:4]})" for r in counted if r["split"]]
+    splits = [f"{r['split']} (FY {r['end'][:4]})" for r in counted if r["split"]]
     if splits:
         issues.append("re-filed after a stock split, confirmed by shares and EPS moving inversely: " + ", ".join(splits))
-    possible = [f"{max(r['rescale'], 1 / r['rescale']):.0f}x (FY {r['end'][:4]})" for r in counted
+    possible = [f"{'x' if r['rescale'] > 1 else '/'}{max(r['rescale'], 1 / r['rescale']):.0f} (FY {r['end'][:4]})"
+                for r in counted
                 if r["rescale"] and not r["split"]]
     if possible:
         issues.append("re-filed at a whole multiple, possibly a split but not confirmed by an inverse move in "
@@ -234,9 +235,11 @@ def _confirm_splits(fields: dict) -> None:
         for r in fields[key].get("annual", []):
             e = eps.get(r["end"])
             if r["rescale"] and e and e["rescale"] and abs(r["rescale"] * e["rescale"] - 1) <= 0.05:
+                # shares re-filed up = forward split (k:1); shares re-filed down = reverse split (1-for-k)
                 k = round(max(r["rescale"], 1 / r["rescale"]))
+                label = f"{k}:1" if r["rescale"] > 1 else f"1-for-{k} reverse"
                 for row in (r, e):
-                    row["split"], row["restated"] = k, False
+                    row["split"], row["restated"] = label, False
 
 
 def app_extraction(company: dict) -> dict:

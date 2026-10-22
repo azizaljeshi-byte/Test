@@ -1346,7 +1346,7 @@ def test_sec_audit_finds_history_restatements_splits_and_units():
     assert any("amended" in i and "2024" in i for i in ocf["issues"])
     shares = f["diluted_shares"]
     fy24 = next(y for y in shares["annual"] if y["end"] == "2024-12-31")
-    assert fy24["split"] == 10 and not fy24["restated"]                 # shares x10 and EPS /10: a real split
+    assert fy24["split"] == "10:1" and not fy24["restated"]             # shares x10 and EPS /10: a real split
     assert any("confirmed by shares and EPS" in i for i in shares["issues"] + f["eps_diluted"]["issues"])
     assert shares["ttm"] is None                                        # share counts are not summed
     assert f["sbc"]["status"] == "other units only" and "EUR" in f["sbc"]["issues"][0]
@@ -1377,6 +1377,19 @@ def test_sec_audit_does_not_call_an_unconfirmed_multiple_a_split():
     assert any("possibly a split but not confirmed" in i for i in r["fields"]["eps_diluted"]["issues"])
     rev = r["fields"]["revenue"]
     assert rev["years"] == 1 and any("overlapping" in i for i in rev["issues"])
+
+
+def test_sec_audit_keeps_the_direction_of_a_reverse_split():
+    company = {"facts": {"us-gaap": {
+        # 1-for-10 reverse split: shares re-filed down /10, EPS up x10
+        "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": [
+            _fy(2024, 1000e6), _fy(2024, 100e6, filed="2026-02-15")]}},
+        "EarningsPerShareDiluted": {"units": {"USD/shares": [_fy(2024, 0.5), _fy(2024, 5.0, filed="2026-02-15")]}}}}}
+    f = sec_audit.audit_company("REV", company, None, today=date(2026, 10, 22))["fields"]
+    row = f["diluted_shares"]["annual"][0]
+    assert row["split"] == "1-for-10 reverse" and not row["restated"]
+    assert any("1-for-10 reverse (FY 2024)" in i for i in f["diluted_shares"]["issues"])
+    assert not any("10:1" in i for i in f["diluted_shares"]["issues"] + f["eps_diluted"]["issues"])
 
 
 def test_sec_audit_report_status_and_unavailable_tickers(monkeypatch):
