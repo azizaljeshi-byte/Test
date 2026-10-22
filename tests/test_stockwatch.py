@@ -2338,7 +2338,7 @@ def test_valuation_missing_latest_year_blocks_a_compounder_call():
     gap["facts"]["us-gaap"]["Revenues"]["units"]["USD"] = gap["facts"]["us-gaap"]["Revenues"]["units"]["USD"][:-1]
     r = vl.value_company("GAP", gap, SOFTWARE, PRICE, VDAY)
     assert r["classification"]["family"] == vl.INSUFFICIENT
-    assert "FY 2025-12-31: Revenue not reported" in r["classification"]["rule"]
+    assert "FY 2025-12-31: Revenue not reported for this fiscal year" in r["classification"]["rule"]
     assert r["classification"]["evidence"][0]["end"] == "2025-12-31" and r["model"]["status"] == vl.UNAVAILABLE
     # the complete history is still a compounder, and a genuine pre-filing as-of isn't affected
     assert vl.value_company("OK", _vcompany(), SOFTWARE, PRICE, VDAY)["classification"]["family"] == vl.COMPOUNDER
@@ -2370,3 +2370,26 @@ def test_valuation_zero_revenue_and_zero_runway_are_reported_not_crashed():
     assert lenses["Capex / revenue (TTM)"] == "n/a: no revenue over the last twelve months"
     md = vl.markdown([r], VDAY, ua_status="configured")
     assert "runway exhausted" in md and "not burning cash" not in md
+
+
+def test_valuation_fiscal_years_align_one_to_one():
+    # latest revenue is a June fiscal year; the cash-flow years end in December. The June figure must not
+    # fill both December rows, so the latest year has no revenue and there's no compounder call.
+    shifted = _vcompany()
+    rev = shifted["facts"]["us-gaap"]["Revenues"]["units"]["USD"]
+    rev[-1] = dict(rev[-1], start="2024-07-01", end="2025-06-30")
+    r = vl.value_company("SHF", shifted, SOFTWARE, PRICE, VDAY)
+    ev = r["classification"]["evidence"]
+    assert r["classification"]["family"] == vl.INSUFFICIENT and r["model"]["status"] == vl.UNAVAILABLE
+    fills = [e["end"] for e in ev if e["sources"]["revenue"] and "2025-06-30" in e["sources"]["revenue"]]
+    assert fills == ["2025-06-30"]                                  # used once, on its own row
+    assert ev[0]["end"] == "2025-12-31" and ev[0]["revenue"] is None and ev[0]["status"]["revenue"] == "unknown"
+    assert "2024-07-01 to 2025-06-30" in next(e for e in ev if e["end"] == "2025-06-30")["periods"]
+    # a 52/53-week calendar a few days off still lines up as the same fiscal year
+    weekly = _vcompany()
+    rev = weekly["facts"]["us-gaap"]["Revenues"]["units"]["USD"]
+    rev[-1] = dict(rev[-1], start="2024-12-29", end="2025-12-27")
+    r = vl.value_company("WK", weekly, SOFTWARE, PRICE, VDAY)
+    assert r["classification"]["family"] == vl.COMPOUNDER
+    row = r["classification"]["evidence"][0]
+    assert row["revenue"] == 750e6 and sorted(row["periods"]) == ["2024-12-29 to 2025-12-27", "2025-01-01 to 2025-12-31"]

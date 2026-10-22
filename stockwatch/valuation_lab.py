@@ -183,27 +183,41 @@ def annual_history(company: dict, key: str, as_of: date) -> list[dict]:
 EVIDENCE_FIELDS = ("revenue", "operating_income", "operating_cash_flow", "capex")
 
 
+FY_ALIGN_DAYS = 10    # fiscal-year ends this close are the same year (52/53-week calendars move by days)
+
+
 def _evidence(company: dict, as_of: date, n: int, fy_end: str | None = None) -> list[dict]:
-    """One row per fiscal year, newest first: each field's value and status. The years come from every
-    field and the company's latest fiscal year, so a year with revenue missing shows as unknown
-    rather than dropping out of the history."""
-    hist = {k: {r["end"]: r for r in annual_history(company, k, as_of)} for k in EVIDENCE_FIELDS}
+    """One row per fiscal year, newest first: each field's value, status and actual source period.
+
+    Rows come from every field's fiscal-year ends and the company's latest fiscal year, so a year
+    with revenue missing shows as unknown rather than dropping out. A field fills a row only if its
+    period ends within FY_ALIGN_DAYS of that row, and each figure fills at most one row: a figure
+    from a different fiscal calendar never stands in for two years."""
+    hist = {k: annual_history(company, k, as_of) for k in EVIDENCE_FIELDS}
     ends: list[str] = []
-    for end in sorted({e for h in hist.values() for e in h} | ({fy_end} if fy_end else set()), reverse=True):
-        if not ends or sq._gap(ends[-1], end) >= 300:      # one row per fiscal year (52/53-week ends differ a little)
+    for end in sorted({h["end"] for hs in hist.values() for h in hs} | ({fy_end} if fy_end else set()), reverse=True):
+        if not ends or sq._gap(ends[-1], end) > FY_ALIGN_DAYS:
             ends.append(end)
+    used: dict[str, set[int]] = {k: set() for k in EVIDENCE_FIELDS}
     rows = []
     for end in ends[:n]:
-        row = {"end": end, "status": {}, "issues": [], "sources": {}}
+        row = {"end": end, "status": {}, "issues": [], "sources": {}, "periods": []}
         for k in EVIDENCE_FIELDS:
-            h = hist[k].get(end) or next((r for e, r in hist[k].items() if abs(sq._gap(e, end)) < 300), None)
+            near = [(abs(sq._gap(h["end"], end)), i) for i, h in enumerate(hist[k])
+                    if i not in used[k] and abs(sq._gap(h["end"], end)) <= FY_ALIGN_DAYS]
+            h = hist[k][min(near)[1]] if near else None
+            if h:
+                used[k].add(min(near)[1])
+                if f"{h['start']} to {h['end']}" not in row["periods"]:
+                    row["periods"].append(f"{h['start']} to {h['end']}")
             row[k] = h["value"] if h else None
             row["status"][k] = h["status"] if h else sq.UNKNOWN
             if not h:
-                row["issues"].append(f"{FIELDS[k][0]} not reported")
+                row["issues"].append(f"{FIELDS[k][0]} not reported for this fiscal year")
             elif h["status"] != sq.USABLE:
                 row["issues"].append(f"{FIELDS[k][0]} {h['status']}: {'; '.join(h['issues'])}")
-            row["sources"][k] = f"{h['concept']} {h['form']} {h['accn']}" if h else None
+            row["sources"][k] = (f"{h['concept']} {h['start']} to {h['end']}, {h['form']} {h['accn']} filed {h['filed']}"
+                                 if h else None)
         ok = row["status"]["operating_cash_flow"] == row["status"]["capex"] == sq.USABLE
         row["ocf_minus_capex"] = row["operating_cash_flow"] - row["capex"] if ok else None
         rows.append(row)
@@ -634,11 +648,11 @@ def markdown(reports: list[dict], as_of: date | None = None, cfg: dict | None = 
         lines += [f"**Classification: {cls['family']}.** Why: {cls['rule']}.", "",
                   "Not used here: " + "; ".join(cls["not_applicable"]) + ".", ""]
         if cls["evidence"]:
-            lines += ["| Fiscal year to | Revenue | Operating income | OCF | Capex | OCF - capex | Data issues |",
-                      "|---|---|---|---|---|---|---|"]
+            lines += ["| Fiscal year to | Revenue | Operating income | OCF | Capex | OCF - capex | Periods reported | "
+                      "Data issues |", "|---|---|---|---|---|---|---|---|"]
             lines += [f"| {e['end']} | {_money(e['revenue'])} | {_money(e['operating_income'])} | "
                       f"{_money(e['operating_cash_flow'])} | {_money(e['capex'])} | {_money(e['ocf_minus_capex'])} | "
-                      f"{'; '.join(e['issues']) or '—'} |" for e in cls["evidence"]]
+                      f"{'; '.join(e['periods']) or '—'} | {'; '.join(e['issues']) or '—'} |" for e in cls["evidence"]]
             lines.append("")
         lines += [f"### Model: {m['model']} ({m['status']})", ""]
         if m.get("inputs"):
