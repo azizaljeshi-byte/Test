@@ -2264,9 +2264,11 @@ def test_valuation_dilution_needs_two_clean_comparable_quarters():
     assert revised["status"] == "needs reconciliation" and revised["value"] is None
     zero = vl._share_growth({"facts": {"us-gaap": _quarters(q24[:2] + (0.0,) + q24[3:], q25)}}, VDAY, ref)
     assert zero["value"] is None and "zero" in zero["notes"][-1]
+    # a Q4 from the 10-K is current when Q4 is the latest period (clean case above), but not once the
+    # company has reported 2026-Q2: a quarterly figure is judged against the latest period, not the fiscal year
     aged = vl._share_growth({"facts": {"us-gaap": _quarters(q24, q25)}}, VDAY,
                             {"end": "2026-06-30", "fy_end": "2025-12-31", "age": 10})
-    assert aged["status"] == "usable"           # a 10-K quarter is judged against the latest fiscal year
+    assert aged["status"] == "stale" and aged["value"] is None and "181 days before" in aged["notes"][0]
     q_aged = ("2025-07-01", "2025-09-30", 118e6, "10-Q", "2025-11-01", "0000000009-25-000030")
     q_prev = ("2024-07-01", "2024-09-30", 98e6, "10-Q", "2024-11-01", "0000000009-24-000030")
     stale = vl._share_growth({"facts": {"us-gaap": _quarters(q_prev, q_aged)}}, VDAY, ref)

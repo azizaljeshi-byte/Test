@@ -372,9 +372,11 @@ def _share_growth(company: dict, as_of: date, ref: dict) -> dict:
     before = max(prior, key=lambda f: f.get("filed") or "")
     cite = lambda f: f"{f['start']} to {f['end']}: {f['val']:,.0f}, {f.get('form')} {f.get('accn')} filed {f.get('filed')}"
     flags = [c for c in (sq._contest(facts, latest, "shares"), sq._contest(facts, before, "shares")) if c]
-    behind = sq._behind(latest, ref)
-    if behind is not None and behind > sq.INSTANT_STALE:
-        flags.append((sq.STALE, f"latest quarter ends {end}, {behind} days before the company's latest report"))
+    # a quarterly figure is judged against the latest reported period, wherever it was filed (10-K or 10-Q)
+    behind = sq._gap(ref["end"], end) if ref.get("end") else None
+    if behind is None or behind > sq.INSTANT_STALE:
+        flags.append((sq.STALE, f"latest quarter ends {end}, {behind} days before the company's latest report"
+                      if behind is not None else "the company's latest reported period is unknown"))
     if not before["val"]:
         flags.append((sq.UNKNOWN, "the year-earlier count is zero"))
     status = sq._status(flags)
