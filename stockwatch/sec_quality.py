@@ -609,26 +609,35 @@ def pick_instance(names: list[str]) -> str | None:
 
 
 def _units(xml: bytes, root) -> dict[str, str]:
-    """{unit id: measure} with namespace prefixes resolved, e.g. "{http://www.xbrl.org/2003/iso4217}USD".
-    A divided unit (per share) becomes "numerator/denominator"; anything unresolvable is left out."""
-    prefixes = {p: uri for _event, (p, uri) in ET.iterparse(io.BytesIO(xml), events=("start-ns",))}
+    """Resolve each measure QName in its own namespace scope, including default namespaces.
 
-    def resolve(text: str | None) -> str | None:
-        text = (text or "").strip()
-        if ":" not in text:
-            return None
-        p, local = text.split(":", 1)
-        return f"{{{prefixes[p]}}}{local}" if p in prefixes else None
-    units = {}
-    for u in root.iter(f"{XBRLI}unit"):
-        measures = [resolve(m.text) for m in u.findall(f"{XBRLI}measure")]
-        div = u.find(f"{XBRLI}divide")
-        if div is not None:
-            num, den = ([resolve(m.text) for m in div.findall(f"{XBRLI}{part}/{XBRLI}measure")]
-                        for part in ("unitNumerator", "unitDenominator"))
-            measures = [f"{num[0]}/{den[0]}"] if len(num) == len(den) == 1 and num[0] and den[0] else [None]
-        if len(measures) == 1 and measures[0]:
-            units[u.get("id")] = measures[0]
+    A divided unit becomes numerator/denominator. Undeclared bindings stay unknown.
+    `root` remains accepted for compatibility with the instance parser.
+    """
+    scopes, pending, resolved, units = [{}], {}, {}, {}
+    for event, el in ET.iterparse(io.BytesIO(xml), events=("start-ns", "start", "end")):
+        if event == "start-ns":
+            prefix, uri = el
+            pending[prefix] = uri
+        elif event == "start":
+            scopes.append(scopes[-1] | pending)
+            pending = {}
+        else:
+            if el.tag == f"{XBRLI}measure":
+                text = (el.text or "").strip()
+                prefix, local = text.split(":", 1) if ":" in text else ("", text)
+                uri = scopes[-1].get(prefix)
+                resolved[el] = f"{{{uri}}}{local}" if uri and local else None
+            elif el.tag == f"{XBRLI}unit":
+                measures = [resolved.get(m) for m in el.findall(f"{XBRLI}measure")]
+                div = el.find(f"{XBRLI}divide")
+                if div is not None:
+                    num, den = ([resolved.get(m) for m in div.findall(f"{XBRLI}{part}/{XBRLI}measure")]
+                                for part in ("unitNumerator", "unitDenominator"))
+                    measures = [f"{num[0]}/{den[0]}"] if len(num) == len(den) == 1 and num[0] and den[0] else [None]
+                if len(measures) == 1 and measures[0]:
+                    units[el.get("id")] = measures[0]
+            scopes.pop()
     return units
 
 
@@ -654,7 +663,9 @@ def parse_instance(xml: bytes) -> dict[tuple, list[tuple[float, str | None]]]:
         if ref not in contexts or not el.tag.startswith("{"):
             continue
         ns, name = el.tag[1:].split("}", 1)
-        if "us-gaap" not in ns and "ifrs" not in ns:
+        dei_cover = (ns.startswith(("http://xbrl.sec.gov/dei/", "https://xbrl.sec.gov/dei/"))
+                     and name == "EntityCommonStockSharesOutstanding")
+        if "us-gaap" not in ns and "ifrs" not in ns and not dei_cover:
             continue
         try:
             val = float((el.text or "").strip())
