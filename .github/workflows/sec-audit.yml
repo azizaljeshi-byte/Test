@@ -14,6 +14,14 @@ on:
         description: "Tickers (among those above) whose fiscal-year figures are also checked against the filing itself"
         required: false
         default: "MSFT MU AVGO"
+      valuation:
+        description: "Tickers for the read-only valuation research (Phase 2A-1); public examples only"
+        required: false
+        default: "MSFT AVGO MU JPM RIVN BRK-B"
+      scenarios:
+        description: "Optional Phase 2A-2 research diagnostics; public example tickers only (blank skips)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -26,6 +34,8 @@ jobs:
       SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
       TICKERS: ${{ inputs.tickers }}
       RECONCILE: ${{ inputs.reconcile }}
+      VALUATION: ${{ inputs.valuation }}
+      SCENARIOS: ${{ inputs.scenarios }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -56,6 +66,29 @@ jobs:
           echo "code=$?" >> "$GITHUB_OUTPUT"
           cat sec-quality.md >> "$GITHUB_STEP_SUMMARY"
           cat sec-quality.md
+      - name: Valuation research (Phase 2A-1, read-only)
+        id: valuation
+        if: env.VALUATION != ''
+        # research only: no fair value, BUY/SELL or score; the report also goes to the log
+        run: |
+          set +e
+          python -m stockwatch.valuation_lab $VALUATION --markdown valuation.md --json valuation.json
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          cat valuation.md >> "$GITHUB_STEP_SUMMARY"
+          cat valuation.md
+      - name: Valuation scenarios (Phase 2A-2, research only)
+        id: scenarios
+        if: env.SCENARIOS != ''
+        run: |
+          set +e
+          python -m stockwatch.valuation_scenarios $SCENARIOS --markdown scenarios.md --json scenarios.json
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ -f scenarios.md ]; then
+            cat scenarios.md >> "$GITHUB_STEP_SUMMARY"
+            cat scenarios.md
+          fi
+          if [ "$code" -gt 1 ]; then exit "$code"; fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -65,6 +98,10 @@ jobs:
             sec-audit.json
             sec-quality.md
             sec-quality.json
+            valuation.md
+            valuation.json
+            scenarios.md
+            scenarios.json
       # a green run must mean SEC data was actually retrieved
       - name: Check the audit retrieved data
         run: |

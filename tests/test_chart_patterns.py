@@ -90,6 +90,15 @@ def test_missing_sessions_weekends_splits_and_invalid_data():
         cp.clean(f, adjusted=True)
 
 
+def test_good_friday_is_not_a_missing_equity_session():
+    f = prices(7)
+    f.index = pd.to_datetime(['2024-03-25', '2024-03-26', '2024-03-27',
+                              '2024-03-28', '2024-04-01', '2024-04-02', '2024-04-03'])
+    assert not cp.boundaries(f).any()
+    # The holiday exception must not hide an ordinary missing Tuesday.
+    assert cp.boundaries(f.drop(pd.Timestamp('2024-04-02')))[-1]
+
+
 def test_report_holdout_and_sample_refusal(tmp_path):
     f = prices(1800)
     report = cp.research(f, adjusted=True, cfg=settings(), benchmark=f)

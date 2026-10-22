@@ -62,10 +62,13 @@ def boundaries(f: pd.DataFrame) -> np.ndarray:
     US exchange holidays are allowed; other exchanges require an explicit calendar adapter.
     Jumps can be genuine events: rejecting them is conservative, not a split correction.
     """
-    from pandas.tseries.holiday import USFederalHolidayCalendar
+    from pandas.tseries.holiday import GoodFriday, USFederalHolidayCalendar
     # Federal holidays also include days exchanges trade. We still reject missing ordinary weekdays;
     # this is a conservative calendar approximation, disclosed in every report.
-    holidays = USFederalHolidayCalendar().holidays(f.index.min(), f.index.max()).values.astype('datetime64[D]') if len(f) else []
+    class ResearchCalendar(USFederalHolidayCalendar):
+        rules = USFederalHolidayCalendar.rules + [GoodFriday]
+
+    holidays = ResearchCalendar().holidays(f.index.min(), f.index.max()).values.astype('datetime64[D]') if len(f) else []
     days = f.index.values.astype('datetime64[D]')
     bad = np.zeros(len(f), dtype=bool)
     if len(f) > 1:
@@ -199,7 +202,7 @@ def research(frame: pd.DataFrame, *, adjusted: bool, ticker='CSV', as_of=None, c
            'status': 'INSUFFICIENT EVIDENCE', 'settings': asdict(cfg), 'windows': [],
            'limitations': ['Research only; no production BUY/SELL integration or probability of profit.',
                            'Adjusted OHLC outcomes approximate reinvested distributions; historical vendor data can be revised.',
-                           'US federal holiday calendar is an approximation, not an exchange calendar; unknown gaps are excluded.',
+                           'US federal holidays plus Good Friday are an approximation, not an exchange calendar; unknown gaps are excluded.',
                            'Broad-market trend is matched only when benchmark data is supplied; sector regimes are NOT controlled.',
                            'Target/stop touches use daily adjusted ranges, not executable fills; same-bar ties count as stops.',
                            'Illustrative round-trip cost; gaps, liquidity, spreads, event/dilution and going-concern risks are not modeled.',

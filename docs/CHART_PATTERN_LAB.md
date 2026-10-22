@@ -20,9 +20,9 @@ The current prototype deliberately emits **INSUFFICIENT EVIDENCE** rather than p
 
 CSV input must contain `Date,Open,High,Low,Close,Volume`, ascending unique daily dates, finite positive prices, valid OHLC ranges and nonnegative volume. `--adjusted` explicitly attests that the OHLCV values are consistently adjusted. Yahoo uses the existing rate-limited `YahooProvider.history(auto_adjust=True)`. The CLI excludes today's New York daily bar, which may still be forming.
 
-No resampling, forward fills, inferred timestamps or split corrections. Contexts or outcome paths crossing missing ordinary weekdays, gaps over seven calendar days, or adjacent price ratios above 1.4× (either direction) are excluded. The US federal-holiday calendar is an **approximation**, not a full exchange calendar: e.g. Good Friday may be treated as a missing session; unusual closures or genuine crash events may be rejected. A real exchange-calendar adapter and corporate-action audit are prerequisites for stronger claims. Dividends/splits in current vendor history can revise old data: `--as-of` prevents future rows entering formation/outcomes, but does not make the underlying vendor data a point-in-time archive.
+No resampling, forward fills, inferred timestamps or split corrections. Contexts or outcome paths crossing missing ordinary weekdays, gaps over seven calendar days, or adjacent price ratios above 1.4× (either direction) are excluded. US federal holidays plus Good Friday form an **approximation**, not a full exchange calendar: federal holidays when exchanges trade may be allowed, while unusual closures or genuine crash events may be rejected. A real exchange-calendar adapter and corporate-action audit are prerequisites for stronger claims. Dividends/splits in current vendor history can revise old data: `--as-of` prevents future rows entering formation/outcomes, but does not make the underlying vendor data a point-in-time archive.
 
-When price/volume are missing or malformed, refuse the input. No qualifying quarter, symbol or financial data is inferred. Unknown market regime and sample insufficiency remain visible. The standalone HTML shows normalized **real closes**, with formation solid and forward paths dashed, dates and hypothetical outcome tables; the shape matcher also uses candle ranges and volume even though those are not drawn as candles.
+When price/volume are missing or malformed, refuse the input. No qualifying quarter, symbol or financial data is inferred. CSV input without a benchmark explicitly leaves market regime uncontrolled. When a benchmark is supplied, missing dates exclude affected contexts; missing current benchmark context refuses matching for that window. Yahoo CLI benchmark-fetch failure exits with an error instead of publishing a report. Sample insufficiency remains visible. The standalone HTML shows normalized **real closes**, with formation solid and forward paths dashed, dates and hypothetical outcome tables; the shape matcher also uses candle ranges and volume even though those are not drawn as candles.
 
 ## Run
 
@@ -42,7 +42,7 @@ curl -fL https://raw.githubusercontent.com/plotly/datasets/0c447c47b757ad74edeca
 python scripts/chart_pattern_example.py /tmp/all_stocks_5yr.csv
 ```
 
-The unmodified default settings produce three non-overlapping dated matches per formation length, below the minimum of eight, and **zero qualifying holdout evaluations**. Thus this example demonstrates real chart retrieval, matching and refusal, **not an out-of-sample edge**. No positive edge has been established. Synthetic fixtures test arithmetic/invariants, not investing performance.
+The unmodified default settings produce four non-overlapping dated matches per formation length, below the minimum of eight, and **zero qualifying holdout evaluations**. Thus this example demonstrates real chart retrieval, matching and refusal, **not an out-of-sample edge**. No positive edge has been established. Synthetic fixtures test arithmetic/invariants, not investing performance.
 
 ## Validation
 
