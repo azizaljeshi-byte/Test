@@ -2153,7 +2153,8 @@ def test_valuation_classifies_cycles_burn_banks_and_unsupported():
                            PRICE, VDAY)
     assert ins["classification"]["family"] == vl.UNSUPPORTED and ins["model"]["status"] == vl.UNAVAILABLE
     short = _vcompany()
-    for c in ("Revenues", "OperatingIncomeLoss", "NetCashProvidedByUsedInOperatingActivities"):
+    for c in ("Revenues", "OperatingIncomeLoss", "NetCashProvidedByUsedInOperatingActivities",
+              "PaymentsToAcquirePropertyPlantAndEquipment", "NetIncomeLoss"):
         short["facts"]["us-gaap"][c]["units"]["USD"] = short["facts"]["us-gaap"][c]["units"]["USD"][-3:]
     r = vl.value_company("NEW", short, SOFTWARE, PRICE, VDAY)
     assert r["classification"]["family"] == vl.INSUFFICIENT and "only 3 fiscal years" in r["classification"]["rule"]
@@ -2181,12 +2182,13 @@ def test_valuation_runway_for_a_cash_burner():
 def test_valuation_debt_only_adds_reconciled_parts():
     day = "2025-12-31"
     debt = vl.total_debt(_vcompany(), VDAY, day)
-    assert debt["value"] == 300e6 and debt["status"] == "usable" and "= noncurrent + current" in debt["source"]
+    assert debt["value"] == 300e6 and debt["status"] == "usable" and "LongTermDebt 300.0M (noncurrent 250.0M)" in debt[
+        "source"]
     only_nc = _vcompany()
     for c in ("LongTermDebt", "LongTermDebtCurrent"):
         del only_nc["facts"]["us-gaap"][c]
     d = vl.total_debt(only_nc, VDAY, day)
-    assert d["value"] == 250e6 and d["status"] == "needs reconciliation" and "understated" in d["notes"][0]
+    assert d["value"] is None and d["status"] == "needs reconciliation" and "current portion" in d["notes"][0]
     mismatch = _vcompany(extra={"DebtCurrent": {"units": {"USD": [_vinst(day, 80e6)]}}})
     d = vl.total_debt(mismatch, VDAY, day)
     assert d["status"] == "needs reconciliation" and "doesn't match" in d["notes"][0]
@@ -2303,3 +2305,68 @@ def test_valuation_classifier_ignores_untrusted_fiscal_years():
     assert r["classification"]["family"] == vl.CYCLICAL and "2023-12-31: revenue -31%" in r["classification"]["rule"]
     md = vl.markdown([r], VDAY, ua_status="configured")
     assert "| Data issues |" in md and "Revenue unknown" in md
+
+
+def test_valuation_debt_needs_confirmed_long_term_coverage():
+    day = "2025-12-31"
+
+    def only(**tags):
+        company = _vcompany()
+        for c in ("LongTermDebt", "LongTermDebtNoncurrent", "LongTermDebtCurrent"):
+            del company["facts"]["us-gaap"][c]
+        company["facts"]["us-gaap"].update({c: {"units": {"USD": [_vinst(day, v)]}} for c, v in tags.items()})
+        return company
+    # only current items, no long-term tag: not a total, and no debt lenses
+    for company in (only(DebtCurrent=50e6), only(ShortTermBorrowings=50e6)):
+        d = vl.total_debt(company, VDAY, day)
+        assert d["status"] == "needs reconciliation" and d["value"] is None and "no long-term debt tagged" in d["notes"][0]
+        lenses = {x["lens"]: x for x in vl.value_company("D", company, SOFTWARE, PRICE, VDAY)["risk"]}
+        assert lenses["Debt / TTM operating cash flow"]["value"] is None
+    # an explicitly reported zero long-term debt is coverage: the total is usable
+    d = vl.total_debt(only(LongTermDebtNoncurrent=0.0, DebtCurrent=50e6), VDAY, day)
+    assert d["status"] == "usable" and d["value"] == 50e6
+    # DebtCurrent contradicting the current portion implied by LongTermDebt - noncurrent (500 - 400 = 100)
+    d = vl.total_debt(only(LongTermDebt=500e6, LongTermDebtNoncurrent=400e6, DebtCurrent=50e6), VDAY, day)
+    assert d["status"] == "needs reconciliation" and d["value"] is None and "doesn't match" in d["notes"][0]
+    d = vl.total_debt(only(LongTermDebt=500e6, LongTermDebtNoncurrent=400e6, DebtCurrent=100e6), VDAY, day)
+    assert d["status"] == "usable" and d["value"] == 500e6
+
+
+def test_valuation_missing_latest_year_blocks_a_compounder_call():
+    # FY2025 revenue missing while FY2025 cash flow is reported: the year shows as unknown, not dropped
+    gap = _vcompany()
+    gap["facts"]["us-gaap"]["Revenues"]["units"]["USD"] = gap["facts"]["us-gaap"]["Revenues"]["units"]["USD"][:-1]
+    r = vl.value_company("GAP", gap, SOFTWARE, PRICE, VDAY)
+    assert r["classification"]["family"] == vl.INSUFFICIENT
+    assert "FY 2025-12-31: Revenue not reported" in r["classification"]["rule"]
+    assert r["classification"]["evidence"][0]["end"] == "2025-12-31" and r["model"]["status"] == vl.UNAVAILABLE
+    # the complete history is still a compounder, and a genuine pre-filing as-of isn't affected
+    assert vl.value_company("OK", _vcompany(), SOFTWARE, PRICE, VDAY)["classification"]["family"] == vl.COMPOUNDER
+    early = vl.value_company("OK", _vcompany(), SOFTWARE, PRICE, date(2026, 1, 31))
+    assert early["classification"]["evidence"][0]["end"] == "2024-12-31"
+
+
+def test_valuation_ambiguous_quarters_give_no_dilution_figure():
+    ref = {"end": "2025-12-31", "fy_end": "2025-12-31", "age": 60}
+    prior = ("2024-10-01", "2024-12-31", 90e6, "10-K", "2025-02-15", "0000000009-25-000001")
+    a = ("2025-10-01", "2025-12-31", 100e6, "10-K", "2026-02-15", "0000000009-26-000001")
+    b = ("2025-09-20", "2025-12-31", 120e6, "10-K", "2026-02-15", "0000000009-26-000001")
+    for order in ((prior, a, b), (prior, b, a)):              # the answer doesn't depend on input order
+        g = vl._share_growth({"facts": {"us-gaap": _quarters(*order)}}, VDAY, ref)
+        assert g["status"] == "needs reconciliation" and g["value"] is None and "ambiguous" in g["notes"][0]
+    other_prior = ("2024-09-25", "2024-12-31", 95e6, "10-K", "2025-02-15", "0000000009-25-000001")
+    g = vl._share_growth({"facts": {"us-gaap": _quarters(prior, other_prior, a)}}, VDAY, ref)
+    assert g["value"] is None and "a year earlier" in g["notes"][0]
+    clean = vl._share_growth({"facts": {"us-gaap": _quarters(prior, a)}}, VDAY, ref)
+    assert clean["status"] == "usable" and clean["value"] == pytest.approx(100 / 90 - 1)
+
+
+def test_valuation_zero_revenue_and_zero_runway_are_reported_not_crashed():
+    burner = _vcompany(revenue=[0.0] * 6, ocf=[-100e6] * 6, capex=50e6)
+    burner["facts"]["us-gaap"]["CashAndCashEquivalentsAtCarryingValue"]["units"]["USD"] = [_vinst("2025-12-31", 0.0)]
+    r = vl.value_company("ZERO", burner, SOFTWARE, PRICE, VDAY)
+    assert r["status"] == "ok" and r["model"]["status"] == vl.COMPUTED and r["model"]["months"] == 0
+    lenses = {x["lens"]: x["text"] for x in r["risk"]}
+    assert lenses["Capex / revenue (TTM)"] == "n/a: no revenue over the last twelve months"
+    md = vl.markdown([r], VDAY, ua_status="configured")
+    assert "runway exhausted" in md and "not burning cash" not in md

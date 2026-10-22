@@ -183,21 +183,27 @@ def annual_history(company: dict, key: str, as_of: date) -> list[dict]:
 EVIDENCE_FIELDS = ("revenue", "operating_income", "operating_cash_flow", "capex")
 
 
-def _evidence(company: dict, as_of: date, n: int) -> list[dict]:
-    """One row per fiscal year (by revenue's years, newest first): each field's value and status."""
+def _evidence(company: dict, as_of: date, n: int, fy_end: str | None = None) -> list[dict]:
+    """One row per fiscal year, newest first: each field's value and status. The years come from every
+    field and the company's latest fiscal year, so a year with revenue missing shows as unknown
+    rather than dropping out of the history."""
     hist = {k: {r["end"]: r for r in annual_history(company, k, as_of)} for k in EVIDENCE_FIELDS}
+    ends: list[str] = []
+    for end in sorted({e for h in hist.values() for e in h} | ({fy_end} if fy_end else set()), reverse=True):
+        if not ends or sq._gap(ends[-1], end) >= 300:      # one row per fiscal year (52/53-week ends differ a little)
+            ends.append(end)
     rows = []
-    for end in sorted(hist["revenue"], reverse=True)[:n]:
-        row = {"end": end, "status": {}, "issues": []}
+    for end in ends[:n]:
+        row = {"end": end, "status": {}, "issues": [], "sources": {}}
         for k in EVIDENCE_FIELDS:
-            h = hist[k].get(end)
+            h = hist[k].get(end) or next((r for e, r in hist[k].items() if abs(sq._gap(e, end)) < 300), None)
             row[k] = h["value"] if h else None
             row["status"][k] = h["status"] if h else sq.UNKNOWN
             if not h:
                 row["issues"].append(f"{FIELDS[k][0]} not reported")
             elif h["status"] != sq.USABLE:
                 row["issues"].append(f"{FIELDS[k][0]} {h['status']}: {'; '.join(h['issues'])}")
-            row.setdefault("sources", {})[k] = f"{h['concept']} {h['form']} {h['accn']}" if h else None
+            row["sources"][k] = f"{h['concept']} {h['form']} {h['accn']}" if h else None
         ok = row["status"]["operating_cash_flow"] == row["status"]["capex"] == sq.USABLE
         row["ocf_minus_capex"] = row["operating_cash_flow"] - row["capex"] if ok else None
         rows.append(row)
@@ -223,7 +229,7 @@ def classify(q: dict, company: dict, as_of: date, cfg: dict) -> dict:
         out.update(family=UNSUPPORTED, rule=f"SIC {sic} ({sect['description']}): insurers, REITs, utilities and "
                                             "other financial companies need their own models")
     else:
-        rows = _evidence(company, as_of, c["history_years"])
+        rows = _evidence(company, as_of, c["history_years"], q["reference"].get("fy_end"))
         out["evidence"] = rows
         ocf, capex = _ttm_input(q, "operating_cash_flow"), _ttm_input(q, "capex")
         blocked = _blockers([ocf, capex])
@@ -364,12 +370,25 @@ def _share_growth(company: dict, as_of: date, ref: dict) -> dict:
         return _input(label, None, sq.UNKNOWN, None, ["no quarterly figure"])
     concept = next(c for c in concepts if any(f["end"] == end for f in quarters.get(c, [])))
     facts = quarters[concept]
+    periods = lambda fs: sorted({(f["start"], f["end"]) for f in fs})
+    now = periods(f for f in facts if f["end"] == end)
+    if len(now) > 1:
+        return _input(label, None, sq.RECONCILE, None, [
+            f"{len(now)} different quarter periods end {end} ({', '.join(f'{a} to {b}' for a, b in now)}): ambiguous"])
     latest = max((f for f in facts if f["end"] == end), key=lambda f: f.get("filed") or "")
     target = date.fromisoformat(end) - timedelta(days=365)
     prior = [f for f in facts if abs((date.fromisoformat(f["end"]) - target).days) <= 10]
     if not prior:
         return _input(label, None, sq.UNKNOWN, None, [f"no {concept.split(':')[-1]} quarter ending about {target}"])
+    then = periods(prior)
+    if len(then) > 1:
+        return _input(label, None, sq.RECONCILE, None, [
+            f"{len(then)} different quarter periods a year earlier ({', '.join(f'{a} to {b}' for a, b in then)}): "
+            "ambiguous"])
     before = max(prior, key=lambda f: f.get("filed") or "")
+    if abs(_days(before) - _days(latest)) > 10:
+        return _input(label, None, sq.RECONCILE, None, [
+            f"the year-earlier quarter ({_days(before)} days) isn't comparable with the latest ({_days(latest)} days)"])
     cite = lambda f: f"{f['start']} to {f['end']}: {f['val']:,.0f}, {f.get('form')} {f.get('accn')} filed {f.get('filed')}"
     flags = [c for c in (sq._contest(facts, latest, "shares"), sq._contest(facts, before, "shares")) if c]
     # a quarterly figure is judged against the latest reported period, wherever it was filed (10-K or 10-Q)
@@ -410,56 +429,67 @@ def runway(q: dict, company: dict, as_of: date) -> dict:
 # ----------------------------------------------------------- risk lenses
 
 def total_debt(company: dict, as_of: date, day: str | None) -> dict:
-    """Debt on the balance-sheet date, only where its parts reconcile. Leases are listed separately."""
+    """Debt on the balance-sheet date, only where its parts reconcile; leases are listed separately.
+
+    A total needs the long-term component confirmed (tagged, an explicit zero counts) and every
+    tagged part consistent with the others. Otherwise there's no number: the status says why and the
+    note gives any partial subtotal. A missing tag is never read as zero debt."""
     label = f"Total debt on {day}"
     if not day:
         return _input(label, None, sq.UNKNOWN, None, ["no balance-sheet date"])
     names = ("LongTermDebt", "LongTermDebtNoncurrent", "LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings",
              "CommercialPaper")
-    facts, notes = {}, []
+    facts = {}
     for c in names:
         cands = sq._candidates(company, [c], "USD", as_of)[0].get(c, [])
         f = sq._at(cands, day)
         if f and sq._contest(cands, f, "USD"):
             return _input(label, None, sq.UNKNOWN, None, [f"{c} has contested values on {day}"])
         facts[c] = f["val"] if f else None
-    ltd, nc, cur, dc = (facts[c] for c in names[:4])
-    extras = sum(v for c, v in facts.items() if c in ("ShortTermBorrowings", "CommercialPaper") and v)
-    status = sq.USABLE
-    if facts["ShortTermBorrowings"] is not None and facts["CommercialPaper"] is not None:
-        status = sq.RECONCILE
-        notes.append("short-term borrowings and commercial paper are both tagged: commercial paper may already be "
-                     "inside short-term borrowings, so they aren't safely added")
-    if ltd is not None and nc is not None and cur is not None and sq._differs(ltd, nc + cur):
-        return _input(label, None, sq.RECONCILE, None, [
-            f"LongTermDebt {_money(ltd)} contradicts noncurrent {_money(nc)} + current {_money(cur)} = "
-            f"{_money(nc + cur)}: no total is trusted"])
-    if ltd is not None and nc is not None and cur is not None:
-        total, used = ltd, f"LongTermDebt {_money(ltd)} (= noncurrent + current portion)"
-    elif nc is not None:
-        total, used = nc + (cur or 0), f"LongTermDebtNoncurrent {_money(nc)}" + (
-            f" + LongTermDebtCurrent {_money(cur)}" if cur is not None else "")
-        if cur is None and dc is None:
-            status = sq.RECONCILE
-            notes.append("no current portion tagged on this date: total may be understated")
-    elif ltd is not None:
-        total, used, status = ltd, f"LongTermDebt {_money(ltd)}", sq.RECONCILE
-        notes.append("LongTermDebt alone: whether it includes the current portion can't be checked")
-    elif dc is None and not extras:
-        return _input(label, None, sq.UNKNOWN, None, ["no debt tagged on this date (zero debt isn't assumed)"])
+    ltd, nc, cur, dc, stb, cp = (facts[c] for c in names)
+    tagged = ", ".join(f"{c} {_money(v)}" for c, v in facts.items() if v is not None)
+
+    def refuse(status, why):
+        return _input(label, None, status, None, [why + (f" (tagged on this date: {tagged})" if tagged else "")])
+    if stb is not None and cp is not None:
+        return refuse(sq.RECONCILE, "short-term borrowings and commercial paper are both tagged: commercial paper may "
+                                    "already be inside short-term borrowings")
+    borrowings = stb if stb is not None else cp       # at most one of the two
+    if ltd is None and nc is None:
+        if dc is None and borrowings is None and cur is None:
+            return _input(label, None, sq.UNKNOWN, None, ["no debt tagged on this date (zero debt isn't assumed)"])
+        return refuse(sq.RECONCILE, "no long-term debt tagged on this date, so only current items are known and the "
+                                    "total can't be confirmed")
+    # the current portion of long-term debt: tagged, or implied by total minus noncurrent
+    if ltd is not None and nc is not None:
+        implied = ltd - nc
+        if cur is not None and sq._differs(cur, implied, 0.005) and abs(cur - implied) > 1:
+            return refuse(sq.RECONCILE, f"LongTermDebt {_money(ltd)} contradicts noncurrent {_money(nc)} + current "
+                                        f"{_money(cur)}")
+        if implied < -1:
+            return refuse(sq.RECONCILE, f"LongTermDebt {_money(ltd)} is less than its noncurrent part {_money(nc)}")
+        current_ltd, long_total, used = max(implied, 0.0), ltd, f"LongTermDebt {_money(ltd)} (noncurrent {_money(nc)})"
+    elif nc is not None and cur is not None:
+        current_ltd, long_total, used = cur, nc + cur, f"noncurrent {_money(nc)} + current portion {_money(cur)}"
+    elif nc is not None and dc is not None:
+        current_ltd, long_total, used = None, nc, f"noncurrent {_money(nc)}"
     else:
-        total, used = 0.0, "no long-term debt tagged"
+        return refuse(sq.RECONCILE, "the current portion of long-term debt can't be confirmed" if nc is not None else
+                      "LongTermDebt alone: whether it includes the current portion can't be checked")
     if dc is not None:
-        expected = (cur or 0) + extras
-        if cur is None and not extras:
-            total += dc
-            used += f" + DebtCurrent {_money(dc)}"
-        elif sq._differs(dc, expected):
-            status = sq.RECONCILE
-            notes.append(f"DebtCurrent {_money(dc)} doesn't match current portion + borrowings {_money(expected)}")
-    if extras:
-        used += f" + short-term borrowings/commercial paper {_money(extras)}"
-    return _input(label, total + extras, status, used, notes)
+        # DebtCurrent is all debt due within a year: the current portion plus short-term borrowings
+        if current_ltd is not None:
+            expected = current_ltd + (borrowings or 0)
+            if sq._differs(dc, expected) and abs(dc - expected) > 1:
+                return refuse(sq.RECONCILE, f"DebtCurrent {_money(dc)} doesn't match current portion "
+                                            f"{_money(current_ltd)} + borrowings {_money(borrowings or 0)}")
+            return _input(label, long_total + (borrowings or 0), sq.USABLE,
+                          used + f"; due within a year {_money(dc)} (DebtCurrent, consistent)")
+        if borrowings is not None and dc < borrowings:
+            return refuse(sq.RECONCILE, f"DebtCurrent {_money(dc)} is less than short-term borrowings {_money(borrowings)}")
+        return _input(label, long_total + dc, sq.USABLE, used + f" + DebtCurrent {_money(dc)} (all debt due within a year)")
+    return _input(label, long_total + (borrowings or 0), sq.USABLE,
+                  used + (f" + short-term borrowings {_money(borrowings)}" if borrowings is not None else ""))
 
 
 def _net_debt(debt: dict, cash: dict, sti: dict) -> dict:
@@ -500,8 +530,9 @@ def risk_lenses(q: dict, company: dict, price: dict, as_of: date, cfg: dict) -> 
         lens("Debt / TTM operating cash flow", [debt, ocf], lambda: debt["value"] / ocf["value"] if ocf["value"] > 0 else None,
              lambda v: f"{v:.1f} years of operating cash" if v is not None else "n/a: operating cash flow not positive"),
         _net_debt(debt, cash, sti),
-        lens("Capex / revenue (TTM)", [capex, rev], lambda: capex["value"] / rev["value"],
-             lambda v: f"{v:.0%}" + (" — equipment-heavy" if v > cfg["risk"]["capex_heavy"] else "")),
+        lens("Capex / revenue (TTM)", [capex, rev], lambda: capex["value"] / rev["value"] if rev["value"] > 0 else None,
+             lambda v: "n/a: no revenue over the last twelve months" if v is None else
+             f"{v:.0%}" + (" — equipment-heavy" if v > cfg["risk"]["capex_heavy"] else "")),
         lens("Capex / D&A (TTM)", [capex, dna], lambda: capex["value"] / dna["value"] if dna["value"] else None,
              lambda v: f"{v:.1f}x" if v is not None else "n/a"),
     ]
@@ -558,6 +589,14 @@ def value_ticker(ticker: str, as_of: date | None = None, price: dict | None = No
 
 # ------------------------------------------------------------------ report
 
+def _runway_text(months: float | None) -> str:
+    if months is None:
+        return "not burning cash over the trailing twelve months"
+    if months <= 0:
+        return "runway exhausted: no liquidity left at the trailing burn"
+    return f"runway about {months:.0f} months at the trailing burn"
+
+
 def _headline(r: dict) -> str:
     m = r["model"]
     if m["status"] != COMPUTED:
@@ -567,7 +606,7 @@ def _headline(r: dict) -> str:
         if cell and cell["growth"] is not None:
             return f"price implies {cell['growth']:+.1%}/yr owner-FCF growth for 5 years (at 10% / 2.5%, sensitivity only)"
         return "see grid"
-    return f"runway {m['months']:.0f} months at the trailing burn" if m.get("months") else "not burning cash over TTM"
+    return _runway_text(m["months"])
 
 
 def markdown(reports: list[dict], as_of: date | None = None, cfg: dict | None = None, ua_status: str | None = None) -> str:
@@ -631,7 +670,7 @@ def markdown(reports: list[dict], as_of: date | None = None, cfg: dict | None = 
         else:
             d = m["dilution"]
             lines += [f"Liquidity {_money(m['liquidity'])}; trailing burn (capex - OCF) {_money(m['burn'])} a year; "
-                      + (f"**runway about {m['months']:.0f} months**." if m["months"] else "not burning cash."), "",
+                      + f"**{_runway_text(m['months'])}**.", "",
                       f"Dilution: {d['label']}: " + (f"{d['value']:+.1%} ({d['source']})" if d["value"] is not None
                                                       else f"{d['status']} ({'; '.join(d['notes'])})") + "."]
             a = m["antidilutive"]
