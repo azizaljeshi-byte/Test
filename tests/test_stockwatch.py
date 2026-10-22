@@ -2108,7 +2108,7 @@ def test_valuation_reverse_math_is_hand_checkable():
 def test_valuation_compounder_reverse_grid_and_lease_adjustment():
     lease = {"RightOfUseAssetObtainedInExchangeForFinanceLeaseLiability": {"units": {"USD": [_vfy(2025, 40e6)]}}}
     r = vl.value_company("VEX", _vcompany(extra=lease), SOFTWARE, PRICE, VDAY)
-    assert r["classification"]["family"] == vl.COMPOUNDER and "no cycle in 6 years" in r["classification"]["rule"]
+    assert r["classification"]["family"] == vl.COMPOUNDER and "no cycle in 6 usable years" in r["classification"]["rule"]
     m = r["model"]
     assert m["status"] == vl.COMPUTED and m["market_cap"] == pytest.approx(1000e6)
     base, leased = m["grids"]
@@ -2217,3 +2217,87 @@ def test_valuation_report_and_command(monkeypatch):
         monkeypatch.setattr(vl, "value_ticker", lambda t, as_of, price, cfg: next(it))
         assert vl.main(["T"] * len(results) + ["--markdown", "/dev/null"]) == code
     assert vl._price_arg("msft=430.5") == ("MSFT", vl._input("Share price", 430.5, "usable", "given on the command line"))
+
+
+def test_valuation_debt_contradictions_and_partial_net_debt_aren_t_trusted():
+    day = "2025-12-31"
+    # LongTermDebt 310 vs noncurrent 250 + current 50: contradictory, so no total and no debt lenses
+    bad = _vcompany(extra={"LongTermDebt": {"units": {"USD": [_vinst(day, 310e6)]}}})
+    d = vl.total_debt(bad, VDAY, day)
+    assert d["status"] == "needs reconciliation" and d["value"] is None and "contradicts" in d["notes"][0]
+    lenses = {x["lens"]: x for x in vl.value_company("VEX", bad, SOFTWARE, PRICE, VDAY)["risk"]}
+    assert lenses["Debt / TTM operating cash flow"]["value"] is None
+    assert lenses["Net debt (debt - cash - short-term investments)"]["value"] is None
+    # commercial paper may sit inside short-term borrowings: not added blindly
+    nested = _vcompany(extra={"ShortTermBorrowings": {"units": {"USD": [_vinst(day, 40e6)]}},
+                              "CommercialPaper": {"units": {"USD": [_vinst(day, 30e6)]}}})
+    assert vl.total_debt(nested, VDAY, day)["status"] == "needs reconciliation"
+    # short-term investments not reported: net debt has no value, and the partial figure is labelled
+    net = {x["lens"]: x for x in vl.value_company("VEX", _vcompany(), SOFTWARE, PRICE, VDAY)["risk"]}
+    nd = net["Net debt (debt - cash - short-term investments)"]
+    assert nd["value"] is None and "Partial only: debt less cash = 100.0M" in nd["text"]
+    with_sti = _vcompany(extra={"ShortTermInvestments": {"units": {"USD": [_vinst(day, 60e6)]}}})
+    nd = {x["lens"]: x for x in vl.value_company("VEX", with_sti, SOFTWARE, PRICE, VDAY)["risk"]}[
+        "Net debt (debt - cash - short-term investments)"]
+    assert nd["value"] == pytest.approx(40e6)
+
+
+def _quarters(*facts):
+    return {"WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": [
+        {"start": s, "end": e, "val": v, "form": form, "filed": filed, "accn": accn}
+        for s, e, v, form, filed, accn in facts]}}}
+
+
+def test_valuation_dilution_needs_two_clean_comparable_quarters():
+    ref = {"end": "2025-12-31", "fy_end": "2025-12-31", "age": 60}
+    q24 = ("2024-10-01", "2024-12-31", 100e6, "10-K", "2025-02-15", "0000000009-25-000001")
+    q25 = ("2025-10-01", "2025-12-31", 120e6, "10-K", "2026-02-15", "0000000009-26-000001")
+    clean = vl._share_growth({"facts": {"us-gaap": _quarters(q24, q25)}}, VDAY, ref)
+    assert clean["status"] == "usable" and clean["value"] == pytest.approx(0.20)
+    assert "EPS denominator" in clean["label"] and "0000000009-25-000001" in clean["source"]
+    # two values for the latest quarter in one filing: no percentage
+    dup = vl._share_growth({"facts": {"us-gaap": _quarters(q24, q25, q25[:2] + (125e6,) + q25[3:])}}, VDAY, ref)
+    assert dup["status"] == "unknown" and dup["value"] is None and "no number is trusted" in dup["notes"][0]
+    # the year-earlier quarter revised by a later filing: needs reconciliation, no percentage
+    revised = vl._share_growth({"facts": {"us-gaap": _quarters(
+        q24, q25, q24[:2] + (110e6, "10-K", "2026-02-15", "0000000009-26-000001"))}}, VDAY, ref)
+    assert revised["status"] == "needs reconciliation" and revised["value"] is None
+    zero = vl._share_growth({"facts": {"us-gaap": _quarters(q24[:2] + (0.0,) + q24[3:], q25)}}, VDAY, ref)
+    assert zero["value"] is None and "zero" in zero["notes"][-1]
+    aged = vl._share_growth({"facts": {"us-gaap": _quarters(q24, q25)}}, VDAY,
+                            {"end": "2026-06-30", "fy_end": "2025-12-31", "age": 10})
+    assert aged["status"] == "usable"           # a 10-K quarter is judged against the latest fiscal year
+    q_aged = ("2025-07-01", "2025-09-30", 118e6, "10-Q", "2025-11-01", "0000000009-25-000030")
+    q_prev = ("2024-07-01", "2024-09-30", 98e6, "10-Q", "2024-11-01", "0000000009-24-000030")
+    stale = vl._share_growth({"facts": {"us-gaap": _quarters(q_prev, q_aged)}}, VDAY, ref)
+    assert stale["status"] == "stale" and stale["value"] is None
+
+
+def test_valuation_classifier_ignores_untrusted_fiscal_years():
+    # FY2023 revenue: two values in one filing, one of them a 30% drop. It can't trigger "cyclical",
+    # and the company can't be called a compounder either: insufficient evidence, naming the year.
+    dup = _vcompany(extra={})
+    dup["facts"]["us-gaap"]["Revenues"]["units"]["USD"].append(_vfy(2023, 420e6))
+    r = vl.value_company("DUP", dup, SOFTWARE, PRICE, VDAY)
+    assert r["classification"]["family"] == vl.INSUFFICIENT
+    assert "FY 2023-12-31: Revenue unknown" in r["classification"]["rule"]
+    assert r["model"]["status"] == vl.UNAVAILABLE
+    # FY2022 revenue revised by a later 10-K: the year needs reconciliation, so no compounder call
+    rev = _vcompany()
+    rev["facts"]["us-gaap"]["Revenues"]["units"]["USD"].append(
+        {"start": "2022-01-01", "end": "2022-12-31", "val": 640e6, "form": "10-K", "filed": "2024-02-15",
+         "accn": "0000000009-24-000001"})
+    r = vl.value_company("REV", rev, SOFTWARE, PRICE, VDAY)
+    assert r["classification"]["family"] == vl.INSUFFICIENT and "FY 2022-12-31: Revenue needs reconciliation" in r[
+        "classification"]["rule"]
+    # another revenue tag disagreeing for a year (not a known scope pair) also blocks
+    alt = _vcompany(extra={"RevenueFromContractWithCustomerExcludingAssessedTax": {"units": {"USD": [_vfy(2021, 400e6)]}}})
+    r = vl.value_company("ALT", alt, SOFTWARE, PRICE, VDAY)
+    assert r["classification"]["family"] == vl.INSUFFICIENT and "disagrees with Revenues" in r["classification"]["rule"]
+    # a drop between two clean years is still evidence of a cycle, even with an untrusted year elsewhere
+    cyc = _vcompany(revenue=[500e6, 600e6, 700e6, 480e6, 650e6, 750e6])
+    cyc["facts"]["us-gaap"]["Revenues"]["units"]["USD"].append(_vfy(2020, 520e6))
+    r = vl.value_company("CYC", cyc, SOFTWARE, PRICE, VDAY)
+    assert r["classification"]["family"] == vl.CYCLICAL and "2023-12-31: revenue -31%" in r["classification"]["rule"]
+    md = vl.markdown([r], VDAY, ua_status="configured")
+    assert "| Data issues |" in md and "Revenue unknown" in md

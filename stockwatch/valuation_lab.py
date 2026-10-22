@@ -141,41 +141,75 @@ def fetch_price(ticker: str, as_of: date) -> dict:
 # --------------------------------------------------------- classification
 
 def annual_history(company: dict, key: str, as_of: date) -> list[dict]:
-    """Fiscal-year figures filed by as_of, newest first: the first concept in priority order that
-    reports a year wins, at its latest filing. Periods ending within 300 days of a newer one are dropped."""
+    """Fiscal-year figures filed by as_of, newest first, each with its source and a quality status.
+
+    The first concept in priority order that reports a year wins, at its latest filing. The same
+    checks as sec_quality apply per year: two values in one filing make the year unknown (no
+    number), a revision in a later filing or another tag disagreeing (outside a known scope pair)
+    makes it needs reconciliation. Periods ending within 300 days of a newer one are dropped."""
     _label, _kind, unit, concepts = FIELDS[key]
     by_concept = sq._candidates(company, concepts, unit, as_of)[0]
-    years: dict[str, dict] = {}
-    for c in concepts:
-        for f in by_concept.get(c, []):
-            if not sq._is_annual(f):
-                continue
-            cur = years.get(f["end"])
-            if cur is None or (cur["concept"] == c and (f.get("filed") or "") > cur["filed"]):
-                years[f["end"]] = {"end": f["end"], "value": f["val"], "concept": c, "filed": f.get("filed") or "",
-                                   "accn": f.get("accn")}
+    annual = {c: [f for f in fs if sq._is_annual(f)] for c, fs in by_concept.items()}
+    rows: list[dict] = []
+    for end in sorted({f["end"] for fs in annual.values() for f in fs}, reverse=True):
+        concept = next(c for c in concepts if any(f["end"] == end for f in annual.get(c, [])))
+        group = sorted((f for f in annual[concept] if f["end"] == end), key=lambda f: f.get("filed") or "")
+        chosen, name = group[-1], concept.split(":")[-1]
+        flags: list[tuple[str, str]] = []
+        if len({f.get("start") for f in group}) > 1:
+            flags.append((sq.RECONCILE, "two period starts for this fiscal year"))
+        if (contested := sq._contest(annual[concept], chosen, unit)):
+            flags.append(contested)
+        for other in concepts:
+            same = [f for f in annual.get(other, []) if other != concept and f["end"] == end
+                    and f.get("start") == chosen.get("start")]
+            if same:
+                alt = max(same, key=lambda f: f.get("filed") or "")
+                if sq._differs(alt["val"], chosen["val"]) and not sq._known_scope_pair(key, name, other):
+                    flags.append((sq.RECONCILE, f"{other.split(':')[-1]} {_money(alt['val'])} disagrees with {name} "
+                                                f"{_money(chosen['val'])}"))
+        status = sq._status(flags)
+        rows.append({"end": end, "start": chosen.get("start"), "concept": name,
+                     "value": None if status == sq.UNKNOWN else chosen["val"], "status": status,
+                     "issues": [t for _, t in flags], "accn": chosen.get("accn"), "form": chosen.get("form"),
+                     "filed": chosen.get("filed")})
     kept: list[dict] = []
-    for r in sorted(years.values(), key=lambda r: r["end"], reverse=True):
+    for r in rows:
         if not kept or sq._gap(kept[-1]["end"], r["end"]) >= 300:
             kept.append(r)
     return kept
 
 
+EVIDENCE_FIELDS = ("revenue", "operating_income", "operating_cash_flow", "capex")
+
+
 def _evidence(company: dict, as_of: date, n: int) -> list[dict]:
-    hist = {k: {r["end"]: r["value"] for r in annual_history(company, k, as_of)}
-            for k in ("revenue", "operating_income", "operating_cash_flow", "capex")}
-    ends = [r["end"] for r in annual_history(company, "revenue", as_of)][:n]
+    """One row per fiscal year (by revenue's years, newest first): each field's value and status."""
+    hist = {k: {r["end"]: r for r in annual_history(company, k, as_of)} for k in EVIDENCE_FIELDS}
     rows = []
-    for end in ends:
-        ocf, capex = hist["operating_cash_flow"].get(end), hist["capex"].get(end)
-        rows.append({"end": end, "revenue": hist["revenue"].get(end), "operating_income": hist["operating_income"].get(end),
-                     "operating_cash_flow": ocf, "capex": capex,
-                     "ocf_minus_capex": ocf - capex if ocf is not None and capex is not None else None})
+    for end in sorted(hist["revenue"], reverse=True)[:n]:
+        row = {"end": end, "status": {}, "issues": []}
+        for k in EVIDENCE_FIELDS:
+            h = hist[k].get(end)
+            row[k] = h["value"] if h else None
+            row["status"][k] = h["status"] if h else sq.UNKNOWN
+            if not h:
+                row["issues"].append(f"{FIELDS[k][0]} not reported")
+            elif h["status"] != sq.USABLE:
+                row["issues"].append(f"{FIELDS[k][0]} {h['status']}: {'; '.join(h['issues'])}")
+            row.setdefault("sources", {})[k] = f"{h['concept']} {h['form']} {h['accn']}" if h else None
+        ok = row["status"]["operating_cash_flow"] == row["status"]["capex"] == sq.USABLE
+        row["ocf_minus_capex"] = row["operating_cash_flow"] - row["capex"] if ok else None
+        rows.append(row)
     return rows
 
 
 def classify(q: dict, company: dict, as_of: date, cfg: dict) -> dict:
-    """Which kind of valuation fits, the rule that decided it, and the evidence. Deterministic."""
+    """Which kind of valuation fits, the rule that decided it, and the evidence. Deterministic.
+
+    Only fiscal years whose figures pass the quality checks count. A cycle found in usable years
+    is evidence; ruling a cycle out (to call a company a compounder) needs every year in the window
+    usable and consecutive, otherwise the answer is insufficient evidence, naming the years."""
     c = cfg["classifier"]
     sect = q["sector"]
     sic = sect["sic"]
@@ -193,28 +227,38 @@ def classify(q: dict, company: dict, as_of: date, cfg: dict) -> dict:
         out["evidence"] = rows
         ocf, capex = _ttm_input(q, "operating_cash_flow"), _ttm_input(q, "capex")
         blocked = _blockers([ocf, capex])
+        usable = lambda r, k: r["status"][k] == sq.USABLE and r[k] is not None
+        pairs = [(a, b) for a, b in zip(rows, rows[1:]) if sq._gap(a["end"], b["end"]) <= 400]
+        drops = [f"FY ending {a['end']}: revenue {(a['revenue'] / b['revenue'] - 1):+.0%}" for a, b in pairs
+                 if usable(a, "revenue") and usable(b, "revenue") and b["revenue"] > 0
+                 and a["revenue"] / b["revenue"] - 1 <= -c["cyclical_revenue_drop"]]
+        oi = [r["operating_income"] for r in rows if usable(r, "operating_income")]
+        swing = any(v < 0 for v in oi) and any(v > 0 for v in oi)
+        recent = rows[:c["compounder_years"]]
+        gaps = [f"no fiscal year between {b['end']} and {a['end']}" for a, b in zip(rows, rows[1:])
+                if sq._gap(a["end"], b["end"]) > 400]
+        untrusted = [f"FY {r['end']}: " + "; ".join(r["issues"]) for r in rows
+                     if not (usable(r, "revenue") and usable(r, "operating_income"))]
+        untrusted += [f"FY {r['end']}: " + "; ".join(r["issues"]) for r in recent
+                      if r["ocf_minus_capex"] is None and usable(r, "revenue") and usable(r, "operating_income")]
         if blocked:
             out.update(family=INSUFFICIENT, rule="trailing cash flow can't be read: " + "; ".join(blocked))
         elif ocf["value"] - capex["value"] < 0:
             out.update(family=CASH_BURN, rule=f"TTM operating cash flow minus capex is {_money(ocf['value'] - capex['value'])}")
+        elif drops or swing:
+            out.update(family=CYCLICAL, rule="; ".join(drops + ([f"an operating loss and an operating profit within "
+                                                                 f"{len(rows)} fiscal years"] if swing else [])))
         elif len(rows) < c["min_history_years"]:
             out.update(family=INSUFFICIENT, rule=f"only {len(rows)} fiscal years of revenue: a cycle can't be ruled out")
+        elif gaps or untrusted:
+            out.update(family=INSUFFICIENT, rule="a cycle can't be ruled out from trusted figures: "
+                                                 + "; ".join(gaps + untrusted))
+        elif all(r["ocf_minus_capex"] > 0 for r in recent):
+            out.update(family=COMPOUNDER, rule=f"OCF minus capex positive in each of the last {len(recent)} fiscal "
+                                               f"years and no cycle in {len(rows)} usable years")
         else:
-            drops = [f"FY ending {a['end']}: revenue {(a['revenue'] / b['revenue'] - 1):+.0%}"
-                     for a, b in zip(rows, rows[1:])
-                     if a["revenue"] and b["revenue"] and a["revenue"] / b["revenue"] - 1 <= -c["cyclical_revenue_drop"]]
-            oi = [r["operating_income"] for r in rows if r["operating_income"] is not None]
-            swing = any(v < 0 for v in oi) and any(v > 0 for v in oi)
-            recent = rows[:c["compounder_years"]]
-            if drops or swing:
-                out.update(family=CYCLICAL, rule="; ".join(drops + (["an operating loss and an operating profit within "
-                                                                      f"{len(rows)} fiscal years"] if swing else [])))
-            elif all(r["ocf_minus_capex"] is not None and r["ocf_minus_capex"] > 0 for r in recent):
-                out.update(family=COMPOUNDER, rule=f"OCF minus capex positive in each of the last {len(recent)} fiscal "
-                                                   f"years and no cycle in {len(rows)} years")
-            else:
-                out.update(family=INSUFFICIENT, rule="OCF minus capex not positive (or not reported) in each of the "
-                                                     f"last {len(recent)} fiscal years, and no cycle found")
+            out.update(family=INSUFFICIENT, rule="OCF minus capex not positive in each of the last "
+                                                 f"{len(recent)} fiscal years, and no cycle found")
     out["not_applicable"] = NOT_APPLICABLE_MODELS[out["family"]]
     return out
 
@@ -307,22 +351,35 @@ def reverse_valuation(q: dict, company: dict, price: dict, as_of: date, cfg: dic
 
 # -------------------------------------------------------------- runway
 
-def _share_growth(company: dict, as_of: date) -> dict:
-    """Diluted weighted shares in the latest quarter against the same quarter a year earlier."""
-    label, _kind, unit, concepts = FIELDS["diluted_shares"]
-    facts = [f for fs in sq._candidates(company, concepts, unit, as_of)[0].values() for f in fs
-             if f.get("start") and 70 <= _days(f) <= 110]
-    if not facts:
-        return _input("Diluted shares, latest quarter vs a year earlier", None, sq.UNKNOWN, None, ["no quarterly figure"])
-    latest = max(facts, key=lambda f: (f["end"], f.get("filed") or ""))
-    target = date.fromisoformat(latest["end"]) - timedelta(days=365)
+def _share_growth(company: dict, as_of: date, ref: dict) -> dict:
+    """Growth in the diluted weighted-average share count (the EPS denominator) from the same quarter a
+    year earlier. It isn't the number of shares issued. Both quarters must pass the quality checks
+    (no contested or revised values) and the latest must be current; otherwise no percentage."""
+    label = "Diluted weighted-average shares (EPS denominator), latest quarter vs a year earlier"
+    _l, _k, unit, concepts = FIELDS["diluted_shares"]
+    by_concept = sq._candidates(company, concepts, unit, as_of)[0]
+    quarters = {c: [f for f in fs if f.get("start") and 70 <= _days(f) <= 110] for c, fs in by_concept.items()}
+    end = max((f["end"] for fs in quarters.values() for f in fs), default=None)
+    if not end:
+        return _input(label, None, sq.UNKNOWN, None, ["no quarterly figure"])
+    concept = next(c for c in concepts if any(f["end"] == end for f in quarters.get(c, [])))
+    facts = quarters[concept]
+    latest = max((f for f in facts if f["end"] == end), key=lambda f: f.get("filed") or "")
+    target = date.fromisoformat(end) - timedelta(days=365)
     prior = [f for f in facts if abs((date.fromisoformat(f["end"]) - target).days) <= 10]
     if not prior:
-        return _input("Diluted shares, latest quarter vs a year earlier", None, sq.UNKNOWN, None,
-                      [f"no quarter ending about {target}"])
+        return _input(label, None, sq.UNKNOWN, None, [f"no {concept.split(':')[-1]} quarter ending about {target}"])
     before = max(prior, key=lambda f: f.get("filed") or "")
-    return _input("Diluted shares, latest quarter vs a year earlier", latest["val"] / before["val"] - 1, sq.USABLE,
-                  f"{latest['val']:,.0f} (quarter to {latest['end']}) vs {before['val']:,.0f} (quarter to {before['end']})")
+    cite = lambda f: f"{f['start']} to {f['end']}: {f['val']:,.0f}, {f.get('form')} {f.get('accn')} filed {f.get('filed')}"
+    flags = [c for c in (sq._contest(facts, latest, "shares"), sq._contest(facts, before, "shares")) if c]
+    behind = sq._behind(latest, ref)
+    if behind is not None and behind > sq.INSTANT_STALE:
+        flags.append((sq.STALE, f"latest quarter ends {end}, {behind} days before the company's latest report"))
+    if not before["val"]:
+        flags.append((sq.UNKNOWN, "the year-earlier count is zero"))
+    status = sq._status(flags)
+    value = latest["val"] / before["val"] - 1 if status == sq.USABLE else None
+    return _input(label, value, status, f"{cite(latest)} vs {cite(before)}", [t for _, t in flags])
 
 
 def runway(q: dict, company: dict, as_of: date) -> dict:
@@ -341,7 +398,7 @@ def runway(q: dict, company: dict, as_of: date) -> dict:
     else:
         notes.insert(0, f"Short-term investments are {sti['status']}: left out, so runway may be understated.")
     burn = capex["value"] - ocf["value"]
-    dilution = _share_growth(company, as_of)
+    dilution = _share_growth(company, as_of, q["reference"])
     antidilutive = next((d for d in q["shares"]["dilution"] if d["key"] == "antidilutive"), None)
     return out | {"status": COMPUTED, "liquidity": liquidity, "burn": burn,
                   "months": liquidity / burn * 12 if burn > 0 else None,
@@ -367,7 +424,15 @@ def total_debt(company: dict, as_of: date, day: str | None) -> dict:
     ltd, nc, cur, dc = (facts[c] for c in names[:4])
     extras = sum(v for c, v in facts.items() if c in ("ShortTermBorrowings", "CommercialPaper") and v)
     status = sq.USABLE
-    if ltd is not None and nc is not None and cur is not None and not sq._differs(ltd, nc + cur):
+    if facts["ShortTermBorrowings"] is not None and facts["CommercialPaper"] is not None:
+        status = sq.RECONCILE
+        notes.append("short-term borrowings and commercial paper are both tagged: commercial paper may already be "
+                     "inside short-term borrowings, so they aren't safely added")
+    if ltd is not None and nc is not None and cur is not None and sq._differs(ltd, nc + cur):
+        return _input(label, None, sq.RECONCILE, None, [
+            f"LongTermDebt {_money(ltd)} contradicts noncurrent {_money(nc)} + current {_money(cur)} = "
+            f"{_money(nc + cur)}: no total is trusted"])
+    if ltd is not None and nc is not None and cur is not None:
         total, used = ltd, f"LongTermDebt {_money(ltd)} (= noncurrent + current portion)"
     elif nc is not None:
         total, used = nc + (cur or 0), f"LongTermDebtNoncurrent {_money(nc)}" + (
@@ -395,6 +460,21 @@ def total_debt(company: dict, as_of: date, day: str | None) -> dict:
     return _input(label, total + extras, status, used, notes)
 
 
+def _net_debt(debt: dict, cash: dict, sti: dict) -> dict:
+    """Debt - cash - short-term investments, only when all three are usable. With short-term
+    investments not usable, the debt-less-cash figure is shown but labelled partial, with no value."""
+    name = "Net debt (debt - cash - short-term investments)"
+    blocked = _blockers([debt, cash])
+    if blocked:
+        return {"lens": name, "value": None, "text": "unknown: " + "; ".join(blocked)}
+    if sti["status"] != sq.USABLE or sti["value"] is None:
+        return {"lens": name, "value": None,
+                "text": f"unknown: short-term investments are {sti['status']}. Partial only: debt less cash = "
+                        f"{_money(debt['value'] - cash['value'])}"}
+    v = debt["value"] - cash["value"] - sti["value"]
+    return {"lens": name, "value": v, "text": _money(v)}
+
+
 def risk_lenses(q: dict, company: dict, price: dict, as_of: date, cfg: dict) -> list[dict]:
     """P/E, owner cash yield, debt against operating cash, and how equipment-heavy the business is."""
     shares = _cover_input(q)
@@ -417,9 +497,7 @@ def risk_lenses(q: dict, company: dict, price: dict, as_of: date, cfg: dict) -> 
              lambda: (ocf["value"] - capex["value"] - sbc["value"]) / mcap, lambda v: f"{v:.1%}"),
         lens("Debt / TTM operating cash flow", [debt, ocf], lambda: debt["value"] / ocf["value"] if ocf["value"] > 0 else None,
              lambda v: f"{v:.1f} years of operating cash" if v is not None else "n/a: operating cash flow not positive"),
-        lens("Net debt (debt - cash - short-term investments)", [debt, cash],
-             lambda: debt["value"] - cash["value"] - (sti["value"] if sti["status"] == sq.USABLE and sti["value"] else 0),
-             lambda v: _money(v) + ("" if sti["status"] == sq.USABLE else " (short-term investments left out)")),
+        _net_debt(debt, cash, sti),
         lens("Capex / revenue (TTM)", [capex, rev], lambda: capex["value"] / rev["value"],
              lambda v: f"{v:.0%}" + (" — equipment-heavy" if v > cfg["risk"]["capex_heavy"] else "")),
         lens("Capex / D&A (TTM)", [capex, dna], lambda: capex["value"] / dna["value"] if dna["value"] else None,
@@ -515,10 +593,11 @@ def markdown(reports: list[dict], as_of: date | None = None, cfg: dict | None = 
         lines += [f"**Classification: {cls['family']}.** Why: {cls['rule']}.", "",
                   "Not used here: " + "; ".join(cls["not_applicable"]) + ".", ""]
         if cls["evidence"]:
-            lines += ["| Fiscal year to | Revenue | Operating income | OCF | Capex | OCF - capex |", "|---|---|---|---|---|---|"]
+            lines += ["| Fiscal year to | Revenue | Operating income | OCF | Capex | OCF - capex | Data issues |",
+                      "|---|---|---|---|---|---|---|"]
             lines += [f"| {e['end']} | {_money(e['revenue'])} | {_money(e['operating_income'])} | "
-                      f"{_money(e['operating_cash_flow'])} | {_money(e['capex'])} | {_money(e['ocf_minus_capex'])} |"
-                      for e in cls["evidence"]]
+                      f"{_money(e['operating_cash_flow'])} | {_money(e['capex'])} | {_money(e['ocf_minus_capex'])} | "
+                      f"{'; '.join(e['issues']) or '—'} |" for e in cls["evidence"]]
             lines.append("")
         lines += [f"### Model: {m['model']} ({m['status']})", ""]
         if m.get("inputs"):
