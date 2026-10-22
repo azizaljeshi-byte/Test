@@ -11,7 +11,7 @@
 - [ ] Screen changes checked at 390px (or: no screen changes)
 
 ## Methodology impact
-<!-- Does this change how stocks are scored, judged or traded (scores, signals, verdicts, trade plans, thresholds)? See docs/COLLABORATION.md. -->
+<!-- Does this change how stocks are scored, judged or traded (scores, signals, verdicts, trade plans, thresholds)? See docs/COLLABORATION.md. Tick exactly one. -->
 - [ ] None
 - [ ] Yes, requested by the owner. What changes and why:
 

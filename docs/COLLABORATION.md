@@ -13,8 +13,28 @@ pull request where everyone can see it. None of the tools talk to each other dir
 | **ChatGPT** | **First independent review.** Checks that the pull request does what its description says, that the methodology impact is stated honestly, that the wording is plain English for a phone reader, and what could go wrong after deploy. Builds on `chatgpt/<topic>` branches when the owner assigns it work. | Merge, or push to another tool's branch. |
 | **Codex** | **Second independent review**, after ChatGPT. Reviews the code itself: correctness, edge cases, tests, rate limits, secrets, and that missing data stays "unknown". Builds on `codex/<topic>` branches when the owner assigns it work. | Merge, or push to another tool's branch. |
 
-Whoever writes a pull request never counts as its reviewer. When ChatGPT or Codex writes one, the other two
-review it.
+Whoever writes a pull request never counts as its reviewer:
+
+| Author | First review | Second review |
+|---|---|---|
+| Claude | ChatGPT | Codex |
+| ChatGPT | Claude | Codex |
+| Codex | ChatGPT | Claude |
+
+If a reviewer isn't available, the owner decides whether to wait or to merge with one review. The pull
+request should say which review was skipped.
+
+## One GitHub identity
+
+All three tools currently act on GitHub through the owner's account. So:
+
+- **Reviews are pull request comments, not formal approvals.** GitHub refuses "Approve" on your own pull
+  request. Start each review comment with a bold heading naming the reviewer, e.g. **ChatGPT review** or
+  **Codex review**, so the history shows who said what.
+- **Branch protection:** require a pull request before merging, but set **required approvals to 0**. With
+  approvals required, nobody could merge, the owner included.
+- **For approvals GitHub enforces,** each tool needs its own GitHub identity (for example a separate bot
+  account or GitHub App). Until then, the owner's merge is the approval.
 
 ## The workflow
 

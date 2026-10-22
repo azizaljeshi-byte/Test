@@ -7,6 +7,7 @@ workflow between Claude, ChatGPT, Codex and the owner are in `docs/COLLABORATION
 ## Your role
 - **Reviewing:** you are the **second independent reviewer** of pull requests, after ChatGPT. Review the code itself: correctness, edge cases, tests, rate limits, secrets, and that missing data stays "unknown".
 - **Labelling findings:** mark each finding **blocking** or **non-blocking**. Comment on the pull request; don't push to the author's branch.
+- **Signing reviews:** all the tools post through the owner's GitHub account, so a formal "Approve" isn't possible. Post your review as a pull request comment that starts with **Codex review**.
 - **Building:** when the owner assigns you work, build it on a `codex/<topic>` branch and open a pull request.
 
 ## Working on this repo
