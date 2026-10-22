@@ -19,8 +19,12 @@
 <!-- What could go wrong once merged (Streamlit deploys from the default branch)? New secrets or settings needed? Does the owner need to reboot the app? How do we roll back? -->
 
 ## Reviews
-- [ ] ChatGPT (first review)
-- [ ] Codex (second review)
+<!-- Reviewers follow the author-specific order in docs/COLLABORATION.md; the author never reviews their own pull request.
+     Claude's PRs: ChatGPT, then Codex. ChatGPT's PRs: Claude, then Codex. Codex's PRs: ChatGPT, then Claude. -->
+Author: <!-- Claude / ChatGPT / Codex -->
+- [ ] First review by: <!-- name -->
+- [ ] Second review by: <!-- name -->
+- [ ] Skipped review and the owner's decision: <!-- "none", or which review and why -->
 - [ ] Owner approval to merge
 
 <!-- Repo is public: no keys, ntfy topic, Google Sheet link or holdings in this PR. -->

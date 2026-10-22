@@ -5,15 +5,15 @@ first: features, code map, data sources, configuration, decisions and known limi
 workflow between Claude, ChatGPT, Codex and the owner are in `docs/COLLABORATION.md`.
 
 ## Your role
-- **Reviewing:** you are the **second independent reviewer** of pull requests, after ChatGPT. Review the code itself: correctness, edge cases, tests, rate limits, secrets, and that missing data stays "unknown".
+- **Reviewing:** you are the **second independent reviewer** of pull requests written by Claude or ChatGPT. You never review your own; the order for each author is in the table in `docs/COLLABORATION.md`. Review the code itself: correctness, edge cases, tests, rate limits, secrets, and that missing data stays "unknown".
 - **Labelling findings:** mark each finding **blocking** or **non-blocking**. Comment on the pull request; don't push to the author's branch.
-- **Signing reviews:** all the tools post through the owner's GitHub account, so a formal "Approve" isn't possible. Post your review as a pull request comment that starts with **Codex review**.
+- **Asking for and signing reviews:** you post on GitHub as `chatgpt-codex-connector[bot]`, and a `@codex review` comment on a pull request asks for your review. Start the review with **Codex review** and mark each finding blocking or non-blocking. Claude and ChatGPT post through the owner's account, so their reviews are signed comments rather than formal approvals.
 - **Building:** when the owner assigns you work, build it on a `codex/<topic>` branch and open a pull request.
 
 ## Working on this repo
 - **Default branch:** `claude/stock-dashboard-alerts-rr9r83`. Streamlit Cloud deploys from it, so merging is deploying. **Never commit or push to it directly.**
 - **Branches:** branch off the latest default branch, one topic per branch. Don't push to `claude/*` or `chatgpt/*` branches.
-- **Pull requests:** open one into the default branch and fill in `.github/pull_request_template.md`. Answer every blocking finding with a fix pushed to the same branch, or a reply saying why not.
+- **Pull requests:** open one into the default branch and fill in `.github/pull_request_template.md`. Your pull requests are reviewed by ChatGPT first, then Claude. Answer every blocking finding with a fix pushed to the same branch, or a reply saying why not.
 - **Merging:** never merge, not even your own pull request. The owner merges and then reboots the app.
 - **Methodology:** don't change scoring, signals, verdicts, trade plans or their thresholds unless the owner asks. When a change does, say so in the pull request. The list of protected files is in `docs/COLLABORATION.md`.
 - **Tests:** `python -m pytest -q` (no network needed; Yahoo, SEC and Finnhub are faked). Keep them green and add tests for new logic.

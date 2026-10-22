@@ -7,7 +7,7 @@ Claude, ChatGPT and Codex share this repo through branches and pull requests. Ro
 
 - **Default branch:** `claude/stock-dashboard-alerts-rr9r83`. Streamlit Cloud deploys from it, so merging is deploying. **Never commit or push to it directly.**
 - **Branches:** work on a feature branch off the latest default branch, named `claude/<topic>`, one topic per branch. Don't push to `chatgpt/*` or `codex/*` branches.
-- **Pull requests:** open one into the default branch and fill in `.github/pull_request_template.md`. ChatGPT reviews first, then Codex. Answer every blocking finding with a fix pushed to the same branch, or a reply saying why not.
+- **Pull requests:** open one into the default branch and fill in `.github/pull_request_template.md`. Your pull requests are reviewed by ChatGPT first, then Codex; when you review ChatGPT's or Codex's, follow the order in `docs/COLLABORATION.md`. Answer every blocking finding with a fix pushed to the same branch, or a reply saying why not.
 - **Merging:** never merge, not even your own pull request. The owner merges and then reboots the app.
 - **Methodology:** don't change scoring, signals, verdicts, trade plans or their thresholds unless the owner asks. When a change does, say so in the pull request.
 - Tests: `python -m pytest -q` (no network needed; Yahoo, SEC and Finnhub are faked). Keep them green and add tests for new logic.

@@ -9,9 +9,9 @@ pull request where everyone can see it. None of the tools talk to each other dir
 | Who | Does | Doesn't |
 |---|---|---|
 | **Project owner** | Decides what gets built and approves any change to the investment methodology. Merges pull requests, then reboots the Streamlit app. Manages secrets and repo settings. | |
-| **Claude** (Claude Code) | Builds changes the owner asks for on `claude/<topic>` branches. Runs the tests, opens the pull request, answers review comments and pushes fixes to the same branch. | Merge, push to the default branch, or push to another tool's branch. |
-| **ChatGPT** | **First independent review.** Checks that the pull request does what its description says, that the methodology impact is stated honestly, that the wording is plain English for a phone reader, and what could go wrong after deploy. Builds on `chatgpt/<topic>` branches when the owner assigns it work. | Merge, or push to another tool's branch. |
-| **Codex** | **Second independent review**, after ChatGPT. Reviews the code itself: correctness, edge cases, tests, rate limits, secrets, and that missing data stays "unknown". Builds on `codex/<topic>` branches when the owner assigns it work. | Merge, or push to another tool's branch. |
+| **Claude** (Claude Code) | Builds changes the owner asks for on `claude/<topic>` branches. Runs the tests, opens the pull request, answers review comments and pushes fixes to the same branch. Reviews pull requests written by ChatGPT or Codex (see the table below). | Merge, push to the default branch, or push to another tool's branch. |
+| **ChatGPT** | **First independent review** of pull requests written by Claude or Codex. Checks that the pull request does what its description says, that the methodology impact is stated honestly, that the wording is plain English for a phone reader, and what could go wrong after deploy. Builds on `chatgpt/<topic>` branches when the owner assigns it work. | Merge, or push to another tool's branch. |
+| **Codex** | **Second independent review** of pull requests written by Claude or ChatGPT. Reviews the code itself: correctness, edge cases, tests, rate limits, secrets, and that missing data stays "unknown". Builds on `codex/<topic>` branches when the owner assigns it work. | Merge, or push to another tool's branch. |
 
 Whoever writes a pull request never counts as its reviewer:
 
@@ -24,17 +24,18 @@ Whoever writes a pull request never counts as its reviewer:
 If a reviewer isn't available, the owner decides whether to wait or to merge with one review. The pull
 request should say which review was skipped.
 
-## One GitHub identity
+## GitHub identities
 
-All three tools currently act on GitHub through the owner's account. So:
+Claude and ChatGPT act on GitHub through the owner's account. Codex posts as its own bot,
+`chatgpt-codex-connector[bot]`; ask for its review by commenting `@codex review` on the pull request. So:
 
-- **Reviews are pull request comments, not formal approvals.** GitHub refuses "Approve" on your own pull
-  request. Start each review comment with a bold heading naming the reviewer, e.g. **ChatGPT review** or
-  **Codex review**, so the history shows who said what.
+- **Claude's and ChatGPT's reviews are pull request comments, not formal approvals.** GitHub refuses
+  "Approve" on your own pull request. Start each review comment with a bold heading naming the reviewer,
+  e.g. **ChatGPT review**, so the history shows who said what. Codex's reviews already carry its name.
 - **Branch protection:** require a pull request before merging, but set **required approvals to 0**. With
   approvals required, nobody could merge, the owner included.
-- **For approvals GitHub enforces,** each tool needs its own GitHub identity (for example a separate bot
-  account or GitHub App). Until then, the owner's merge is the approval.
+- **For approvals GitHub enforces,** Claude and ChatGPT would each need their own GitHub identity (for
+  example a separate bot account or GitHub App). Until then, the owner's merge is the approval.
 
 ## The workflow
 
@@ -45,7 +46,9 @@ All three tools currently act on GitHub through the owner's account. So:
    the owner's phone after the next reboot.
 3. **Open a pull request into the default branch** and fill in the template (`.github/pull_request_template.md`):
    purpose, files changed, tests, methodology impact and deployment risk.
-4. **Reviews happen on the pull request**, ChatGPT first, then Codex.
+4. **Reviews happen on the pull request**, in the order the table above gives for the author (for Claude's
+   pull requests: ChatGPT first, then Codex). The pull request's review checklist names who did each review
+   and any review that was skipped.
    - **Label each finding:** **blocking** (must be fixed before merge) or **non-blocking** (a suggestion).
    - **Reviewers don't push to the author's branch:** they comment, and the author fixes and pushes to the same branch.
    - **Answer every blocking finding:** the author fixes it or replies saying why not.
