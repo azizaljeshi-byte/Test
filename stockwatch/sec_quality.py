@@ -30,7 +30,7 @@ STATUSES = (USABLE, RECONCILE, STALE, UNKNOWN, NOT_APPLICABLE)
 _RANK = {USABLE: 0, RECONCILE: 1, STALE: 2, UNKNOWN: 3}
 
 TOLERANCE = 0.005      # two figures more than 0.5% apart disagree
-INSTANT_STALE = 100    # days a balance-sheet figure may trail the company's latest report (about one quarter)
+INSTANT_STALE = 10     # days a balance-sheet figure may trail the company's latest balance sheet
 FY_STALE = 30          # days a fiscal-year figure may trail the company's latest fiscal year
 REPORT_STALE = 200     # days without any new report before every figure counts as stale
 CORE_FLOWS = ("revenue", "net_income", "operating_cash_flow")   # what sets the company's latest fiscal year
@@ -45,6 +45,31 @@ CAPEX_CONTEXT = {
     "FinanceLeasePrincipalPayments": "finance-lease principal payments (assets funded by leases, outside capex)",
     "RightOfUseAssetObtainedInExchangeForFinanceLeaseLiability":
         "assets obtained under new finance leases (non-cash, outside capex)",
+}
+# Tags that measure something wider or narrower than a field's main tag. A different amount from one of
+# these is a difference in scope, not a conflict; but when one is the tag selected, a person must check
+# it's the definition wanted.
+SCOPE = {
+    "Revenues": "all revenue, which can include more than revenue from customer contracts",
+    "RevenueFromContractWithCustomerIncludingAssessedTax": "includes taxes collected from customers",
+    "ProfitLoss": "includes noncontrolling interests",
+    "NetIncomeLossAvailableToCommonStockholdersBasic": "after preferred dividends",
+    "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations": "continuing operations only",
+    "PaymentsToAcquireProductiveAssets": "can include intangibles and other productive assets",
+    "AllocatedShareBasedCompensationExpense": "the expense recognized, which can differ from the cash-flow add-back",
+    "Depreciation": "depreciation only, without amortization",
+    "DepreciationAmortizationAndAccretionNet": "includes accretion",
+    "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents": "includes restricted cash",
+    "LongTermDebt": "total including the current portion",
+    "OperatingLeaseLiability": "total including the current portion",
+    "FinanceLeaseLiability": "total including the current portion",
+    "OperatingLeaseLiabilityNoncurrent": "noncurrent portion only",
+    "FinanceLeaseLiabilityNoncurrent": "noncurrent portion only",
+    "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest": "includes noncontrolling interests",
+    "PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization":
+        "includes finance-lease right-of-use assets",
+    "PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetBeforeAccumulatedDepreciationAndAmortization":
+        "includes finance-lease right-of-use assets",
 }
 BALANCE = ("cash", "short_term_investments", "debt_current", "debt_long", "operating_leases", "finance_leases")
 LEASE_CURRENT = {"operating_leases": "OperatingLeaseLiabilityCurrent", "finance_leases": "FinanceLeaseLiabilityCurrent"}
@@ -140,6 +165,25 @@ def _cite(s: dict) -> str:
     return f"{s['concept']} · {s.get('form') or '—'} filed {s.get('filed') or '—'} · {s.get('accn') or 'no accession'}"
 
 
+def _pct(alt: float, base: float) -> str:
+    return f"{alt / base - 1:+.1%}" if base else "n/a"
+
+
+def _scope_flag(concept: str, concepts: list[str]) -> tuple[str, str] | None:
+    """A fallback tag with a known different scope was selected: a person must check the definition."""
+    name = concept.split(":")[-1]
+    if concept != concepts[0] and name in SCOPE:
+        return RECONCILE, f"selected tag {name} is {SCOPE[name]}: check it's the definition wanted"
+    return None
+
+
+def _behind(f: dict, ref: dict) -> int | None:
+    """Days a figure trails the company's latest report: annual-report disclosures against the latest
+    fiscal year (they're only published once a year), others against the latest period."""
+    base = ref["fy_end"] if str(f.get("form", "")).startswith(ANNUAL_FORMS) and ref["fy_end"] else ref["end"]
+    return _gap(base, f["end"]) if base else None
+
+
 def _status(flags: list[tuple[str, str]]) -> str:
     return max((s for s, _ in flags), key=_RANK.get, default=USABLE)
 
@@ -185,6 +229,9 @@ def select(company: dict, key: str, as_of: date, ref: dict) -> dict:
             why = "no full fiscal-year figure in an annual report (only shorter periods)"
         else:
             why = "not reported under " + ", ".join(c.split(":")[-1] for c in concepts)
+            if key == "shares_outstanding":
+                why += (" in SEC's company facts (companies with several share classes often report the "
+                        "cover-page count per class, which this data leaves out)")
         out.update(status=UNKNOWN, issues=[why])
         return out
 
@@ -224,11 +271,20 @@ def select(company: dict, key: str, as_of: date, ref: dict) -> dict:
                       key=lambda f: f.get("filed") or "")
         if same:
             out["alternatives"].append({"concept": c.split(":")[-1], "value": same[-1]["val"]})
-    clash = [a for a in out["alternatives"] if _differs(a["value"], latest["val"])]
+    name = concept.split(":")[-1]
+    differ = [a for a in out["alternatives"] if _differs(a["value"], latest["val"])]
+    scoped = [a for a in differ if a["concept"] in SCOPE or name in SCOPE]
+    clash = [a for a in differ if a not in scoped]
+    if scoped:
+        flags.append((USABLE, "other tags with a different scope: " + ", ".join(
+            f"{a['concept']} {_fmt(a['value'], unit)} ({_pct(a['value'], latest['val'])}"
+            + (f"; {SCOPE[a['concept']]}" if a["concept"] in SCOPE else "") + ")" for a in scoped)))
     if clash:
         flags.append((RECONCILE, "other tags disagree for the same period: " + ", ".join(
-            f"{a['concept']} {_fmt(a['value'], unit)}" for a in clash) + f" vs {concept.split(':')[-1]} "
-            f"{_fmt(latest['val'], unit)}"))
+            f"{a['concept']} {_fmt(a['value'], unit)} ({_pct(a['value'], latest['val'])})" for a in clash)
+            + f" vs {name} {_fmt(latest['val'], unit)}"))
+    if (scope := _scope_flag(concept, concepts)):
+        flags.append(scope)
 
     if kind == "instant" and ref["end"] and _gap(ref["end"], end) > INSTANT_STALE:
         flags.append((STALE, f"latest figure is for {end}, {_gap(ref['end'], end)} days before the company's "
@@ -240,12 +296,6 @@ def select(company: dict, key: str, as_of: date, ref: dict) -> dict:
         flags.append((STALE, f"the company's latest report is for {ref['end']}, {ref['age']} days before "
                              f"{as_of.isoformat()}"))
 
-    name = concept.split(":")[-1]
-    if key == "debt_long" and name == "LongTermDebt":
-        flags.append((RECONCILE, "LongTermDebt can include the current portion: check it isn't counted again in "
-                                 "short-term debt"))
-    if key in LEASE_CURRENT and name.endswith("Noncurrent"):
-        flags.append((RECONCILE, "noncurrent portion only: the current portion is a separate figure"))
     out.update(selected=_source(latest, concept), status=_status(flags), issues=[t for _, t in flags])
     if multi:
         out["selected"]["value"] = None      # several values for one period: none of them is "the" figure
@@ -331,18 +381,30 @@ def balance_sheet(company: dict, as_of: date) -> dict:
         name = concept.split(":")[-1]
         row.update(value=f["val"], concept=name, filed=f.get("filed"), accn=f.get("accn"))
         if len(on) > 1:
-            flags.append((RECONCILE if key in ("debt_current", "debt_long") else USABLE, "also tagged on this date: "
+            flags.append((RECONCILE if key == "debt_current" else USABLE, "also tagged on this date: "
                           + ", ".join(f"{c.split(':')[-1]} {_money(g['val'])}" for c, g in on[1:])
                           + (" (separate items: listed, not added up)" if key == "debt_current" else "")))
-        if key == "debt_long" and name == "LongTermDebt":
-            flags.append((RECONCILE, "LongTermDebt can include the current portion: check it isn't counted again "
-                                     "in short-term debt"))
+        if (scope := _scope_flag(concept, concepts)):
+            flags.append(scope)
         if key in LEASE_CURRENT and name.endswith("Noncurrent"):
             cur = _at(_candidates(company, [LEASE_CURRENT[key]], "USD", as_of)[0].get(LEASE_CURRENT[key], []), day)
-            flags.append((RECONCILE, "noncurrent portion only; current portion "
-                          + (f"{_money(cur['val'])} ({LEASE_CURRENT[key]})" if cur else "not reported")))
+            flags.append((RECONCILE, "current portion " + (f"{_money(cur['val'])} ({LEASE_CURRENT[key]}), "
+                                                           "reported separately" if cur else "not reported")))
         row.update(status=_status(flags), notes=[t for _, t in flags])
         rows.append(row)
+    # where both are tagged, total long-term debt should equal its noncurrent plus current portions
+    parts = {c: _at(_candidates(company, [c], "USD", as_of)[0].get(c, []), day)
+             for c in ("LongTermDebt", "LongTermDebtNoncurrent", "LongTermDebtCurrent")}
+    if all(parts.values()):
+        total, nc, cur = (parts[c]["val"] for c in parts)
+        long_row = next(r for r in rows if r["key"] == "debt_long")
+        if _differs(total, nc + cur):
+            long_row["notes"].append(f"LongTermDebt {_money(total)} doesn't equal noncurrent {_money(nc)} plus current "
+                                     f"{_money(cur)} ({_pct(nc + cur, total)})")
+            long_row["status"] = max(long_row["status"], RECONCILE, key=_RANK.get)
+        else:
+            long_row["notes"].append(f"adds up: LongTermDebt {_money(total)} = noncurrent {_money(nc)} + current "
+                                     f"{_money(cur)}")
     return {"date": day, "rows": rows, "notes": [
         "Total interest-bearing debt isn't computed: whether leases and each short-term item belong in it is a "
         "methodology choice for Phase 2."]}
@@ -357,6 +419,19 @@ def _latest_period(facts: list[dict]) -> dict | None:
     return min(newest_filed_first, key=lambda f: _days(f) or 0)
 
 
+def _observed(key: str, label: str, f: dict | None, concept: str | None, ref: dict, missing: str) -> dict:
+    if not f:
+        return {"key": key, "label": label, "status": UNKNOWN, "source": None, "notes": [missing]}
+    row = {"key": key, "label": label, "status": USABLE, "source": _source(f, concept), "notes": []}
+    behind = _behind(f, ref)
+    if behind is not None and behind > INSTANT_STALE:
+        row["status"] = STALE
+        row["notes"].append(f"from {f['end']}, {behind} days before the company's latest "
+                            f"{'fiscal year' if str(f.get('form', '')).startswith(ANNUAL_FORMS) else 'report'}; "
+                            "not current")
+    return row
+
+
 def shares(company: dict, as_of: date, ref: dict) -> dict:
     """Share counts and what could dilute them, observed as reported. A fully diluted count is never
     computed: the pieces aren't additive without their terms (strike prices, conversion terms, hedges)."""
@@ -366,8 +441,7 @@ def shares(company: dict, as_of: date, ref: dict) -> dict:
         by_concept = _candidates(company, concepts, unit, as_of)[0]
         c = next(iter(by_concept), None)
         f = _latest_period(by_concept[c]) if c else None
-        rows.append({"key": key, "label": label, "status": USABLE if f else UNKNOWN,
-                     "source": _source(f, c) if f else None, "notes": [] if f else ["not reported"]})
+        rows.append(_observed(key, label, f, c, ref, "not reported"))
     label, _kind, unit, concepts = FIELDS["shares_outstanding"]
     cover = _candidates(company, concepts, unit, as_of)[0].get(concepts[0], [])
     if cover:
@@ -388,10 +462,8 @@ def shares(company: dict, as_of: date, ref: dict) -> dict:
     dilution = []
     for key, (label, concept) in DILUTION.items():
         facts = _candidates(company, [concept], "shares", as_of)[0].get(concept, [])
-        f = _latest_period(facts)
-        dilution.append({"key": key, "label": label, "status": USABLE if f else UNKNOWN,
-                         "source": _source(f, concept) if f else None,
-                         "notes": [] if f else ["not tagged as one company-wide figure"]})
+        dilution.append(_observed(key, label, _latest_period(facts), concept, ref,
+                                  "not tagged as one company-wide figure"))
     return {"rows": rows, "dilution": dilution, "fully_diluted": {
         "status": UNKNOWN, "reason": "not computed: options, awards and convertibles can't be added to the share "
                                      "count without their terms (strike prices, conversion terms, hedges)"}}
@@ -674,11 +746,11 @@ def markdown(reports: list[dict], as_of: date | None = None, ua_status: str | No
             else:
                 s = x["source"]
                 lines.append(f"| {x['label']} | {x['status']} | {_fmt(s['value'], 'shares') if s else '—'} | "
-                             f"{_period(s) if s else '—'} | {'; '.join(x['notes']) or (_cite(s) if s else '—')} |")
+                             f"{_period(s) if s else '—'} | {'; '.join(x['notes'] + ([_cite(s)] if s else [])) or '—'} |")
         for x in sh["dilution"]:
             s = x["source"]
             lines.append(f"| {x['label']} | {x['status']} | {_fmt(s['value'], 'shares') if s else '—'} | "
-                         f"{_period(s) if s else '—'} | {'; '.join(x['notes']) or _cite(s)} |")
+                         f"{_period(s) if s else '—'} | {'; '.join(x['notes'] + ([_cite(s)] if s else [])) or '—'} |")
         lines.append(f"| Fully diluted shares | {sh['fully_diluted']['status']} | — | — | "
                      f"{sh['fully_diluted']['reason']} |")
         if sect["kind"] or sect["multi_class_notes"]:

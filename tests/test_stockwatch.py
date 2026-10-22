@@ -1575,6 +1575,8 @@ QUALITY_COMPANY = {"entityName": "Quality Example Corp", "cik": 1, "facts": {
         "OperatingIncomeLoss": {"units": {"USD": [_q(80e6, "2012-01-01", "2012-12-31", filed="2013-02-15",
                                                      accn="0000000001-13-000002")]}},
         "PaymentsToAcquirePropertyPlantAndEquipment": {"units": {"USD": [_q(50e6, *FY25)]}},
+        # a tag for the same measure with a different amount: a real conflict
+        "PurchaseOfPropertyPlantAndEquipment": {"units": {"USD": [_q(55e6, *FY25)]}},
         "ProceedsFromSaleOfPropertyPlantAndEquipment": {"units": {"USD": [_q(2e6, *FY25)]}},
         # only a quarter, never a fiscal year
         "InterestExpense": {"units": {"USD": [_q(5e6, "2026-04-01", "2026-06-30", "10-Q", "2026-07-30",
@@ -1598,6 +1600,9 @@ QUALITY_COMPANY = {"entityName": "Quality Example Corp", "cik": 1, "facts": {
             _q(895e6, "2026-04-01", "2026-06-30", "10-Q", "2026-07-30", "0000000001-26-000020")]}},
         "ShareBasedCompensationArrangementByShareBasedPaymentAwardOptionsOutstandingNumber": {"units": {
             "shares": [_qi(12e6, "2025-12-31", "10-K", "2026-02-15", "0000000001-26-000005")]}},
+        # last disclosed in 2019: not current
+        "ShareBasedCompensationArrangementByShareBasedPaymentAwardEquityInstrumentsOtherThanOptionsNonvestedNumber": {
+            "units": {"shares": [_qi(3e6, "2019-12-31", "10-K", "2020-02-15", "0000000001-20-000002")]}},
     }}}
 
 
@@ -1623,9 +1628,14 @@ def test_sec_quality_selects_with_provenance_and_no_look_ahead():
 def test_sec_quality_flags_conflicts_duplicates_stale_and_unknown():
     r = sq.quality_company("qex", QUALITY_COMPANY, None, QDAY)
     f = r["fields"]
-    ni = f["net_income"]
-    assert ni["status"] == sq.RECONCILE and ni["selected"]["concept"] == "NetIncomeLoss"
-    assert "other tags disagree for the same period: ProfitLoss 120.0M vs NetIncomeLoss 100.0M" in ni["issues"]
+    ni = f["net_income"]                        # ProfitLoss includes noncontrolling interests: scope, not conflict
+    assert ni["status"] == sq.USABLE and ni["selected"]["concept"] == "NetIncomeLoss"
+    assert ni["issues"] == ["other tags with a different scope: ProfitLoss 120.0M (+20.0%; includes noncontrolling "
+                            "interests)"]
+    capex = f["capex"]
+    assert capex["status"] == sq.RECONCILE and capex["issues"] == [
+        "other tags disagree for the same period: PurchaseOfPropertyPlantAndEquipment 55.0M (+10.0%) vs "
+        "PaymentsToAcquirePropertyPlantAndEquipment 50.0M"]
     ocf = f["operating_cash_flow"]
     assert ocf["status"] == sq.RECONCILE and "the same filing reports different values" in ocf["issues"][0]
     assert ocf["selected"]["value"] is None and not any("revised" in i for i in ocf["issues"])   # not a revision
@@ -1633,8 +1643,9 @@ def test_sec_quality_flags_conflicts_duplicates_stale_and_unknown():
     assert ebit["status"] == sq.STALE and "already reported the year ending 2025-12-31" in ebit["issues"][0]
     debt = f["debt_long"]                       # the newest tag wins over a noncurrent figure from 2013
     assert debt["selected"]["concept"] == "LongTermDebt" and debt["status"] == sq.RECONCILE
-    assert "can include the current portion" in debt["issues"][0]
-    assert "noncurrent portion only" in f["operating_leases"]["issues"][0]
+    assert debt["issues"] == ["selected tag LongTermDebt is total including the current portion: check it's the "
+                              "definition wanted"]
+    assert "OperatingLeaseLiabilityNoncurrent is noncurrent portion only" in f["operating_leases"]["issues"][0]
     cur = f["debt_current"]
     assert cur["status"] == sq.STALE and "2023-12-31" in cur["issues"][0]
     assert f["sbc"]["status"] == sq.UNKNOWN and "only in EUR" in f["sbc"]["issues"][0]
@@ -1671,9 +1682,9 @@ def test_sec_quality_balance_sheet_is_one_date_and_dilution_is_never_estimated()
     # an old short-term debt figure isn't carried forward to the balance-sheet date
     assert rows["debt_current"]["status"] == sq.UNKNOWN and rows["debt_current"]["value"] is None
     assert "latest is for 2023-12-31, not used" in rows["debt_current"]["notes"][0]
-    assert rows["debt_long"]["status"] == sq.RECONCILE and "current portion" in rows["debt_long"]["notes"][0]
+    assert rows["debt_long"]["status"] == sq.RECONCILE and "including the current portion" in rows["debt_long"]["notes"][0]
     assert rows["operating_leases"]["status"] == sq.RECONCILE
-    assert "current portion 8.0M (OperatingLeaseLiabilityCurrent)" in rows["operating_leases"]["notes"][0]
+    assert "current portion 8.0M (OperatingLeaseLiabilityCurrent), reported separately" in rows["operating_leases"]["notes"]
     assert rows["finance_leases"]["status"] == sq.UNKNOWN and "never reported" in rows["finance_leases"]["notes"][0]
     sh = r["shares"]
     basic = next(x for x in sh["rows"] if x["key"] == "basic_shares")
@@ -1682,7 +1693,9 @@ def test_sec_quality_balance_sheet_is_one_date_and_dilution_is_never_estimated()
     cover = next(x for x in sh["rows"] if x["key"] == "cover")
     assert cover["values"] == [300e6, 600e6] and cover["status"] == sq.RECONCILE
     dil = {x["key"]: x for x in sh["dilution"]}
-    assert dil["options"]["source"]["value"] == 12e6 and dil["unvested_awards"]["status"] == sq.UNKNOWN
+    assert dil["options"]["source"]["value"] == 12e6 and dil["options"]["status"] == sq.USABLE   # latest fiscal year
+    assert dil["unvested_awards"]["status"] == sq.STALE and "2192 days before" in dil["unvested_awards"]["notes"][0]
+    assert dil["antidilutive"]["status"] == sq.UNKNOWN
     assert sh["fully_diluted"]["status"] == sq.UNKNOWN and "not computed" in sh["fully_diluted"]["reason"]
 
 
@@ -1772,3 +1785,25 @@ def test_sec_quality_report_and_command(monkeypatch):
         it = iter(results)
         monkeypatch.setattr(sq, "quality_ticker", lambda t, as_of, check: next(it))
         assert sq.main(["T"] * len(results) + ["--markdown", "/dev/null"]) == code
+
+
+def test_sec_quality_checks_debt_adds_up_and_flags_stale_balance_sheet_figures():
+    def bs(total, nc, cur):
+        company = {"facts": {"us-gaap": {
+            "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [_qi(10e6, "2026-06-30")]}},
+            "LongTermDebt": {"units": {"USD": [_qi(total, "2026-06-30")]}},
+            "LongTermDebtNoncurrent": {"units": {"USD": [_qi(nc, "2026-06-30")]}},
+            "LongTermDebtCurrent": {"units": {"USD": [_qi(cur, "2026-06-30")]}},
+            # one quarter old: stale next to the latest balance sheet, and not carried forward
+            "OperatingLeaseLiability": {"units": {"USD": [_qi(7e6, "2026-03-31", filed="2026-04-30")]}}}}}
+        r = sq.quality_company("D", company, None, QDAY)
+        return {x["key"]: x for x in r["balance_sheet"]["rows"]}, r["fields"]
+    rows, fields = bs(500e6, 450e6, 50e6)
+    assert rows["debt_long"]["status"] == sq.USABLE and rows["debt_long"]["concept"] == "LongTermDebtNoncurrent"
+    assert "adds up: LongTermDebt 500.0M = noncurrent 450.0M + current 50.0M" in rows["debt_long"]["notes"]
+    assert fields["debt_long"]["status"] == sq.USABLE and "different scope: LongTermDebt 500.0M" in fields["debt_long"]["issues"][0]
+    assert rows["operating_leases"]["status"] == sq.UNKNOWN
+    assert fields["operating_leases"]["status"] == sq.STALE and "91 days before" in fields["operating_leases"]["issues"][0]
+    rows, _ = bs(500e6, 400e6, 50e6)
+    assert rows["debt_long"]["status"] == sq.RECONCILE and "doesn't equal noncurrent 400.0M plus current 50.0M" in \
+        rows["debt_long"]["notes"][-1]
