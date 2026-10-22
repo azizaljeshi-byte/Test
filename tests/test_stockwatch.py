@@ -1920,3 +1920,81 @@ def test_sec_quality_contested_share_and_balance_sheet_figures_are_not_passed_of
     assert "adds up: LongTermDebt 500.0M" in rows["debt_long"]["notes"][-1]
     basic = next(x for x in r["shares"]["rows"] if x["key"] == "basic_shares")
     assert basic["status"] == sq.RECONCILE and basic["source"]["value"] == 950e6
+
+
+@pytest.mark.parametrize('sic', ['6021', '6331', '6200'])
+def test_sec_quality_sector_applies_to_all_generic_sections(sic):
+    r = sq.quality_company('FIN', QUALITY_COMPANY, {'sic': sic}, QDAY)
+    for key in sq.GENERIC_NOT_APPLICABLE:
+        f = r['fields'][key]
+        assert f['status'] == sq.NOT_APPLICABLE
+        if 'ttm' in f:
+            assert f['ttm']['status'] == sq.NOT_APPLICABLE
+            assert f['ttm']['reason'].startswith('not applicable')
+            assert f['ttm']['data_status'] in sq.STATUSES
+    for row in r['balance_sheet']['rows']:
+        if row['key'] in sq.GENERIC_NOT_APPLICABLE:
+            assert row['status'] == sq.NOT_APPLICABLE
+            assert row['notes'][0].startswith('not applicable')
+    # Applicability keeps raw sources and the existing staleness explanation.
+    assert r['fields']['capex']['ttm']['parts']
+    assert 'latest report' in r['fields']['capex']['ttm']['reason']
+    assert next(x for x in r['balance_sheet']['rows'] if x['key'] == 'cash')['status'] == sq.USABLE
+
+
+def test_sec_quality_balance_sheet_cross_concept_conflict_and_scope():
+    import copy
+    company = copy.deepcopy(QUALITY_COMPANY)
+    def row(key):
+        return next(x for x in sq.quality_company('Q', company, None, QDAY)['balance_sheet']['rows'] if x['key'] == key)
+    investments = row('short_term_investments')
+    assert investments['status'] == sq.RECONCILE
+    assert 'other tags disagree' in ' '.join(investments['notes'])
+    company['facts']['us-gaap']['MarketableSecuritiesCurrent']['units']['USD'] = [_qi(40e6, '2026-06-30')]
+    assert row('short_term_investments')['status'] == sq.USABLE
+    company['facts']['us-gaap']['CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents'] = {
+        'units': {'USD': [_qi(450e6, '2026-06-30')]}}
+    cash = row('cash')
+    assert cash['status'] == sq.USABLE
+    assert 'different scope' in ' '.join(cash['notes']) and 'restricted cash' in ' '.join(cash['notes'])
+
+
+def test_sec_quality_capex_context_contested_and_revised():
+    import copy
+    company = copy.deepcopy(QUALITY_COMPANY)
+    concept = 'ProceedsFromSaleOfPropertyPlantAndEquipment'
+    facts = [_q(2e6, *FY25), _q(3e6, *FY25)]
+    company['facts']['us-gaap'][concept] = {'units': {'USD': facts}}
+    def report():
+        return sq.quality_company('Q', company, None, QDAY, reconcile_cik=1,
+                                  get_bytes=lambda url: (_ for _ in ()).throw(OSError('offline')))
+    def context(r):
+        return next(x for x in r['reconciliation']['capex_context'] if x['concept'] == concept)
+    r = report()
+    c = context(r)
+    assert c['status'] == sq.UNKNOWN and c['value'] is None and c['source']['value'] is None
+    assert 'no number is trusted' in c['notes'][0]
+    assert 'unknown (unknown)' in sq.markdown([r], QDAY)
+    facts[1] = _q(3e6, *FY25, '10-K/A', '2026-05-01', '0000000001-26-000011')
+    r = report()
+    c = context(r)
+    assert c['status'] == sq.RECONCILE and c['value'] == 3e6
+    assert c['source']['accn'] == '0000000001-26-000011'
+    assert '0000000001-26-000005' in c['notes'][0] and '0000000001-26-000011' in c['notes'][0]
+    assert 'was revised' in sq.markdown([r], QDAY)
+
+
+def test_sec_quality_quarterly_shares_never_uses_annual_or_ytd():
+    def company(facts):
+        return {'facts': {'us-gaap': {c: {'units': {'shares': facts}} for c in (
+            'WeightedAverageNumberOfSharesOutstandingBasic', 'WeightedAverageNumberOfDilutedSharesOutstanding')}}}
+    annual = _q(100e6, *FY25)
+    ytd = _q(110e6, '2025-01-01', '2025-09-30', '10-Q', '2025-10-30')
+    for row in sq.shares(company([annual, ytd]), QDAY, {'end': '2025-12-31', 'fy_end': '2025-12-31'})['rows'][:2]:
+        assert row['status'] == sq.UNKNOWN and row['source'] is None
+        assert 'no quarter-length' in row['notes'][0]
+    q3 = _q(115e6, '2025-07-01', '2025-09-30', '10-Q', '2025-10-30')
+    rows = sq.shares(company([annual, ytd, q3]), QDAY, {'end': '2025-12-31', 'fy_end': '2025-12-31'})['rows'][:2]
+    for row in rows:
+        assert row['source']['value'] == 115e6 and row['source']['start'] == '2025-07-01'
+        assert row['status'] == sq.STALE

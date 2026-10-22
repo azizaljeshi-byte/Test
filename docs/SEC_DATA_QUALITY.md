@@ -44,17 +44,19 @@ Every figure gets one:
 - **Balance sheet on one date** (the latest cash or equity date): cash, short-term investments, short- and long-term debt, and operating and finance leases.
   - A component not reported for that date is unknown. It is never carried forward from an older date.
   - Two values for the date in one filing make a component unknown, with no number shown. A value revised in a later filing needs reconciliation.
+  - Different same-date concepts are compared too: known scope differences are explained; other differing amounts need reconciliation.
   - Lease current portions are shown separately.
   - Where all three are tagged, LongTermDebt is checked against its noncurrent plus current portions.
   - Total interest-bearing debt isn't computed: that's a Phase 2 choice.
 - **Shares and dilution:**
-  - Basic and diluted weighted averages for the latest quarter.
+  - Basic and diluted weighted averages for the latest reported quarter-length period (70–110 days). An older quarter is flagged stale; annual and year-to-date averages never stand in for a quarter. If no quarter is tagged, the quarterly figure is unknown.
   - Every cover-page count on its date.
   - Options outstanding, unvested awards, antidilutive securities and convertible shares, where tagged as one company-wide figure.
   - The same rule for each latest-period share or dilution figure: two values in one filing give unknown with no number, and a revision needs reconciliation.
   - Fully diluted shares are always **unknown**: the pieces can't be added without their terms.
 - **Financial companies and share classes:**
   - **Banks** (SIC 6020–6036), **insurers** (6300–6411) and other financials (6000–6799) get the generic measures marked not applicable, plus a list of the data a sector model would need instead.
+    This applies to selected figures, TTM and balance-sheet rows. Raw provenance and existing staleness or conflict explanations remain available; TTM and balance-sheet rows retain their underlying `data_status`.
   - **Several tickers or cover-page counts:** flagged as possible share classes (or listed preferred shares).
 
 ## Checked against the filing itself
@@ -75,6 +77,7 @@ Capex is cash paid for property and equipment (gross), as tagged. It isn't maint
 out assets funded by leases. The report lists, for the same period, proceeds from selling PP&E,
 payments for other productive assets, finance-lease principal payments and assets obtained under new
 finance leases, observed only.
+Each context figure has a status and source. Conflicting values in one accession give unknown with no amount; later revisions need reconciliation and name the filing values and accessions.
 
 ## Running it
 

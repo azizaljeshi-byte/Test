@@ -427,9 +427,17 @@ def balance_sheet(company: dict, as_of: date) -> dict:
             if contested[0] == UNKNOWN:
                 row["value"] = None
         if len(on) > 1:
-            flags.append((RECONCILE if key == "debt_current" else USABLE, "also tagged on this date: "
-                          + ", ".join(f"{c.split(':')[-1]} {_money(g['val'])}" for c, g in on[1:])
-                          + (" (separate items: listed, not added up)" if key == "debt_current" else "")))
+            for c, g in on[1:]:
+                other = c.split(":")[-1]
+                if key == "debt_current":
+                    flags.append((RECONCILE, f"also tagged on this date: {other} {_money(g['val'])} "
+                                             "(separate items: listed, not added up)"))
+                elif _differs(f["val"], g["val"]):
+                    scoped = other in SCOPE or name in SCOPE
+                    flags.append((USABLE if scoped else RECONCILE,
+                                  f"other tags {'with a different scope' if scoped else 'disagree'}: "
+                                  f"{other} {_money(g['val'])} vs {name} {_money(f['val'])}"
+                                  + (f"; {SCOPE.get(other, SCOPE.get(name))}" if scoped else "")))
         if (scope := _scope_flag(concept, concepts)):
             flags.append(scope)
         if key in LEASE_CURRENT and name.endswith("Noncurrent"):
@@ -498,8 +506,12 @@ def shares(company: dict, as_of: date, ref: dict) -> dict:
     for key in ("basic_shares", "diluted_shares"):
         label, _kind, unit, concepts = FIELDS[key]
         by_concept = _candidates(company, concepts, unit, as_of)[0]
-        c = next(iter(by_concept), None)
-        rows.append(_observed(key, label, by_concept.get(c, []), c, ref, "not reported"))
+        quarters = {c: [f for f in fs if f.get("start") and 70 <= _days(f) <= 110]
+                    for c, fs in by_concept.items()}
+        end = max((f["end"] for fs in quarters.values() for f in fs), default=None)
+        c = next((c for c in concepts if any(f["end"] == end for f in quarters.get(c, []))), None)
+        rows.append(_observed(key, label + " — latest quarter", quarters.get(c, []), c, ref,
+                              "no quarter-length weighted-average share count reported (70–110 days)"))
     label, _kind, unit, concepts = FIELDS["shares_outstanding"]
     cover = _candidates(company, concepts, unit, as_of)[0].get(concepts[0], [])
     if cover:
@@ -694,7 +706,15 @@ def reconcile(cik: int, company: dict, fields: dict, as_of: date, get_bytes=None
             facts = _candidates(company, [concept], "USD", as_of)[0].get(concept, [])
             same = [x for x in facts if x.get("start") == cap["start"] and x["end"] == cap["end"]]
             hit = max(same, key=lambda x: x.get("filed") or "") if same else None
-            context.append({"concept": concept, "meaning": meaning, "value": hit["val"] if hit else None})
+            contested = _contest(same, hit, "USD") if hit else None
+            status = contested[0] if contested else (USABLE if hit else UNKNOWN)
+            source = _source(hit, concept) if hit else None
+            value = hit["val"] if hit and status != UNKNOWN else None
+            if source:
+                source["value"] = value
+            context.append({"concept": concept, "meaning": meaning, "value": value, "status": status,
+                            "source": source, "notes": [contested[1]] if contested else (
+                                [] if hit else ["not tagged for this period"])})
     return {"rows": rows, "capex_context": context}
 
 
@@ -711,16 +731,27 @@ def quality_company(ticker: str, company: dict, submissions: dict | None, as_of:
     sh = shares(company, as_of, ref)
     cover = next(r for r in sh["rows"] if r["key"] == "cover")
     sect = sector(submissions, len(cover["values"]))
+    bs = balance_sheet(company, as_of)
     if sect["kind"]:
         for k, reason in GENERIC_NOT_APPLICABLE.items():
             f = fields[k]
             f["issues"] = [f"not applicable ({sect['kind']}): {reason}"] + f["issues"]
             f["status"] = NOT_APPLICABLE
+            if "ttm" in f:
+                t = f["ttm"]
+                t["data_status"] = t["status"]
+                t["status"] = NOT_APPLICABLE
+                t["reason"] = f["issues"][0] + ("; " + t["reason"] if t.get("reason") else "")
+        for row in bs["rows"]:
+            if row["key"] in GENERIC_NOT_APPLICABLE:
+                row["data_status"] = row["status"]
+                row["status"] = NOT_APPLICABLE
+                row["notes"] = [fields[row["key"]]["issues"][0]] + row["notes"]
     counts = {s: sum(1 for f in fields.values() if f["status"] == s) for s in STATUSES}
     out = {"ticker": ticker.upper(), "status": "ok", "as_of": as_of.isoformat(),
            "name": company.get("entityName") or (submissions or {}).get("name"),
            "cik": company.get("cik") or (submissions or {}).get("cik"), "reference": ref, "fields": fields,
-           "counts": counts, "balance_sheet": balance_sheet(company, as_of), "shares": sh, "sector": sect,
+           "counts": counts, "balance_sheet": bs, "shares": sh, "sector": sect,
            "reconciliation": None}
     if reconcile_cik:
         out["reconciliation"] = reconcile(reconcile_cik, company, fields, as_of, get_bytes)
@@ -816,7 +847,8 @@ def markdown(reports: list[dict], as_of: date | None = None, ua_status: str | No
             if rec["capex_context"]:
                 lines += ["", "Capex above is cash paid for property and equipment (gross), as tagged. It isn't "
                           "maintenance capex, and it leaves out assets funded by leases. Reported for the same period:"]
-                lines += [f"- {c['meaning']}: {_money(c['value']) if c['value'] is not None else 'not tagged'}"
+                lines += [f"- {c['meaning']}: {_money(c['value']) if c['value'] is not None else 'unknown'} "
+                          f"({c['status']}); " + "; ".join(c['notes'] + ([_cite(c['source'])] if c['source'] else []))
                           for c in rec["capex_context"]]
         bs = r["balance_sheet"]
         lines += ["", f"### Balance sheet on {bs['date'] or '—'}", ""]
