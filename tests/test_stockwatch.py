@@ -1535,8 +1535,9 @@ def test_sec_audit_and_quality_are_not_wired_into_the_app():
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     for path in [root / "dashboard.py", *sorted((root / "stockwatch").glob("*.py"))]:
-        if path.name not in ("sec_audit.py", "sec_quality.py"):
-            assert "sec_audit" not in path.read_text() and "sec_quality" not in path.read_text(), path.name
+        if path.name not in ("sec_audit.py", "sec_quality.py", "valuation_lab.py"):
+            text = path.read_text()
+            assert "sec_audit" not in text and "sec_quality" not in text and "valuation_lab" not in text, path.name
 
 
 # ---- SEC data quality (read-only; Phase 1B of the valuation work)
@@ -2043,3 +2044,176 @@ def test_sec_quality_selection_and_balance_share_scope_rules(monkeypatch):
     assert r['fields']['capex']['status'] == sq.RECONCILE
     assert any('other tags disagree' in n for n in r['fields']['capex']['issues'])
     assert r['fields']['capex']['ttm']['status'] == sq.RECONCILE
+
+
+# ---- Valuation research (read-only; Phase 2A-1)
+
+from stockwatch import valuation_lab as vl
+
+VDAY = date(2026, 3, 1)
+
+
+def _vfy(y, v, accn=None, form="10-K"):
+    return {"start": f"{y}-01-01", "end": f"{y}-12-31", "val": v, "form": form, "filed": f"{y + 1}-02-15",
+            "accn": accn or f"0000000009-{str(y + 1)[2:]}-000001"}
+
+
+def _vinst(day, v, filed="2026-02-15", form="10-K", accn="0000000009-26-000001"):
+    return {"end": day, "val": v, "form": form, "filed": filed, "accn": accn}
+
+
+def _vcompany(revenue=None, ocf=None, capex=30e6, op_income=None, cover=(100e6,), extra=None):
+    """Six fiscal years, 2020-2025. Defaults: a steady cash compounder."""
+    yrs = range(2020, 2026)
+    revenue = revenue or [(500 + 50 * i) * 1e6 for i in range(6)]
+    ocf = ocf or [(120 + 6 * i) * 1e6 for i in range(6)]
+    op_income = op_income or [(100 + 10 * i) * 1e6 for i in range(6)]
+    gaap = {
+        "Revenues": {"units": {"USD": [_vfy(y, v) for y, v in zip(yrs, revenue)]}},
+        "OperatingIncomeLoss": {"units": {"USD": [_vfy(y, v) for y, v in zip(yrs, op_income)]}},
+        "NetIncomeLoss": {"units": {"USD": [_vfy(y, v * 0.8) for y, v in zip(yrs, op_income)]}},
+        "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": [_vfy(y, v) for y, v in zip(yrs, ocf)]}},
+        "PaymentsToAcquirePropertyPlantAndEquipment": {"units": {"USD": [_vfy(y, capex) for y in yrs]}},
+        "ShareBasedCompensation": {"units": {"USD": [_vfy(y, 20e6) for y in yrs]}},
+        "DepreciationDepletionAndAmortization": {"units": {"USD": [_vfy(y, 25e6) for y in yrs]}},
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [_vinst("2025-12-31", 200e6)]}},
+        "StockholdersEquity": {"units": {"USD": [_vinst("2025-12-31", 900e6)]}},
+        "LongTermDebt": {"units": {"USD": [_vinst("2025-12-31", 300e6)]}},
+        "LongTermDebtNoncurrent": {"units": {"USD": [_vinst("2025-12-31", 250e6)]}},
+        "LongTermDebtCurrent": {"units": {"USD": [_vinst("2025-12-31", 50e6)]}},
+    }
+    gaap.update(extra or {})
+    return {"entityName": "Valuation Example", "cik": 9, "facts": {
+        "dei": {"EntityCommonStockSharesOutstanding": {"units": {"shares": [_vinst("2026-01-20", v) for v in cover]}}},
+        "us-gaap": gaap}}
+
+
+SOFTWARE = {"sic": "7372", "sicDescription": "Prepackaged Software", "tickers": ["VEX"]}
+PRICE = vl._input("Share price", 10.0, "usable", "test")
+
+
+def test_valuation_reverse_math_is_hand_checkable():
+    # a flat perpetuity: 100 a year at 10% is worth 1,000, and 1,000 implies no growth
+    value, terminal_share = vl.present_value(100, 0.0, 0.10, 0.0)
+    assert value == pytest.approx(1000)
+    assert vl.implied_growth(1000, 100, 0.10, 0.0)["growth"] == pytest.approx(0, abs=1e-9)
+    # growth fades linearly: year 10 grows at exactly the terminal rate, so the terminal value is a clean Gordon step
+    v = vl.present_value(100, 0.08, 0.10, 0.025)[0]
+    assert vl.implied_growth(v, 100, 0.10, 0.025)["growth"] == pytest.approx(0.08, abs=1e-9)
+    assert "more growth than this model can express" in vl.implied_growth(1e9, 100, 0.10, 0.025)["note"]
+    assert "shrinking" in vl.implied_growth(1, 100, 0.10, 0.025)["note"]
+    assert vl.implied_growth(1000, -5, 0.10, 0.025)["growth"] is None          # no positive cash flow: no answer
+
+
+def test_valuation_compounder_reverse_grid_and_lease_adjustment():
+    lease = {"RightOfUseAssetObtainedInExchangeForFinanceLeaseLiability": {"units": {"USD": [_vfy(2025, 40e6)]}}}
+    r = vl.value_company("VEX", _vcompany(extra=lease), SOFTWARE, PRICE, VDAY)
+    assert r["classification"]["family"] == vl.COMPOUNDER and "no cycle in 6 years" in r["classification"]["rule"]
+    m = r["model"]
+    assert m["status"] == vl.COMPUTED and m["market_cap"] == pytest.approx(1000e6)
+    base, leased = m["grids"]
+    assert base["fcf"] == pytest.approx(100e6) and leased["fcf"] == pytest.approx(60e6)   # 150 - 30 - 20; less 40
+    for grid in m["grids"]:
+        for cell in grid["rows"]:
+            # every solved cell reproduces the market cap
+            assert vl.present_value(grid["fcf"], cell["growth"], cell["rate"], cell["terminal"])[0] == pytest.approx(1000e6)
+    cell = lambda g: next(x for x in g["rows"] if x["rate"] == 0.10 and x["terminal"] == 0.025)["growth"]
+    assert cell(leased) > cell(base)            # less cash today needs more growth to justify the same price
+    lenses = {x["lens"]: x["text"] for x in r["risk"]}
+    assert lenses["Debt / TTM operating cash flow"] == "2.0 years of operating cash"   # 300 / 150, debt adds up
+    assert lenses["Owner FCF yield ((OCF - capex - SBC) / market cap)"] == "10.0%"
+
+
+def test_valuation_gates_refuse_instead_of_guessing():
+    # two cover-page share classes: no clean denominator, so no market cap and no model
+    r = vl.value_company("VEX", _vcompany(cover=(60e6, 40e6)), SOFTWARE, PRICE, VDAY)
+    assert r["model"]["status"] == vl.UNAVAILABLE and "Shares outstanding (cover page) is needs reconciliation" in r[
+        "model"]["reason"]
+    # no price
+    r = vl.value_company("VEX", _vcompany(), SOFTWARE, vl._input("Share price", None, "unknown", None, ["offline"]), VDAY)
+    assert r["model"]["status"] == vl.UNAVAILABLE and "Share price is unknown; offline" in r["model"]["reason"]
+    # no look-ahead: before the FY2025 10-K was filed, FY2024 is the latest year used
+    r = vl.value_company("VEX", _vcompany(), SOFTWARE, PRICE, date(2026, 1, 31))
+    ocf = next(i for i in r["model"]["inputs"] if i["label"].startswith("Operating cash flow"))
+    assert ocf["value"] == 144e6 and "2024-12-31" in ocf["source"]
+
+
+def test_valuation_classifies_cycles_burn_banks_and_unsupported():
+    cyc = _vcompany(revenue=[500e6, 600e6, 700e6, 480e6, 650e6, 750e6])            # -31% in FY2023
+    r = vl.value_company("CYC", cyc, SOFTWARE, PRICE, VDAY)
+    assert r["classification"]["family"] == vl.CYCLICAL and "2023-12-31: revenue -31%" in r["classification"]["rule"]
+    assert r["model"]["status"] == vl.DEFERRED and r["risk"]
+    swing = _vcompany(op_income=[100e6, -20e6, 110e6, 120e6, 130e6, 140e6])
+    assert vl.value_company("SW", swing, SOFTWARE, PRICE, VDAY)["classification"]["family"] == vl.CYCLICAL
+    bank = vl.value_company("BNK", _vcompany(), {"sic": "6021", "sicDescription": "National Commercial Banks"},
+                            PRICE, VDAY)
+    assert bank["classification"]["family"] == vl.BANK and bank["model"]["status"] == vl.UNAVAILABLE
+    assert "tangible common equity" in bank["model"]["reason"] and bank["risk"] == []
+    ins = vl.value_company("INS", _vcompany(), {"sic": "6331", "sicDescription": "Fire, Marine & Casualty Insurance"},
+                           PRICE, VDAY)
+    assert ins["classification"]["family"] == vl.UNSUPPORTED and ins["model"]["status"] == vl.UNAVAILABLE
+    short = _vcompany()
+    for c in ("Revenues", "OperatingIncomeLoss", "NetCashProvidedByUsedInOperatingActivities"):
+        short["facts"]["us-gaap"][c]["units"]["USD"] = short["facts"]["us-gaap"][c]["units"]["USD"][-3:]
+    r = vl.value_company("NEW", short, SOFTWARE, PRICE, VDAY)
+    assert r["classification"]["family"] == vl.INSUFFICIENT and "only 3 fiscal years" in r["classification"]["rule"]
+
+
+def test_valuation_runway_for_a_cash_burner():
+    q = "WeightedAverageNumberOfDilutedSharesOutstanding"
+    extra = {"ShortTermInvestments": {"units": {"USD": [_vinst("2025-12-31", 100e6)]}},
+             q: {"units": {"shares": [
+                 {"start": "2024-10-01", "end": "2024-12-31", "val": 100e6, "form": "10-K", "filed": "2025-02-15",
+                  "accn": "0000000009-25-000001"},
+                 {"start": "2025-10-01", "end": "2025-12-31", "val": 120e6, "form": "10-K", "filed": "2026-02-15",
+                  "accn": "0000000009-26-000001"}]}}}
+    burner = _vcompany(ocf=[-100e6] * 6, capex=50e6, extra=extra)
+    r = vl.value_company("BRN", burner, SOFTWARE, PRICE, VDAY)
+    assert r["classification"]["family"] == vl.CASH_BURN
+    m = r["model"]
+    # liquidity 200 + 100 = 300; burn 50 - (-100) = 150 a year: 24 months
+    assert m["status"] == vl.COMPUTED and m["liquidity"] == 300e6 and m["burn"] == 150e6
+    assert m["months"] == pytest.approx(24)
+    assert m["dilution"]["value"] == pytest.approx(0.20)
+    assert any("Intrinsic value: unavailable" in n for n in m["notes"])
+
+
+def test_valuation_debt_only_adds_reconciled_parts():
+    day = "2025-12-31"
+    debt = vl.total_debt(_vcompany(), VDAY, day)
+    assert debt["value"] == 300e6 and debt["status"] == "usable" and "= noncurrent + current" in debt["source"]
+    only_nc = _vcompany()
+    for c in ("LongTermDebt", "LongTermDebtCurrent"):
+        del only_nc["facts"]["us-gaap"][c]
+    d = vl.total_debt(only_nc, VDAY, day)
+    assert d["value"] == 250e6 and d["status"] == "needs reconciliation" and "understated" in d["notes"][0]
+    mismatch = _vcompany(extra={"DebtCurrent": {"units": {"USD": [_vinst(day, 80e6)]}}})
+    d = vl.total_debt(mismatch, VDAY, day)
+    assert d["status"] == "needs reconciliation" and "doesn't match" in d["notes"][0]
+    none = _vcompany()
+    for c in ("LongTermDebt", "LongTermDebtCurrent", "LongTermDebtNoncurrent"):
+        del none["facts"]["us-gaap"][c]
+    assert vl.total_debt(none, VDAY, day)["status"] == "unknown"                # no debt tagged isn't zero debt
+
+
+def test_valuation_price_is_the_close_on_or_before_the_as_of_date():
+    hist = pd.DataFrame({"Close": [10.0, 11.0, 12.0]},
+                        index=pd.to_datetime(["2026-02-26", "2026-02-27", "2026-03-02"]))
+    assert vl.close_on(hist, VDAY) == (11.0, "2026-02-27")                     # 2026-03-01 is a Sunday
+    assert vl.close_on(hist, date(2026, 1, 1)) == (None, None)
+
+
+def test_valuation_report_and_command(monkeypatch):
+    ok = vl.value_company("VEX", _vcompany(), SOFTWARE, PRICE, VDAY)
+    gone = {"ticker": "ZZZZ", "status": "unavailable", "reason": "not in SEC's ticker list"}
+    md = vl.markdown([ok, gone], VDAY, ua_status="configured")
+    assert "**Status: PARTIAL**: 1 of 2 companies retrieved" in md and "Unavailable: not in SEC's ticker list" in md
+    assert "sensitivity only" in md and "| discount 10% |" in md
+    assert md.count("BUY") == 1 and "fair value of" not in md.lower()          # only the "no BUY/SELL" disclaimer
+    import re
+    assert not re.search(r"\bnan\b", md.lower())
+    for results, code in (([ok], 0), ([ok, gone], 1), ([gone], 2)):
+        it = iter(results)
+        monkeypatch.setattr(vl, "value_ticker", lambda t, as_of, price, cfg: next(it))
+        assert vl.main(["T"] * len(results) + ["--markdown", "/dev/null"]) == code
+    assert vl._price_arg("msft=430.5") == ("MSFT", vl._input("Share price", 430.5, "usable", "given on the command line"))

@@ -1,0 +1,32 @@
+# Valuation research assumptions (Phase 2A, Issue #8). Read-only research only: nothing here is
+# portfolio or trading policy, and changing a number needs the owner's approval in a pull request.
+# Every value says where it came from. "policy" = a chosen assumption, not a market measurement.
+version: 2a-1.1
+approved: false          # research prototype; the owner hasn't adopted these as policy
+
+discount:
+  # Not a measured cost of capital: beta and cost of debt aren't collected yet, so 2A-1 shows the
+  # reverse valuation across these rates only, labelled sensitivity-only.
+  sensitivity_rates: [0.08, 0.10, 0.12]
+  equity_risk_premium: 0.05       # policy, illustrative (ChatGPT spec, Issue #8, 2026-10-22); used from 2A-2
+  risk_free: null                 # 10-year US Treasury as of the run date; sourced in 2A-2, not assumed
+  min_spread: 0.02                # discount rate must exceed terminal growth by at least this much
+
+projection:
+  years: 10                       # policy (ChatGPT spec, Issue #8)
+  driver_years: 5                 # years 1-5 grow at the solved rate, 6-10 fade linearly to terminal
+  terminal_growth: 0.025          # policy, illustrative nominal USD (ChatGPT spec, Issue #8)
+  terminal_sensitivity: [0.015, 0.025, 0.035]
+  growth_search: [-0.5, 1.0]      # implied growth outside this range is reported as out of range
+
+classifier:                        # policy (Claude, PR 2A-1), flagged for owner approval
+  history_years: 6                # fiscal years looked at
+  min_history_years: 5            # fewer than this: cyclicality can't be ruled out
+  cyclical_revenue_drop: 0.15     # a fiscal-year revenue fall of at least this is a cycle
+  compounder_years: 3             # OCF - capex positive in each of the last N fiscal years
+
+risk:
+  capex_heavy: 0.15               # capex above this share of revenue is flagged as equipment-heavy
+
+# Per-ticker classification overrides (public tickers only, with a reason). None yet.
+overrides: {}

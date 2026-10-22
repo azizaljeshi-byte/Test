@@ -10,6 +10,14 @@ workflow between Claude, ChatGPT, Codex and the owner are in `docs/COLLABORATION
 - **Asking for and signing reviews:** you post on GitHub as `chatgpt-codex-connector[bot]`, and a `@codex review` comment on a pull request asks for your review. Start the review with **Codex review** and mark each finding blocking or non-blocking. Claude and ChatGPT post through the owner's account, so their reviews are signed comments rather than formal approvals.
 - **Building:** when the owner assigns you work, build it on a `codex/<topic>` branch and open a pull request.
 
+## How work is assigned (owner protocol, October 2026)
+- **Roles:** Claude and Codex are both implementation developers. ChatGPT assigns tasks and owns architecture, financial methodology, specifications with acceptance criteria, and the first review. The owner alone approves merges.
+- **Review:** whichever developer didn't write a change gives the independent engineering review, after ChatGPT's.
+- **Only assigned work:** don't start unassigned work, repeat another developer's investigation, or begin on review findings until ChatGPT has consolidated and assigned them.
+- **Fixing findings:** address confirmed blocking defects in one grouped pass; run the focused tests before the full suite.
+- **Save credits:** no recurring check-ins, polling or routine status posts; don't re-trigger a review while one is running; avoid large re-reads and unnecessary test or doc churn.
+- **Reports:** short — what changed, tests, open issues, PR link.
+
 ## Working on this repo
 - **Default branch:** `claude/stock-dashboard-alerts-rr9r83`. Streamlit Cloud deploys from it, so merging is deploying. **Never commit or push to it directly.**
 - **Branches:** branch off the latest default branch, one topic per branch. Don't push to `claude/*` or `chatgpt/*` branches.
