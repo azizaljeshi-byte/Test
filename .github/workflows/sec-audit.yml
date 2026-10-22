@@ -29,13 +29,25 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: Audit SEC financial data
-        # a ticker SEC can't serve is listed as unavailable in the report, so don't fail the job on it
+        id: audit
+        # exit code 0 = every company retrieved, 1 = some, 2 = none; publish the report either way
         run: |
-          python -m stockwatch.sec_audit $TICKERS --markdown sec-audit.md --json sec-audit.json || true
+          set +e
+          python -m stockwatch.sec_audit $TICKERS --markdown sec-audit.md --json sec-audit.json
+          echo "code=$?" >> "$GITHUB_OUTPUT"
           cat sec-audit.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: sec-data-audit
           path: |
             sec-audit.md
             sec-audit.json
+      # a green run must mean SEC data was actually retrieved
+      - name: Check the audit retrieved data
+        run: |
+          case "${{ steps.audit.outputs.code }}" in
+            0) echo "COMPLETE: every company retrieved" ;;
+            1) echo "::warning title=SEC audit PARTIAL::Some companies were unavailable; see the report" ;;
+            *) echo "::error title=SEC audit NO DATA::No company could be retrieved from SEC"; exit 1 ;;
+          esac
