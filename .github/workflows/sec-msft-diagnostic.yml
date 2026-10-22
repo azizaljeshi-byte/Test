@@ -1,0 +1,41 @@
+name: MSFT official SEC diagnostic (manual research)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: msft-sec-diagnostic
+  cancel-in-progress: false
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Explain missing SEC identification safely
+        run: |
+          if [ -z "$SEC_USER_AGENT" ]; then
+            echo "::warning title=SEC_USER_AGENT not set::Configure the private name/contact secret. Diagnostic sends no requests until valid."
+          fi
+      - name: Diagnose official access and reconcile MSFT only
+        run: python -m stockwatch.sec_access --output sec-msft/report
+      - name: Publish decision-first summary
+        if: always()
+        run: |
+          if [ -f sec-msft/report.md ]; then cat sec-msft/report.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: msft-sec-diagnostic
+          retention-days: 7
+          path: |
+            sec-msft/report.json
+            sec-msft/report.md
+            sec-msft/report.diagnostic.json
