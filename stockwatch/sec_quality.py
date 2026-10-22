@@ -73,6 +73,15 @@ SCOPE = {
         "includes finance-lease right-of-use assets",
 }
 BALANCE = ("cash", "short_term_investments", "debt_current", "debt_long", "operating_leases", "finance_leases")
+# Only these field-specific pairs establish a wider/narrower relationship. SCOPE describes
+# individual concepts and cannot, by itself, establish that two different concepts are compatible.
+BALANCE_SCOPE_PAIRS = {
+    "cash": {frozenset(("CashAndCashEquivalentsAtCarryingValue",
+                         "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"))},
+    "debt_long": {frozenset(("LongTermDebtNoncurrent", "LongTermDebt"))},
+    "operating_leases": {frozenset(("OperatingLeaseLiability", "OperatingLeaseLiabilityNoncurrent"))},
+    "finance_leases": {frozenset(("FinanceLeaseLiability", "FinanceLeaseLiabilityNoncurrent"))},
+}
 LEASE_CURRENT = {"operating_leases": "OperatingLeaseLiabilityCurrent", "finance_leases": "FinanceLeaseLiabilityCurrent"}
 DILUTION = {
     "options": ("Stock options outstanding",
@@ -433,7 +442,7 @@ def balance_sheet(company: dict, as_of: date) -> dict:
                     flags.append((RECONCILE, f"also tagged on this date: {other} {_money(g['val'])} "
                                              "(separate items: listed, not added up)"))
                 elif _differs(f["val"], g["val"]):
-                    scoped = other in SCOPE or name in SCOPE
+                    scoped = frozenset((name, other)) in BALANCE_SCOPE_PAIRS.get(key, set())
                     flags.append((USABLE if scoped else RECONCILE,
                                   f"other tags {'with a different scope' if scoped else 'disagree'}: "
                                   f"{other} {_money(g['val'])} vs {name} {_money(f['val'])}"

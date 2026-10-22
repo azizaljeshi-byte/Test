@@ -44,7 +44,7 @@ Every figure gets one:
 - **Balance sheet on one date** (the latest cash or equity date): cash, short-term investments, short- and long-term debt, and operating and finance leases.
   - A component not reported for that date is unknown. It is never carried forward from an older date.
   - Two values for the date in one filing make a component unknown, with no number shown. A value revised in a later filing needs reconciliation.
-  - Different same-date concepts are compared too: known scope differences are explained; other differing amounts need reconciliation.
+  - Different same-date concepts are compared too: only explicit field-specific pairs in `BALANCE_SCOPE_PAIRS` establish known scope differences. A tag's individual `SCOPE` description never exempts an unrecognized pair; other differing amounts need reconciliation.
   - Lease current portions are shown separately.
   - Where all three are tagged, LongTermDebt is checked against its noncurrent plus current portions.
   - Total interest-bearing debt isn't computed: that's a Phase 2 choice.

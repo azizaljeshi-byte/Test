@@ -1998,3 +1998,23 @@ def test_sec_quality_quarterly_shares_never_uses_annual_or_ytd():
     for row in rows:
         assert row['source']['value'] == 115e6 and row['source']['start'] == '2025-07-01'
         assert row['status'] == sq.STALE
+
+
+def test_sec_quality_balance_scope_requires_established_field_pair(monkeypatch):
+    # A description of one tag does not establish a relationship with another tag.
+    monkeypatch.setitem(sq.SCOPE, 'MarketableSecuritiesCurrent', 'a separately described scope')
+    r = sq.quality_company('Q', QUALITY_COMPANY, None, QDAY)
+    row = next(x for x in r['balance_sheet']['rows'] if x['key'] == 'short_term_investments')
+    assert row['status'] == sq.RECONCILE
+    assert 'other tags disagree: MarketableSecuritiesCurrent 45.0M vs ShortTermInvestments 40.0M' in row['notes']
+    assert row['concept'] == 'ShortTermInvestments' and row['accn']
+    # An actual unrecognized pair containing LongTermDebt (already in SCOPE) must
+    # also be described as a disagreement, rather than a verified scope difference.
+    company = {'facts': {'us-gaap': {
+        'CashAndCashEquivalentsAtCarryingValue': {'units': {'USD': [_qi(10e6, '2026-06-30')]}},
+        'LongTermDebt': {'units': {'USD': [_qi(500e6, '2026-06-30')]}},
+        'NoncurrentPortionOfNoncurrentBorrowings': {'units': {'USD': [_qi(400e6, '2026-06-30')]}}}}}
+    r = sq.quality_company('Q', company, None, QDAY)
+    row = next(x for x in r['balance_sheet']['rows'] if x['key'] == 'debt_long')
+    assert row['status'] == sq.RECONCILE
+    assert any('other tags disagree: NoncurrentPortionOfNoncurrentBorrowings' in n for n in row['notes'])
