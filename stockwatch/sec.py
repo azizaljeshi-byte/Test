@@ -9,7 +9,9 @@ import functools
 import json
 import logging
 import os
+import re
 import threading
+import time
 import urllib.request
 from datetime import date, timedelta
 from pathlib import Path
@@ -55,33 +57,108 @@ KEY_FORMS = {"10-K", "10-Q", "8-K", "20-F", "6-K", "DEF 14A", "4"} | OFFERING_FO
 
 _SEC_SLOTS = threading.BoundedSemaphore(4)   # SEC allows 10 requests a second; stay well under
 
+# SEC asks automated tools to identify themselves with a name and contact email, and can refuse
+# requests that don't (www.sec.gov more strictly than data.sec.gov). Without one we still send
+# this generic identifier, but say so: in logs once, and in user_agent_status() for reports.
+DEFAULT_USER_AGENT = "StockWatch personal research (set SEC_USER_AGENT)"
+_warned_user_agent = False
+
+
+def user_agent_status() -> str:
+    """"configured", "missing" or "invalid" (it needs a name and an email). Never returns the value itself."""
+    ua = (os.getenv("SEC_USER_AGENT") or "").strip()
+    if not ua:
+        return "missing"
+    has_email = re.search(r"[^\s@]+@[^\s@]+\.[^\s@]+", ua)
+    return "configured" if has_email and len(ua.split()) >= 2 else "invalid"   # a name and an email
+
+
+def _user_agent() -> str:
+    global _warned_user_agent
+    status = user_agent_status()
+    if status != "configured" and not _warned_user_agent:
+        _warned_user_agent = True
+        log.warning("SEC_USER_AGENT is %s: SEC requests use a generic identifier and SEC may refuse some. "
+                    "Set it to a name and email, e.g. \"Your Name you@example.com\".", status)
+    return os.getenv("SEC_USER_AGENT").strip() if status == "configured" else DEFAULT_USER_AGENT
+
 
 def _get(url: str) -> dict:
-    ua = os.getenv("SEC_USER_AGENT") or "StockWatch personal research (set SEC_USER_AGENT)"
-    req = urllib.request.Request(url, headers={"User-Agent": ua, "Accept": "application/json"})
+    req = urllib.request.Request(url, headers={"User-Agent": _user_agent(), "Accept": "application/json"})
     with _SEC_SLOTS, urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read().decode())
 
 
+TICKER_LIST_URL = "https://www.sec.gov/files/company_tickers.json"
+TICKER_LIST_TTL = 24 * 3600        # SEC's ticker list changes slowly
+TICKER_LIST_RETRY = 600            # after a failed download, try again 10 minutes later, not never
+_ticker_lock = threading.Lock()
+_ticker_list: dict = {"tickers": None, "fetched": 0.0, "failed": 0.0, "error": None}
+
+
+def _norm(ticker: str) -> str:
+    """Tickers as SEC writes them: upper case, share classes with a dash (BRK.B, brk/b -> BRK-B)."""
+    return re.sub(r"[./\s]+", "-", ticker.strip().upper()).strip("-")
+
+
 @functools.lru_cache(maxsize=1)
-def _ticker_map() -> dict[str, int]:
-    """Ticker -> CIK. The S&P file covers most lookups without a request."""
-    out = {}
+def _bundled_ciks() -> dict[str, int]:
+    """Ticker -> CIK for S&P 500 members, from the bundled file: no request needed."""
     try:
         df = pd.read_csv(UNIVERSE_CSV)
-        out.update({t.upper(): int(c) for t, c in zip(df["ticker"], df["cik"]) if pd.notna(c)})
+        return {_norm(t): int(c) for t, c in zip(df["ticker"], df["cik"]) if pd.notna(c)}
     except Exception as e:
-        log.info("universe CIKs unavailable: %s", e)
-    try:
-        for row in _get("https://www.sec.gov/files/company_tickers.json").values():
-            out.setdefault(str(row["ticker"]).upper().replace(".", "-"), int(row["cik_str"]))
-    except Exception as e:
-        log.info("SEC ticker map unavailable: %s", e)
-    return out
+        log.warning("bundled S&P CIKs unavailable: %s", e)
+        return {}
+
+
+def _sec_tickers(now: float | None = None) -> dict[str, int] | None:
+    """SEC's full ticker list (every filer), refreshed daily. A failed download is remembered only for
+    TICKER_LIST_RETRY seconds, and a previously downloaded list is kept in the meantime. None until a
+    download has succeeded."""
+    now = time.time() if now is None else now
+    with _ticker_lock:
+        st = _ticker_list
+        if st["tickers"] is not None and now - st["fetched"] < TICKER_LIST_TTL:
+            return st["tickers"]
+        if st["failed"] and now - st["failed"] < TICKER_LIST_RETRY:
+            return st["tickers"]
+        try:
+            rows = _get(TICKER_LIST_URL).values()
+            tickers = {_norm(str(r["ticker"])): int(r["cik_str"]) for r in rows}
+            if not tickers:
+                raise ValueError("empty ticker list")
+            st.update(tickers=tickers, fetched=now, failed=0.0, error=None)
+        except Exception as e:
+            st.update(failed=now, error=f"{type(e).__name__}: {e}")
+            log.warning("SEC ticker list unavailable: %s", st["error"])
+        return st["tickers"]
+
+
+def cik_lookup(ticker: str, now: float | None = None) -> tuple[int | None, str | None]:
+    """(CIK, None), or (None, why): the reason separates "SEC's ticker list couldn't be downloaded"
+    from "the ticker isn't in it", so a network or identification problem isn't reported as a
+    company having no SEC filings."""
+    t, bundled = _norm(ticker), _bundled_ciks()
+    if t in bundled:
+        return bundled[t], None
+    tickers = _sec_tickers(now)
+    if tickers is not None and t in tickers:
+        return tickers[t], None
+    if tickers is None:
+        why = f"SEC ticker list unavailable ({_ticker_list['error'] or 'not downloaded'})"
+        if user_agent_status() != "configured":
+            why += f"; SEC_USER_AGENT is {user_agent_status()}, and SEC may refuse unidentified requests"
+        return None, why
+    if _ticker_list["failed"]:
+        # the latest refresh failed, so the list may predate a recent listing: absence isn't verified
+        return None, (f"not in SEC's ticker list as last downloaded (refresh failing: {_ticker_list['error']}); "
+                      "a recent listing may be missing")
+    return None, "not in SEC's ticker list"
 
 
 def cik_for(ticker: str) -> int | None:
-    return _ticker_map().get(ticker.upper().replace(".", "-"))
+    return cik_lookup(ticker)[0]
 
 
 def fetch(ticker: str) -> dict:
