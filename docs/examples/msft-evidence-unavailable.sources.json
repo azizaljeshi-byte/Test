@@ -1,0 +1,10 @@
+{
+  "version": "2a-3.msft.1",
+  "ticker": "MSFT",
+  "collected_at": "2026-10-22T16:01:38.666699+00:00",
+  "sources": {
+    "https://data.sec.gov/api/xbrl/companyfacts/CIK0000789019.json": {
+      "error": "URLError: <urlopen error Tunnel connection failed: 403 Forbidden>"
+    }
+  }
+}

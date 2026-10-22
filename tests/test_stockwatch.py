@@ -1536,7 +1536,7 @@ def test_sec_audit_and_quality_are_not_wired_into_the_app():
     root = Path(__file__).resolve().parents[1]
     for path in [root / "dashboard.py", *sorted((root / "stockwatch").glob("*.py"))]:
         # research_lab.py is the one sanctioned bridge to the read-only Research view (tests/test_research_lab.py)
-        if path.name not in ("sec_audit.py", "sec_quality.py", "valuation_lab.py", "valuation_scenarios.py", "research_lab.py"):
+        if path.name not in ("sec_audit.py", "sec_quality.py", "valuation_lab.py", "valuation_scenarios.py", "valuation_evidence.py", "research_lab.py"):
             text = path.read_text()
             assert "sec_audit" not in text and "sec_quality" not in text and "valuation_lab" not in text and "valuation_scenarios" not in text, path.name
 

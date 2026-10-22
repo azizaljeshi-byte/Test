@@ -392,8 +392,12 @@ def _cross_check(obs, contracts, bridge, as_of, cfg, base):
         if not obs['independent_normalized_fcff'].get('method'):
             raise EvidenceGap('independently normalized FCFF calculation required')
         v = equity_value(multiple*normal, bridge)
+        same_basis = math.isclose(base.get('dilution_claim_weight', 1), 1, rel_tol=0, abs_tol=1e-12)
         return {'status': 'computed independent context', 'multiple': multiple, 'normalized_fcff': normal, **v,
-                'difference_from_base_per_share': v['equity_per_share']-base['equity_per_share'],
+                'basis': 'undiluted common claim; no future non-SBC dilution weighting',
+                'base_basis': 'DCF common claim after time-weighted non-SBC dilution',
+                'difference_from_base_per_share': v['equity_per_share']-base['equity_per_share'] if same_basis else None,
+                'comparison_status': 'same dilution basis' if same_basis else 'not comparable: different dilution bases',
                 'note': 'A separate normalized cash-flow/multiple lens, never averaged into the intrinsic scenarios.'}
     except EvidenceGap as exc:
         return {'status': UNAVAILABLE, 'reason': str(exc)}
