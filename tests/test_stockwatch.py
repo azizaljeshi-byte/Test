@@ -1282,3 +1282,146 @@ def test_first_sweep_shows_each_stock_as_it_lands_without_doubling_snapshots(mon
     run_once(pf, get_provider("demo"), store)
     assert all(len(store.history(t)) == 2 for t in ("AAA", "BBB"))     # later sweeps: one snapshot each
     assert store.previous_snapshot("AAA") is not None
+
+
+# ---- SEC data audit (read-only; Phase 1 of the valuation work)
+
+from stockwatch import sec_audit
+
+
+def _fy(year, val, form="10-K", filed=None, start=None):
+    return {"start": start or f"{year}-01-01", "end": f"{year}-12-31", "val": val, "form": form,
+            "filed": filed or f"{year + 1}-02-15"}
+
+
+def _inst(day, val, form="10-K", filed="2026-02-15"):
+    return {"end": day, "val": val, "form": form, "filed": filed}
+
+
+AUDIT_COMPANY = {"entityName": "Audit Example Corp", "cik": 999, "facts": {
+    "dei": {"EntityCommonStockSharesOutstanding": {"units": {"shares": [
+        # two classes reported for the same date; the app keeps one of them
+        _inst("2026-07-20", 300e6, "10-Q", "2026-07-30"), _inst("2026-07-20", 600e6, "10-Q", "2026-07-30")]}}},
+    "us-gaap": {
+        # revenue tag switch: SalesRevenueNet until FY2021, the newer tag from FY2022 (plus 10-Q YTD for TTM)
+        "SalesRevenueNet": {"units": {"USD": [_fy(2020, 700e6), _fy(2021, 800e6)]}},
+        "RevenueFromContractWithCustomerExcludingAssessedTax": {"units": {"USD": [
+            _fy(2022, 900e6), _fy(2023, 1000e6), _fy(2024, 1100e6), _fy(2025, 1200e6),
+            {"start": "2025-01-01", "end": "2025-06-30", "val": 560e6, "form": "10-Q", "filed": "2025-07-30"},
+            {"start": "2026-01-01", "end": "2026-06-30", "val": 640e6, "form": "10-Q", "filed": "2026-07-30"}]}},
+        # FY2023 operating cash flow first filed at 100, re-filed at 110 a year later; FY2024 amended (10-K/A)
+        "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": [
+            _fy(2023, 100e6), _fy(2023, 110e6, filed="2025-02-15"), _fy(2024, 120e6),
+            _fy(2024, 120e6, form="10-K/A", filed="2025-05-01")]}},
+        # a 10:1 split: FY2024 shares re-filed x10 and EPS /10 in the FY2025 10-K (confirmed)
+        "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": [
+            _fy(2024, 100e6), _fy(2024, 1000e6, filed="2026-02-15"), _fy(2025, 1000e6),
+            {"start": "2026-01-01", "end": "2026-06-30", "val": 1000e6, "form": "10-Q", "filed": "2026-07-30"}]}},
+        "EarningsPerShareDiluted": {"units": {"USD/shares": [
+            _fy(2024, 5.0), _fy(2024, 0.5, filed="2026-02-15"), _fy(2025, 0.6)]}},
+        "WeightedAverageNumberOfSharesOutstandingBasic": {"units": {"shares": [
+            {"start": "2026-01-01", "end": "2026-06-30", "val": 950e6, "form": "10-Q", "filed": "2026-07-30"}]}},
+        # only reported in euros
+        "ShareBasedCompensation": {"units": {"EUR": [_fy(2025, 50e6)]}},
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [
+            _inst("2024-12-31", 300e6, filed="2025-02-15"), _inst("2025-12-31", 350e6),
+            _inst("2026-06-30", 400e6, "10-Q", "2026-07-30")]}},
+        "PropertyPlantAndEquipmentNet": {"units": {"USD": [_inst("2025-12-31", 2e9)]}},
+    }}}
+AUDIT_SUBMISSIONS = {"name": "Audit Example Corp", "sic": "6021", "sicDescription": "National Commercial Banks",
+                     "fiscalYearEnd": "1231", "tickers": ["AEX", "AEX.B"]}
+
+
+def test_sec_audit_finds_history_restatements_splits_and_units():
+    r = sec_audit.audit_company("aex", AUDIT_COMPANY, AUDIT_SUBMISSIONS, today=date(2026, 10, 22))
+    f = r["fields"]
+    rev = f["revenue"]
+    assert rev["years"] == 6 and rev["status"] == "covered" and rev["used_by_app"]
+    assert "reporting tag changed" in rev["issues"][0] and "SalesRevenueNet (2020-2021)" in rev["issues"][0]
+    assert rev["ttm"] == {"value": pytest.approx(1280e6), "end": "2026-06-30"}     # 640 + 1200 - 560
+    ocf = f["operating_cash_flow"]
+    fy23 = next(y for y in ocf["annual"] if y["end"] == "2023-12-31")
+    assert fy23["restated"] and fy23["first"] == 100e6 and fy23["latest"] == 110e6
+    assert any("restated" in i and "2023" in i for i in ocf["issues"])
+    assert any("amended" in i and "2024" in i for i in ocf["issues"])
+    shares = f["diluted_shares"]
+    fy24 = next(y for y in shares["annual"] if y["end"] == "2024-12-31")
+    assert fy24["split"] == "10:1" and not fy24["restated"]             # shares x10 and EPS /10: a real split
+    assert any("confirmed by shares and EPS" in i for i in shares["issues"] + f["eps_diluted"]["issues"])
+    assert shares["ttm"] is None                                        # share counts are not summed
+    assert f["sbc"]["status"] == "other units only" and "EUR" in f["sbc"]["issues"][0]
+    assert f["dna"]["status"] == "missing" and not f["dna"]["used_by_app"]
+    assert f["cash"]["years"] == 2 and f["cash"]["latest"]["end"] == "2026-06-30"
+    assert f["ppe_net"]["latest"]["value"] == 2e9 and f["ppe_gross"]["status"] == "missing"   # observed only
+    findings = " ".join(r["findings"])
+    assert "2 different cover-page share counts" in findings            # two classes, app keeps one
+    # compared with basic weighted shares, with the date gap stated, and no claim the market cap is wrong
+    assert "-68% away from basic weighted-average shares" in findings and "20 days apart" in findings
+    assert "would be off" not in findings
+    assert "financial company (SIC 6021)" in findings
+    assert "Stock-based compensation" in findings and "Depreciation" in findings
+    assert r["app_extraction"]["shares"] in (300e6, 600e6)
+
+
+def test_sec_audit_does_not_call_an_unconfirmed_multiple_a_split():
+    company = {"facts": {"us-gaap": {
+        # EPS re-filed at 2x with no matching move in shares: possibly a split, but kept as a restatement
+        "EarningsPerShareDiluted": {"units": {"USD/shares": [_fy(2024, 1.0), _fy(2024, 2.0, filed="2026-02-15")]}},
+        "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": [_fy(2024, 100e6)]}},
+        # a fiscal-year change: two annual periods ending 3 months apart are not two fiscal years
+        "Revenues": {"units": {"USD": [_fy(2024, 900e6), _fy(2025, 1000e6, start="2024-04-01",
+                                                              filed="2025-05-15") | {"end": "2025-03-31"}]}}}}}
+    r = sec_audit.audit_company("XYZ", company, None, today=date(2026, 10, 22))
+    eps = r["fields"]["eps_diluted"]["annual"][0]
+    assert eps["rescale"] == pytest.approx(2.0) and eps["split"] is None and eps["restated"]
+    assert any("possibly a split but not confirmed" in i for i in r["fields"]["eps_diluted"]["issues"])
+    rev = r["fields"]["revenue"]
+    assert rev["years"] == 1 and any("overlapping" in i for i in rev["issues"])
+
+
+def test_sec_audit_keeps_the_direction_of_a_reverse_split():
+    company = {"facts": {"us-gaap": {
+        # 1-for-10 reverse split: shares re-filed down /10, EPS up x10
+        "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": [
+            _fy(2024, 1000e6), _fy(2024, 100e6, filed="2026-02-15")]}},
+        "EarningsPerShareDiluted": {"units": {"USD/shares": [_fy(2024, 0.5), _fy(2024, 5.0, filed="2026-02-15")]}}}}}
+    f = sec_audit.audit_company("REV", company, None, today=date(2026, 10, 22))["fields"]
+    row = f["diluted_shares"]["annual"][0]
+    assert row["split"] == "1-for-10 reverse" and not row["restated"]
+    assert any("1-for-10 reverse (FY 2024)" in i for i in f["diluted_shares"]["issues"])
+    assert not any("10:1" in i for i in f["diluted_shares"]["issues"] + f["eps_diluted"]["issues"])
+
+
+def test_sec_audit_report_status_and_unavailable_tickers(monkeypatch):
+    def get(url):
+        if "companyfacts" in url:
+            return AUDIT_COMPANY
+        raise OSError("submissions down")
+    ok = sec_audit.audit_ticker("AEX", today=date(2026, 10, 22), get=get, cik_for=lambda t: 999)
+    assert ok["status"] == "ok" and ok["sic"] is None                   # submissions missing: unknown, not invented
+    gone = sec_audit.audit_ticker("ZZZZ", get=get, cik_for=lambda t: None)
+    assert gone == {"ticker": "ZZZZ", "status": "unavailable", "reason": "no SEC CIK for this ticker"}
+    down = sec_audit.audit_ticker("AEX", get=lambda url: (_ for _ in ()).throw(OSError("403")), cik_for=lambda t: 1)
+    assert down["status"] == "unavailable" and "403" in down["reason"]
+    assert sec_audit.summary([ok])["status"] == "COMPLETE"
+    assert sec_audit.summary([ok, gone]) | {} == {"status": "PARTIAL", "total": 2, "available": 1, "unavailable": 1,
+                                                  "exit_code": 1}
+    assert sec_audit.summary([gone, down])["status"] == "NO DATA"
+    md = sec_audit.markdown([ok, gone], today=date(2026, 10, 22))
+    assert "**Status: PARTIAL**: 1 of 2 companies retrieved" in md and "ZZZZ (no SEC CIK" in md
+    assert "| Revenue | yes | ✓ 6y ⚠ |" in md and "Unavailable: no SEC CIK" in md and "coverage only" in md
+    import re
+    assert not re.search(r"\bnan\b", md.lower())                       # no missing number shown as nan
+    # the command's exit code tells the workflow whether any data was retrieved
+    for results, code in (([ok], 0), ([ok, gone], 1), ([down], 2)):
+        it = iter(results)
+        monkeypatch.setattr(sec_audit, "audit_ticker", lambda t: next(it))
+        assert sec_audit.main(["T"] * len(results) + ["--markdown", "/dev/null"]) == code
+
+
+def test_sec_audit_is_not_wired_into_the_app():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    for path in [root / "dashboard.py", *sorted((root / "stockwatch").glob("*.py"))]:
+        if path.name != "sec_audit.py":
+            assert "sec_audit" not in path.read_text(), path.name
