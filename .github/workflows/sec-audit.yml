@@ -1,7 +1,7 @@
 name: SEC data audit (read-only)
 
-# Manual only: produces the Phase 1 financial-data audit report (Issue #2) from SEC EDGAR,
-# which this repo's cloud sessions can't reach. It reads public SEC data and changes nothing.
+# Manual only: produces the Phase 1 financial-data audit and the Phase 1B data-quality report (Issue #2)
+# from SEC EDGAR, which this repo's cloud sessions can't reach. It reads public SEC data and changes nothing.
 # The job output is public: enter public example tickers only, never a list of private holdings.
 on:
   workflow_dispatch:
@@ -10,6 +10,10 @@ on:
         description: "Space-separated public example tickers (output is public; no private holdings)"
         required: true
         default: "MSFT MU RIVN BRK-B JPM AVGO"
+      reconcile:
+        description: "Tickers (among those above) whose fiscal-year figures are also checked against the filing itself"
+        required: false
+        default: "MSFT MU AVGO"
 
 permissions:
   contents: read
@@ -21,6 +25,7 @@ jobs:
     env:
       SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
       TICKERS: ${{ inputs.tickers }}
+      RECONCILE: ${{ inputs.reconcile }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -42,6 +47,15 @@ jobs:
           python -m stockwatch.sec_audit $TICKERS --markdown sec-audit.md --json sec-audit.json
           echo "code=$?" >> "$GITHUB_OUTPUT"
           cat sec-audit.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Check SEC data quality (Phase 1B)
+        id: quality
+        # same exit codes; the report also goes to the log so it can be read without the artifact
+        run: |
+          set +e
+          python -m stockwatch.sec_quality $TICKERS --reconcile $RECONCILE --markdown sec-quality.md --json sec-quality.json
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          cat sec-quality.md >> "$GITHUB_STEP_SUMMARY"
+          cat sec-quality.md
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -49,6 +63,8 @@ jobs:
           path: |
             sec-audit.md
             sec-audit.json
+            sec-quality.md
+            sec-quality.json
       # a green run must mean SEC data was actually retrieved
       - name: Check the audit retrieved data
         run: |
@@ -56,4 +72,9 @@ jobs:
             0) echo "COMPLETE: every company retrieved" ;;
             1) echo "::warning title=SEC audit PARTIAL::Some companies were unavailable; see the report" ;;
             *) echo "::error title=SEC audit NO DATA::No company could be retrieved from SEC"; exit 1 ;;
+          esac
+          case "${{ steps.quality.outputs.code }}" in
+            0) echo "COMPLETE: data-quality report for every company" ;;
+            1) echo "::warning title=SEC data quality PARTIAL::Some companies were unavailable; see the report" ;;
+            *) echo "::error title=SEC data quality NO DATA::No company could be retrieved from SEC"; exit 1 ;;
           esac

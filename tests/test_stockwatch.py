@@ -1531,9 +1531,244 @@ def test_sec_audit_report_status_and_unavailable_tickers(monkeypatch):
         assert sec_audit.main(["T"] * len(results) + ["--markdown", "/dev/null"]) == code
 
 
-def test_sec_audit_is_not_wired_into_the_app():
+def test_sec_audit_and_quality_are_not_wired_into_the_app():
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     for path in [root / "dashboard.py", *sorted((root / "stockwatch").glob("*.py"))]:
-        if path.name != "sec_audit.py":
-            assert "sec_audit" not in path.read_text(), path.name
+        if path.name not in ("sec_audit.py", "sec_quality.py"):
+            assert "sec_audit" not in path.read_text() and "sec_quality" not in path.read_text(), path.name
+
+
+# ---- SEC data quality (read-only; Phase 1B of the valuation work)
+
+from stockwatch import sec_quality as sq
+
+QDAY = date(2026, 10, 22)
+
+
+def _q(val, start, end, form="10-K", filed="2026-02-15", accn="0000000001-26-000005"):
+    return {"start": start, "end": end, "val": val, "form": form, "filed": filed, "accn": accn}
+
+
+def _qi(val, end, form="10-Q", filed="2026-07-30", accn="0000000001-26-000020"):
+    return {"end": end, "val": val, "form": form, "filed": filed, "accn": accn}
+
+
+FY24, FY25 = ("2024-01-01", "2024-12-31"), ("2025-01-01", "2025-12-31")
+QUALITY_COMPANY = {"entityName": "Quality Example Corp", "cik": 1, "facts": {
+    "dei": {"EntityCommonStockSharesOutstanding": {"units": {"shares": [
+        # two share classes on the cover page
+        _qi(300e6, "2026-07-20", filed="2026-07-30"), _qi(600e6, "2026-07-20", filed="2026-07-30")]}}},
+    "us-gaap": {
+        # FY2025 first filed at 1.20B, then amended to 1.26B; year-to-date figures for TTM
+        "Revenues": {"units": {"USD": [
+            _q(1000e6, *FY24, filed="2025-02-15", accn="0000000001-25-000004"), _q(1200e6, *FY25),
+            _q(1260e6, *FY25, form="10-K/A", filed="2026-05-01", accn="0000000001-26-000011"),
+            _q(600e6, "2025-01-01", "2025-06-30", "10-Q", "2025-07-30", "0000000001-25-000020"),
+            _q(700e6, "2026-01-01", "2026-06-30", "10-Q", "2026-07-30", "0000000001-26-000020")]}},
+        # another tag disagrees for FY2025
+        "NetIncomeLoss": {"units": {"USD": [_q(100e6, *FY25)]}},
+        "ProfitLoss": {"units": {"USD": [_q(120e6, *FY25)]}},
+        # one filing, two values for the same period
+        "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": [_q(150e6, *FY25), _q(160e6, *FY25)]}},
+        # last reported for 2012: stale next to FY2025
+        "OperatingIncomeLoss": {"units": {"USD": [_q(80e6, "2012-01-01", "2012-12-31", filed="2013-02-15",
+                                                     accn="0000000001-13-000002")]}},
+        "PaymentsToAcquirePropertyPlantAndEquipment": {"units": {"USD": [_q(50e6, *FY25)]}},
+        "ProceedsFromSaleOfPropertyPlantAndEquipment": {"units": {"USD": [_q(2e6, *FY25)]}},
+        # only a quarter, never a fiscal year
+        "InterestExpense": {"units": {"USD": [_q(5e6, "2026-04-01", "2026-06-30", "10-Q", "2026-07-30",
+                                                 "0000000001-26-000020")]}},
+        "ShareBasedCompensation": {"units": {"EUR": [_q(9e6, *FY25)]}},
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [_qi(300e6, "2025-12-31", "10-K", "2026-02-15",
+                                                                         "0000000001-26-000005"),
+                                                                    _qi(400e6, "2026-06-30")]}},
+        "StockholdersEquity": {"units": {"USD": [_qi(900e6, "2026-06-30")]}},
+        "ShortTermInvestments": {"units": {"USD": [_qi(40e6, "2026-06-30")]}},
+        "MarketableSecuritiesCurrent": {"units": {"USD": [_qi(45e6, "2026-06-30")]}},
+        "LongTermDebtCurrent": {"units": {"USD": [_qi(10e6, "2023-12-31", "10-K", "2024-02-15",
+                                                       "0000000001-24-000003")]}},
+        "LongTermDebt": {"units": {"USD": [_qi(500e6, "2026-06-30")]}},
+        "LongTermDebtNoncurrent": {"units": {"USD": [_qi(450e6, "2013-12-31", "10-K", "2014-02-15",
+                                                          "0000000001-14-000002")]}},
+        "OperatingLeaseLiabilityNoncurrent": {"units": {"USD": [_qi(70e6, "2026-06-30")]}},
+        "OperatingLeaseLiabilityCurrent": {"units": {"USD": [_qi(8e6, "2026-06-30")]}},
+        "WeightedAverageNumberOfSharesOutstandingBasic": {"units": {"shares": [
+            _q(880e6, *FY25), _q(890e6, "2026-01-01", "2026-06-30", "10-Q", "2026-07-30", "0000000001-26-000020"),
+            _q(895e6, "2026-04-01", "2026-06-30", "10-Q", "2026-07-30", "0000000001-26-000020")]}},
+        "ShareBasedCompensationArrangementByShareBasedPaymentAwardOptionsOutstandingNumber": {"units": {
+            "shares": [_qi(12e6, "2025-12-31", "10-K", "2026-02-15", "0000000001-26-000005")]}},
+    }}}
+
+
+def test_sec_quality_selects_with_provenance_and_no_look_ahead():
+    ref = sq.reference(QUALITY_COMPANY, QDAY)
+    assert ref == {"end": "2026-06-30", "fy_end": "2025-12-31", "age": 114}
+    rev = sq.select(QUALITY_COMPANY, "revenue", QDAY, ref)
+    assert rev["selected"] == {"concept": "Revenues", "value": 1260e6, "start": "2025-01-01", "end": "2025-12-31",
+                               "form": "10-K/A", "filed": "2026-05-01", "accn": "0000000001-26-000011"}
+    assert rev["first"]["accn"] == "0000000001-26-000005" and rev["first"]["value"] == 1200e6
+    assert rev["status"] == sq.RECONCILE
+    assert any(i.startswith("revised: first filed as 1.2B on 2026-02-15") for i in rev["issues"])
+    assert any("amended filing (10-K/A)" in i for i in rev["issues"])
+    # as of March 2026 the amendment hadn't been filed: the original figure, nothing revised
+    march = date(2026, 3, 1)
+    early = sq.select(QUALITY_COMPANY, "revenue", march, sq.reference(QUALITY_COMPANY, march))
+    assert early["selected"]["value"] == 1200e6 and early["status"] == sq.USABLE and not early["issues"]
+    # before the FY2025 10-K was filed, FY2024 is the latest fiscal year
+    jan = date(2026, 1, 31)
+    assert sq.select(QUALITY_COMPANY, "revenue", jan, sq.reference(QUALITY_COMPANY, jan))["selected"]["end"] == "2024-12-31"
+
+
+def test_sec_quality_flags_conflicts_duplicates_stale_and_unknown():
+    r = sq.quality_company("qex", QUALITY_COMPANY, None, QDAY)
+    f = r["fields"]
+    ni = f["net_income"]
+    assert ni["status"] == sq.RECONCILE and ni["selected"]["concept"] == "NetIncomeLoss"
+    assert "other tags disagree for the same period: ProfitLoss 120.0M vs NetIncomeLoss 100.0M" in ni["issues"]
+    ocf = f["operating_cash_flow"]
+    assert ocf["status"] == sq.RECONCILE and "the same filing reports different values" in ocf["issues"][0]
+    assert ocf["selected"]["value"] is None and not any("revised" in i for i in ocf["issues"])   # not a revision
+    ebit = f["operating_income"]
+    assert ebit["status"] == sq.STALE and "already reported the year ending 2025-12-31" in ebit["issues"][0]
+    debt = f["debt_long"]                       # the newest tag wins over a noncurrent figure from 2013
+    assert debt["selected"]["concept"] == "LongTermDebt" and debt["status"] == sq.RECONCILE
+    assert "can include the current portion" in debt["issues"][0]
+    assert "noncurrent portion only" in f["operating_leases"]["issues"][0]
+    cur = f["debt_current"]
+    assert cur["status"] == sq.STALE and "2023-12-31" in cur["issues"][0]
+    assert f["sbc"]["status"] == sq.UNKNOWN and "only in EUR" in f["sbc"]["issues"][0]
+    assert f["interest_expense"]["status"] == sq.UNKNOWN and "only shorter periods" in f["interest_expense"]["issues"][0]
+    assert f["dna"]["status"] == sq.UNKNOWN and f["dna"]["selected"] is None      # missing is unknown, never 0
+    assert f["cash"]["status"] == sq.USABLE and f["cash"]["selected"]["end"] == "2026-06-30"
+    cover = f["shares_outstanding"]
+    assert cover["status"] == sq.RECONCILE and "several share classes" in cover["issues"][0]
+    assert cover["selected"]["value"] is None and len(cover["issues"]) == 1    # no class passed off as the total
+    assert sum(r["counts"].values()) == len(sq.FIELDS) and r["sector"]["kind"] is None
+
+
+def test_sec_quality_ttm_shows_its_parts_and_says_why_when_it_cant():
+    ref = sq.reference(QUALITY_COMPANY, QDAY)
+    t = sq.ttm(QUALITY_COMPANY, "revenue", QDAY, ref)
+    assert t["status"] == sq.USABLE and t["value"] == pytest.approx(1360e6)        # 700 + 1260 - 600
+    assert [name for name, _ in t["parts"]] == ["year to date", "+ last fiscal year", "- same period a year earlier"]
+    assert t["parts"][1][1]["accn"] == "0000000001-26-000011"                     # the amended fiscal year
+    # annual-only figure: the fiscal year itself
+    assert sq.ttm(QUALITY_COMPANY, "net_income", QDAY, ref)["parts"][0][0] == "fiscal year"
+    # a quarter with nothing to complete it
+    t = sq.ttm(QUALITY_COMPANY, "interest_expense", QDAY, ref)
+    assert t["status"] == sq.UNKNOWN and t["value"] is None and "no last fiscal year" in t["reason"]
+
+
+def test_sec_quality_balance_sheet_is_one_date_and_dilution_is_never_estimated():
+    r = sq.quality_company("qex", QUALITY_COMPANY, None, QDAY)
+    bs = r["balance_sheet"]
+    assert bs["date"] == "2026-06-30"
+    rows = {x["key"]: x for x in bs["rows"]}
+    assert rows["cash"]["value"] == 400e6 and rows["cash"]["status"] == sq.USABLE
+    assert rows["short_term_investments"]["value"] == 40e6 and "MarketableSecuritiesCurrent 45.0M" in rows[
+        "short_term_investments"]["notes"][0]
+    # an old short-term debt figure isn't carried forward to the balance-sheet date
+    assert rows["debt_current"]["status"] == sq.UNKNOWN and rows["debt_current"]["value"] is None
+    assert "latest is for 2023-12-31, not used" in rows["debt_current"]["notes"][0]
+    assert rows["debt_long"]["status"] == sq.RECONCILE and "current portion" in rows["debt_long"]["notes"][0]
+    assert rows["operating_leases"]["status"] == sq.RECONCILE
+    assert "current portion 8.0M (OperatingLeaseLiabilityCurrent)" in rows["operating_leases"]["notes"][0]
+    assert rows["finance_leases"]["status"] == sq.UNKNOWN and "never reported" in rows["finance_leases"]["notes"][0]
+    sh = r["shares"]
+    basic = next(x for x in sh["rows"] if x["key"] == "basic_shares")
+    assert basic["source"]["value"] == 895e6 and basic["source"]["start"] == "2026-04-01"   # the latest quarter
+    assert next(x for x in sh["rows"] if x["key"] == "diluted_shares")["status"] == sq.UNKNOWN
+    cover = next(x for x in sh["rows"] if x["key"] == "cover")
+    assert cover["values"] == [300e6, 600e6] and cover["status"] == sq.RECONCILE
+    dil = {x["key"]: x for x in sh["dilution"]}
+    assert dil["options"]["source"]["value"] == 12e6 and dil["unvested_awards"]["status"] == sq.UNKNOWN
+    assert sh["fully_diluted"]["status"] == sq.UNKNOWN and "not computed" in sh["fully_diluted"]["reason"]
+
+
+def test_sec_quality_marks_generic_measures_not_applicable_for_banks_and_insurers():
+    bank = sq.quality_company("BNK", QUALITY_COMPANY, {"sic": "6021", "sicDescription": "National Commercial Banks",
+                                                       "tickers": ["BNK"]}, QDAY)
+    f = bank["fields"]
+    for key in ("operating_income", "operating_cash_flow", "capex", "debt_current", "debt_long"):
+        assert f[key]["status"] == sq.NOT_APPLICABLE and f[key]["issues"][0].startswith("not applicable (bank)")
+    # the staleness is still stated, not hidden behind "not applicable"
+    assert any("already reported the year ending" in i for i in f["operating_income"]["issues"])
+    assert bank["sector"]["kind"] == "bank" and "CET1" in " ".join(bank["sector"]["needs"])
+    assert "free cash flow (operating cash flow minus capex)" in bank["sector"]["not_applicable"]
+    ins = sq.quality_company("BRK-B", QUALITY_COMPANY, {"sic": "6331", "tickers": ["BRK-A", "BRK-B"]}, QDAY)
+    assert ins["sector"]["kind"] == "insurance" and "BRK-A, BRK-B" in ins["sector"]["multi_class_notes"][0]
+    assert ins["counts"][sq.NOT_APPLICABLE] == len(sq.GENERIC_NOT_APPLICABLE)
+    plain = sq.sector({"sic": "3674", "tickers": ["MU"]}, 1)
+    assert plain["kind"] is None and not plain["not_applicable"] and not plain["multi_class_notes"]
+
+
+INSTANCE = b"""<?xml version="1.0" encoding="utf-8"?>
+<xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance" xmlns:us-gaap="http://fasb.org/us-gaap/2025"
+  xmlns:xbrldi="http://xbrl.org/2006/xbrldi" xmlns:dei="http://xbrl.sec.gov/dei/2025">
+ <xbrli:context id="FY"><xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0000000001</xbrli:identifier>
+  </xbrli:entity><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate><xbrli:endDate>2025-12-31</xbrli:endDate>
+  </xbrli:period></xbrli:context>
+ <xbrli:context id="FY_seg"><xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0000000001</xbrli:identifier>
+  <xbrli:segment><xbrldi:explicitMember dimension="us-gaap:StatementBusinessSegmentsAxis">x:CloudMember</xbrldi:explicitMember>
+  </xbrli:segment></xbrli:entity><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate>
+  <xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>
+ <us-gaap:Revenues contextRef="FY" unitRef="usd" decimals="-6">1200000000</us-gaap:Revenues>
+ <us-gaap:NetIncomeLoss contextRef="FY" unitRef="usd" decimals="-6">99000000</us-gaap:NetIncomeLoss>
+ <us-gaap:NetCashProvidedByUsedInOperatingActivities contextRef="FY_seg" unitRef="usd" decimals="-6">150000000</us-gaap:NetCashProvidedByUsedInOperatingActivities>
+ <us-gaap:PaymentsToAcquirePropertyPlantAndEquipment contextRef="FY" unitRef="usd" decimals="-6">50000000</us-gaap:PaymentsToAcquirePropertyPlantAndEquipment>
+ <dei:DocumentType contextRef="FY">10-K</dei:DocumentType>
+</xbrli:xbrl>"""
+
+
+def test_sec_quality_checks_figures_against_the_filing_itself():
+    import json
+    folder = "https://www.sec.gov/Archives/edgar/data/1/000000000126000005"
+    asked = []
+
+    def get_bytes(url):
+        asked.append(url)
+        if url == f"{folder}/index.json":
+            return json.dumps({"directory": {"item": [{"name": "FilingSummary.xml"}, {"name": "x-20251231_cal.xml"},
+                                                      {"name": "x-20251231_htm.xml"}]}}).encode()
+        if url == f"{folder}/x-20251231_htm.xml":
+            return INSTANCE
+        raise OSError("404")
+    r = sq.quality_company("QEX", QUALITY_COMPANY, None, QDAY, reconcile_cik=1, get_bytes=get_bytes)
+    rows = {x["key"]: x for x in r["reconciliation"]["rows"]}
+    # revenue's selected figure comes from the amendment, whose folder isn't there: said, not guessed
+    assert rows["revenue"]["result"] == "unverified" and "filing not read: OSError: 404" in rows["revenue"]["reason"]
+    assert rows["net_income"]["result"] == "differs" and rows["net_income"]["filing_values"] == [99e6]
+    # SEC's data has two values for the period: nothing to check against
+    assert rows["operating_cash_flow"]["result"] == "unverified" and "several values" in rows["operating_cash_flow"]["reason"]
+    # a segment figure isn't a company-wide one
+    parsed = sq.parse_instance(INSTANCE)
+    assert ("NetCashProvidedByUsedInOperatingActivities", "2025-01-01", "2025-12-31") not in parsed
+    assert parsed[("Revenues", "2025-01-01", "2025-12-31")] == [1200e6] and not any(k[0] == "DocumentType" for k in parsed)
+    assert rows["capex"]["result"] == "matches" and rows["capex"]["filing"] == f"{folder}/0000000001-26-000005-index.htm"
+    assert asked.count(f"{folder}/index.json") == 1                       # one download per filing
+    ctx = {c["concept"]: c["value"] for c in r["reconciliation"]["capex_context"]}
+    assert ctx["ProceedsFromSaleOfPropertyPlantAndEquipment"] == 2e6 and ctx["FinanceLeasePrincipalPayments"] is None
+    assert sq.pick_instance(["a.xsd", "a_lab.xml", "a.xml"]) == "a.xml" and sq.pick_instance(["a.htm"]) is None
+
+
+def test_sec_quality_report_and_command(monkeypatch):
+    def get(url):
+        if "companyfacts" in url:
+            return QUALITY_COMPANY
+        raise OSError("submissions down")
+    ok = sq.quality_ticker("QEX", QDAY, get=get, lookup=lambda t: (1, None))
+    assert ok["status"] == "ok" and ok["sector"]["sic"] is None and ok["reconciliation"] is None
+    gone = sq.quality_ticker("ZZZZ", get=get, lookup=lambda t: (None, "not in SEC's ticker list"))
+    assert gone == {"ticker": "ZZZZ", "status": "unavailable", "reason": "not in SEC's ticker list"}
+    md = sq.markdown([ok, gone], QDAY, ua_status="configured")
+    assert "**Status: PARTIAL**: 1 of 2 companies retrieved" in md and "Unavailable: not in SEC's ticker list" in md
+    assert "| QEX | 2026-06-30 |" in md and "not requested" in md
+    assert "| Revenue | needs reconciliation | 1.3B | 2025-01-01 to 2025-12-31 (364 days) | Revenues · 10-K/A" in md
+    assert "### Balance sheet on 2026-06-30" in md and "| Fully diluted shares | unknown |" in md
+    import re
+    assert not re.search(r"\bnan\b", md.lower()) and "fair value" not in md.lower() and "buy-under" not in md.lower()
+    for results, code in (([ok], 0), ([ok, gone], 1), ([gone], 2)):
+        it = iter(results)
+        monkeypatch.setattr(sq, "quality_ticker", lambda t, as_of, check: next(it))
+        assert sq.main(["T"] * len(results) + ["--markdown", "/dev/null"]) == code
