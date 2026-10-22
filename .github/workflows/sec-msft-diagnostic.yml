@@ -26,10 +26,17 @@ jobs:
           fi
       - name: Diagnose official access and reconcile MSFT only
         run: python -m stockwatch.sec_access --output sec-msft/report
+      - name: Build MSFT decision-first dossier
+        if: always()
+        run: python -m stockwatch.msft_dossier --output sec-msft/dossier
       - name: Publish decision-first summary
         if: always()
         run: |
-          if [ -f sec-msft/report.md ]; then cat sec-msft/report.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ -f sec-msft/dossier.md ]; then
+            cat sec-msft/dossier.md >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f sec-msft/report.md ]; then
+            cat sec-msft/report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -39,3 +46,5 @@ jobs:
             sec-msft/report.json
             sec-msft/report.md
             sec-msft/report.diagnostic.json
+            sec-msft/dossier.json
+            sec-msft/dossier.md
