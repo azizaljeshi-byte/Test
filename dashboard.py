@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import threading
 import time
 from datetime import datetime
@@ -15,9 +14,9 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import briefing, finnhub, live, technical, tradeplan, turbo, ui
+from stockwatch import briefing, finnhub, live, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
-from stockwatch.data import NY, get_provider, us_session
+from stockwatch.data import NY, get_provider, selected_provider, us_session
 from stockwatch.engine import evaluate
 from stockwatch.relative import market_regime
 from stockwatch.store import Store
@@ -49,7 +48,7 @@ def cached_portfolio(code_version: str):
 
 base = cached_portfolio(CODE_VERSION)
 store = get_store(CODE_VERSION)
-data = provider("demo" if os.getenv("STOCKWATCH_DEMO") else base.settings.data_provider, CODE_VERSION)
+data = provider(selected_provider(base.settings.data_provider), CODE_VERSION)
 # with a Google Sheet, the sheet is the only list; dashboard additions are for setups without one
 portfolio = base if base.sheet_url else store.apply_overrides(base)
 tickers = {h.ticker for h in portfolio.holdings}
@@ -67,7 +66,7 @@ def tracker(name: str, code_version: str) -> live.Tracker:
     return live.Tracker(provider(name, code_version))
 
 
-tracking = tracker("demo" if os.getenv("STOCKWATCH_DEMO") else base.settings.data_provider, CODE_VERSION)
+tracking = tracker(selected_provider(base.settings.data_provider), CODE_VERSION)
 
 
 def _in_background(fn, *args, name: str):
@@ -218,7 +217,7 @@ controls()
 
 # ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
 VIEWS = {"radar": "◉ Radar", "turbo": "⚡ Turbo", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log",
-         "fleet": "+ Fleet"}
+         "fleet": "+ Fleet", "research": "⚗ Research"}
 current = st.query_params.get("view", "radar")
 current = current if current in VIEWS else "radar"
 picked = st.segmented_control("View", list(VIEWS), format_func=VIEWS.get, default=current,
@@ -724,3 +723,210 @@ if view == "fleet":
                    "To keep them, paste this into the app's STOCKWATCH_PORTFOLIO secret (between the triple quotes), "
                    "or connect a Google Sheet with STOCKWATCH_SHEET_URL.")
         st.code(to_yaml(portfolio), language="yaml")
+
+
+# ---------------------------------------------------------------- research lab: read-only, never feeds the views above
+@st.cache_resource
+def research_jobs(code_version: str) -> research_lab.Jobs:
+    return research_lab.Jobs()
+
+
+@st.cache_data(show_spinner=False)
+def _chart_example(code_version: str) -> dict:
+    return research_lab.chart_example()
+
+
+@st.cache_data(show_spinner=False)
+def _synthetic(dilution: float, code_version: str) -> dict:
+    return research_lab.synthetic_valuation(dilution)[1]
+
+
+def _research_submit(kind: str):
+    # on_click: the check runs on its own thread, so page reloads can't start it twice or cut it short
+    ticker = research_lab.clean_ticker(st.session_state.get(f"rl_{kind}_input"))
+    if not ticker:
+        st.session_state.rl_note = "Type a ticker, like MSFT."
+        return
+    if kind == "valuation":
+        def fn():
+            return research_lab.valuation_check(ticker)
+    else:
+        def fn():   # the source label comes from `data` itself, whichever provider the app picked
+            return research_lab.chart_run(data, ticker)
+    st.session_state.rl_note = research_jobs(CODE_VERSION).submit(kind, ticker, fn)
+    st.session_state[f"rl_{kind}_shown"] = ticker
+
+
+@st.fragment(run_every="5s")
+def _research_wait(kind: str, ticker: str):
+    job = research_jobs(CODE_VERSION).get(kind, ticker)
+    if job and job["state"] == "running":
+        st.caption(f"⏳ Checking {ticker}… {int(time.time() - job['started'])}s. You can leave this page.")
+    else:
+        st.rerun()
+
+
+def _research_job(kind: str) -> dict | None:
+    """The input, button and status for an on-demand check; returns the finished result to show."""
+    c1, c2 = st.columns([1, 1.2])
+    c1.text_input("Ticker", key=f"rl_{kind}_input", placeholder="e.g. MSFT", label_visibility="collapsed")
+    c2.button("Check SEC data" if kind == "valuation" else "Run the pattern lab", width="stretch",
+              key=f"rl_{kind}_go", on_click=_research_submit, args=(kind,))
+    if note := st.session_state.pop("rl_note", None):
+        st.toast(note)
+    ticker = st.session_state.get(f"rl_{kind}_shown")
+    if not ticker:
+        return None
+    job = research_jobs(CODE_VERSION).get(kind, ticker)
+    if not job:
+        return None
+    if job["state"] == "running":
+        _research_wait(kind, ticker)
+        return None
+    if job["state"] == "error":
+        st.markdown(ui.flag("UNAVAILABLE", f"{escape(ticker)}: the check failed ({escape(job['error'][:200])}). "
+                            "Nothing is estimated in its place."), unsafe_allow_html=True)
+        return None
+    st.caption(f"{ticker} checked {job['when']} UTC · kept for {research_lab.JOB_TTL // 3600} hours")
+    return job["result"]
+
+
+def _match_figure(w: dict, m: dict):
+    n = w["window"]
+    path, xs = m["plot"], list(range(-(n - 1), len(m["plot"]) - (n - 1)))
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=xs[:n], y=path[:n], name=f"Then: {m['formation_start']} to {m['date']}",
+                             line=dict(color=ui.WARN, width=2)))
+    fig.add_trace(go.Scatter(x=xs[n - 1:], y=path[n - 1:], name="What happened next",
+                             line=dict(color=ui.WARN, width=2, dash="dash")))
+    fig.add_trace(go.Scatter(x=xs[:n], y=w["current_path"], name="Now", line=dict(color=ui.INFO, width=3)))
+    fig.add_vline(x=0, line_dash="dot", line_width=1, line_color=ui.MUTED)
+    grid = "rgba(95,135,150,0.15)"
+    fig.update_layout(height=280, margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor="rgba(0,0,0,0)",
+                      plot_bgcolor="rgba(0,0,0,0)", hovermode="x unified",
+                      font=dict(family="Share Tech Mono, monospace", color=ui.INK, size=11),
+                      legend=dict(orientation="h", y=1.18, x=0, bgcolor="rgba(0,0,0,0)"))
+    fig.update_xaxes(gridcolor=grid, zeroline=False, title_text="days from pattern end")
+    fig.update_yaxes(gridcolor=grid, zeroline=False, title_text="price, start = 100")
+    return fig
+
+
+def _pattern_report(rep: dict, key: str):
+    if rep.get("error"):
+        st.markdown(ui.flag("UNAVAILABLE", escape(rep["error"])), unsafe_allow_html=True)
+        return
+    src = rep.get("source")
+    src_text = (escape(src) if isinstance(src, str) else
+                f'{escape(src["start"])} to {escape(src["end"])}, {src["rows"]} trading days · '
+                f'<a href="{escape(src["url"])}">source file</a> (sha256 {escape(src["sha256"][:12])}…) · '
+                f'{escape(src["adjustment"])}') if src else "unknown"
+    if rep.get("market_data") is False:
+        st.markdown(ui.flag("NOT MARKET DATA", escape(src or "unknown source") + ". Nothing below describes a real stock.",
+                            ui.RISK), unsafe_allow_html=True)
+    as_of = rep.get("as_of")
+    age = (f" · {(datetime.now(NY).date() - datetime.fromisoformat(as_of).date()).days / 365.25:.1f} years old"
+           if as_of else "")
+    st.markdown(ui.flag(rep["status"], f"{escape(rep['ticker'])} as of {escape(str(as_of))}{age}. "
+                        "Historical look-alikes and what followed them: a description of the past, not odds or a buy signal."),
+                unsafe_allow_html=True)
+    st.markdown(f'<div class="mc-d">Source: {src_text}</div>', unsafe_allow_html=True)
+    sizes = [w["window"] for w in rep.get("windows", [])]
+    if not sizes:
+        st.caption(rep.get("reason", "No pattern windows."))
+        return
+    size = st.segmented_control("Pattern length", sizes, default=sizes[0], key=f"rl_win_{key}",
+                                format_func=lambda n: f"{n} days") or sizes[0]
+    w = research_lab.window(rep, size)
+    if "summary" not in w:
+        st.markdown(ui.flag("UNAVAILABLE", escape(w.get("reason", "no result"))), unsafe_allow_html=True)
+        return
+    st.caption(f"{len(w['matches'])} separate past episodes matched (at least {rep['settings']['min_matches']} "
+               "needed before reading anything into them). "
+               + research_lab.holdout_note(w, rep["settings"]))
+    st.markdown(ui.table(["After", "Group", "Cases", "Median return", "Hit +15% first", "Hit −8% first", "Neither",
+                          "95% range of +15% rate"], research_lab.summary_rows(w)), unsafe_allow_html=True)
+    st.caption("Returns are after an illustrative 0.2% cost. 'Same regime' and 'Any dip' are baselines with no shape "
+               "matching: if the matches don't beat them, the shape adds nothing. Ranges describe this small sample.")
+    for m in w["matches"][:4]:
+        if "plot" not in m:
+            continue
+        st.markdown(f'<div class="mc-section">{escape(m["formation_start"])} to {escape(m["date"])} · '
+                    f'distance {m["distance"]:.2f}</div>', unsafe_allow_html=True)
+        st.plotly_chart(_match_figure(w, m), width="stretch", config={"displayModeBar": False},
+                        key=f"rl_fig_{key}_{size}_{m['end']}")
+        st.markdown(ui.table(["After", "Return", "First hit", "Day", "Best", "Worst"], research_lab.outcome_rows(m)),
+                    unsafe_allow_html=True)
+    with st.expander("Limits of this research", expanded=False):
+        st.markdown("\n".join(f"- {x}" for x in rep.get("limitations", [])))
+
+
+def _valuation_result(r: dict):
+    fam = r.get("family") or {}
+    st.markdown(ui.flag(r["status"], f"{escape(r['ticker'])} as of {escape(r['as_of'])}"
+                        + (f" · {escape(fam['family'])}: {escape(fam.get('rule', ''))}" if fam else "")),
+                unsafe_allow_html=True)
+    if r.get("scenarios"):
+        st.markdown(ui.table(["Case", "Per share", "Rate", "Terminal share", "Dilution weight"],
+                             research_lab.scenario_rows(r)), unsafe_allow_html=True)
+    if r.get("gaps"):
+        st.markdown("**Why there's no value:**\n" + "\n".join(f"- {g}" for g in r["gaps"]))
+    if r.get("sec_inputs"):
+        with st.expander("SEC inputs and their quality", expanded=False):
+            st.markdown(ui.table(["Input", "Status", "Period end", "Issues"], research_lab.sec_rows(r), wrap=True),
+                        unsafe_allow_html=True)
+    if r.get("phase2a1_risk_context"):
+        with st.expander("Risk lenses (Phase 2A-1)", expanded=False):
+            st.markdown(ui.table(["Lens", "Reading"], research_lab.risk_rows(r), wrap=True), unsafe_allow_html=True)
+
+
+if view == "research":
+    st.markdown('<div class="mc-section">Research lab</div>', unsafe_allow_html=True)
+    st.markdown(ui.flag("READ-ONLY", escape(research_lab.RESEARCH_ONLY), ui.INFO), unsafe_allow_html=True)
+    area = st.segmented_control("Area", ["Valuation", "Chart patterns"], default="Valuation", key="rl_area",
+                                label_visibility="collapsed") or "Valuation"
+
+    if area == "Valuation":
+        st.markdown('<div class="mc-section">Real companies · evidence on file</div>', unsafe_allow_html=True)
+        cfg_rl = research_lab.load_scenario_config()
+        rows = research_lab.completeness(cfg_rl, research_lab.checked_families(research_jobs(CODE_VERSION),
+                                                                               cfg_rl.get("companies") or {}))
+        st.markdown("".join(ui.flag(c["status"], f"<strong>{escape(c['ticker'])}</strong> · {escape(c['family'])} · "
+                                    + escape("no valuation model" if c["note"] == "no model" else
+                                             f"evidence: {c['note']}")) for c in rows), unsafe_allow_html=True)
+        st.caption("Each company is measured against its own model's needs: banks need tangible equity, capital and "
+                   "returns instead of a balance-sheet bridge. No company has sourced evidence yet, so no fair value "
+                   "is shown.")
+        with st.expander("What each company still needs", expanded=False):
+            st.markdown("\n".join(f"- **{c['ticker']}** ({c['family']}, from {c['family_source']}): {c['reason']}"
+                                  for c in rows))
+        st.markdown('<div class="mc-section">Check a company against SEC data</div>', unsafe_allow_html=True)
+        st.caption("Shows which valuation family fits, the quality of each SEC input and what's missing. "
+                   "Runs only when you tap the button.")
+        if result := _research_job("valuation"):
+            _valuation_result(result)
+
+        st.markdown('<div class="mc-section">How the model works · synthetic example</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown('<div class="mc-synth">⚠ Synthetic teaching example · fictitious company</div>',
+                        unsafe_allow_html=True)
+            st.caption("Made-up numbers (revenue 100, 20% margin, 8.2% rate) that show the arithmetic. "
+                       "They are not any real stock.")
+            dil = st.segmented_control("Extra share issuance", ["None", "2% a year"], default="None",
+                                       key="rl_dilution") or "None"
+            demo = _synthetic(0.02 if dil == "2% a year" else 0.0, CODE_VERSION)
+            st.markdown(ui.table(["Case", "Per share", "Rate", "Terminal share", "Dilution weight"],
+                                 research_lab.scenario_rows(demo)), unsafe_allow_html=True)
+            st.caption("Base case, year by year (years 6-10 fade to the long-run settings):")
+            st.markdown(ui.table(["Year", "Revenue", "Margin", "Cash flow", "New shares", "Share factor"],
+                                 research_lab.driver_rows(demo["scenarios"]["base"])), unsafe_allow_html=True)
+            head, grid_rows = research_lab.sensitivity_grid(demo)
+            st.caption("Sensitivity only: per-share value if the discount rate and long-run growth were different.")
+            st.markdown(ui.table(head, grid_rows), unsafe_allow_html=True)
+
+    else:
+        st.markdown('<div class="mc-section">Pinned example · AMZN 2013-2018</div>', unsafe_allow_html=True)
+        _pattern_report(_chart_example(CODE_VERSION), "pinned")
+        st.markdown('<div class="mc-section">Run it on a ticker</div>', unsafe_allow_html=True)
+        st.caption("Fetches full daily history plus SPY and searches it on a background thread. Runs only when you tap.")
+        if result := _research_job("chart"):
+            _pattern_report(result, "live")

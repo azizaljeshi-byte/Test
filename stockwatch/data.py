@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import os
 import threading
 import time
 import zlib
@@ -781,6 +782,11 @@ class CachedProvider:
         if not hasattr(self.inner, "sec_facts"):
             raise NotImplementedError
         return self._get("sec_facts", ticker)
+
+
+def selected_provider(setting: str) -> str:
+    """The provider the app runs on: demo when STOCKWATCH_DEMO is set, otherwise the portfolio's setting."""
+    return "demo" if os.getenv("STOCKWATCH_DEMO") else setting
 
 
 def get_provider(name: str) -> DataProvider:
