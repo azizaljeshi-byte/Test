@@ -1643,9 +1643,9 @@ def test_sec_quality_flags_conflicts_duplicates_stale_and_unknown():
     assert ebit["status"] == sq.STALE and "already reported the year ending 2025-12-31" in ebit["issues"][0]
     debt = f["debt_long"]                       # the newest tag wins over a noncurrent figure from 2013
     assert debt["selected"]["concept"] == "LongTermDebt" and debt["status"] == sq.RECONCILE
-    assert debt["issues"] == ["selected tag LongTermDebt is total including the current portion: check it's the "
+    assert debt["issues"] == ["selected tag LongTermDebt (total including the current portion): check it's the "
                               "definition wanted"]
-    assert "OperatingLeaseLiabilityNoncurrent is noncurrent portion only" in f["operating_leases"]["issues"][0]
+    assert "OperatingLeaseLiabilityNoncurrent (noncurrent portion only)" in f["operating_leases"]["issues"][0]
     cur = f["debt_current"]
     assert cur["status"] == sq.STALE and "2023-12-31" in cur["issues"][0]
     assert f["sbc"]["status"] == sq.UNKNOWN and "only in EUR" in f["sbc"]["issues"][0]

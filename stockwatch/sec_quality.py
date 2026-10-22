@@ -173,7 +173,7 @@ def _scope_flag(concept: str, concepts: list[str]) -> tuple[str, str] | None:
     """A fallback tag with a known different scope was selected: a person must check the definition."""
     name = concept.split(":")[-1]
     if concept != concepts[0] and name in SCOPE:
-        return RECONCILE, f"selected tag {name} is {SCOPE[name]}: check it's the definition wanted"
+        return RECONCILE, f"selected tag {name} ({SCOPE[name]}): check it's the definition wanted"
     return None
 
 
@@ -278,7 +278,8 @@ def select(company: dict, key: str, as_of: date, ref: dict) -> dict:
     if scoped:
         flags.append((USABLE, "other tags with a different scope: " + ", ".join(
             f"{a['concept']} {_fmt(a['value'], unit)} ({_pct(a['value'], latest['val'])}"
-            + (f"; {SCOPE[a['concept']]}" if a["concept"] in SCOPE else "") + ")" for a in scoped)))
+            + (f"; {SCOPE[a['concept']]}" if a["concept"] in SCOPE else "") + ")" for a in scoped)
+            + (f"; the selected {name} is {SCOPE[name]}" if name in SCOPE else "")))
     if clash:
         flags.append((RECONCILE, "other tags disagree for the same period: " + ", ".join(
             f"{a['concept']} {_fmt(a['value'], unit)} ({_pct(a['value'], latest['val'])})" for a in clash)
