@@ -28,6 +28,12 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
+      # say plainly when SEC requests won't carry a name and email (never prints the value)
+      - name: Check SEC identification
+        run: |
+          if [ -z "$SEC_USER_AGENT" ]; then
+            echo "::warning title=SEC_USER_AGENT not set::Add the SEC_USER_AGENT repository secret (a name and email). Without it SEC requests use a generic identifier and SEC may refuse some."
+          fi
       - name: Audit SEC financial data
         id: audit
         # exit code 0 = every company retrieved, 1 = some, 2 = none; publish the report either way

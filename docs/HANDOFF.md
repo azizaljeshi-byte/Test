@@ -2,7 +2,7 @@
 
 This summarises the whole project so far, for picking it up in a new conversation. It describes the state as of
 commit `b232d30` on branch `claude/stock-dashboard-alerts-rr9r83` (also the repo's default branch): 28 commits,
-about 6,700 lines of Python, 89 passing tests. The README has the user-facing setup guide; this file covers what's
+about 6,700 lines of Python, 91 passing tests. The README has the user-facing setup guide; this file covers what's
 built, why, and what to watch out for.
 
 ## 1. What it is
@@ -142,7 +142,7 @@ against each other. On top of that, every stock gets a plain-English briefing an
 | `stockwatch/ui.py` | all CSS and HTML builders (cards, panels, tables, ladders) |
 | `.github/workflows/scan.yml` | scheduled scan and push job, plus the daily S&P job |
 | `.github/workflows/sec-audit.yml` | manual-only job that runs the SEC data audit on example tickers |
-| `tests/test_stockwatch.py` | 89 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses |
+| `tests/test_stockwatch.py` | 91 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses |
 
 **Data flow:** the provider fetches (cached), `engine.evaluate` builds an `Evaluation` (scores, signals, research,
 plan), `store.save_snapshot` writes JSON to SQLite, and the dashboard reads only the store. Alerts of severity 2 or
@@ -153,7 +153,7 @@ higher go into the alerts table and out through `notify`.
 | Source | Used for | Notes |
 |---|---|---|
 | Yahoo via `yfinance` 1.7 | prices (daily and minute bars), fundamentals, analyst data, news, calendar, options | **Streamlit Cloud's shared servers get Yahoo's token ("crumb") throttled**: HTTP 429 on the token, then 401 on quote, fundamental and analyst endpoints. Chart (price) data keeps working. Mitigations: at most 3 requests in flight, retries for "database is locked", bar-based quotes, near-empty fundamentals raise instead of being cached |
-| SEC EDGAR | filings, share counts, fundamentals fallback, earnings-date estimate | free, set `SEC_USER_AGENT`; at most 4 requests in flight |
+| SEC EDGAR | filings, share counts, fundamentals fallback, earnings-date estimate | free; at most 4 requests in flight. Set `SEC_USER_AGENT` to a name and email (Streamlit **and** GitHub): without it requests use a generic identifier, SEC may refuse some, and the app warns once in its logs (`sec.user_agent_status()`). Ticker → CIK: the bundled S&P list first, then SEC's full ticker list (daily). A failed download is retried after 10 minutes rather than cached, and `sec.cik_lookup` says why a ticker has no CIK |
 | Finnhub (free key) | fallback for analyst ratings, targets (if the plan allows), earnings history and calendar, insiders, key ratios, news | `FINNHUB_API_KEY`; requests paced 1.05 seconds apart; short interest and institutional ownership need a paid plan |
 | GitHub raw (datasets/s-and-p-500-companies) | S&P 500 constituents | refreshed daily, bundled copy as fallback |
 | Google Sheet (CSV export) | the ticker list | needs link sharing, or "Publish to web" as CSV |
@@ -181,7 +181,7 @@ back empty are cached until their TTL runs out, so **reboot the app after adding
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                                   # 89 tests, no network needed
+python -m pytest -q                                   # 91 tests, no network needed
 STOCKWATCH_DEMO=1 streamlit run dashboard.py          # offline UI with synthetic data
 python -m stockwatch.scanner --once --demo            # one sweep from the CLI
 python -m stockwatch.market --demo                    # S&P scan from the CLI

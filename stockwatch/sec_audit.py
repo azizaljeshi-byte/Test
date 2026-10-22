@@ -310,13 +310,14 @@ def audit_company(ticker: str, company: dict, submissions: dict | None, today: d
             "fields": fields, "app_extraction": app_extraction(company), "findings": findings}
 
 
-def audit_ticker(ticker: str, today: date | None = None, get=None, cik_for=None) -> dict:
-    """Download and audit one ticker. Network problems give an "unavailable" entry, never made-up data."""
-    get, cik_for = get or sec._get, cik_for or sec.cik_for
+def audit_ticker(ticker: str, today: date | None = None, get=None, lookup=None) -> dict:
+    """Download and audit one ticker. Network problems give an "unavailable" entry with the actual
+    reason (e.g. SEC's ticker list couldn't be downloaded), never made-up data."""
+    get, lookup = get or sec._get, lookup or sec.cik_lookup
     try:
-        cik = cik_for(ticker)
+        cik, why = lookup(ticker)
         if cik is None:
-            return {"ticker": ticker.upper(), "status": "unavailable", "reason": "no SEC CIK for this ticker"}
+            return {"ticker": ticker.upper(), "status": "unavailable", "reason": why or "no SEC CIK for this ticker"}
         company = get(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json")
         try:
             submissions = get(f"https://data.sec.gov/submissions/CIK{cik:010d}.json")
@@ -347,7 +348,17 @@ def summary(reports: list[dict]) -> dict:
             "exit_code": {"COMPLETE": 0, "PARTIAL": 1, "NO DATA": 2}[status]}
 
 
-def markdown(reports: list[dict], today: date | None = None) -> str:
+def identification_line(status: str | None = None) -> str:
+    """Whether SEC requests carried a name and email (SEC_USER_AGENT), without ever showing it."""
+    status = status or sec.user_agent_status()
+    if status == "configured":
+        return "SEC identification (SEC_USER_AGENT): configured."
+    return (f"SEC identification (SEC_USER_AGENT): **not configured** ({status}). Requests used a generic "
+            "identifier without contact details, and SEC may refuse some; set the SEC_USER_AGENT secret to "
+            "a name and email.")
+
+
+def markdown(reports: list[dict], today: date | None = None, ua_status: str | None = None) -> str:
     today = today or date.today()
     ok = [r for r in reports if r["status"] == "ok"]
     sm = summary(reports)
@@ -355,6 +366,7 @@ def markdown(reports: list[dict], today: date | None = None) -> str:
     lines = [f"# SEC financial-data audit ({today.isoformat()})", "",
              f"**Status: {sm['status']}**: {sm['available']} of {sm['total']} companies retrieved from SEC"
              + (f"; unavailable: {', '.join(gone)}" if gone else "") + ".", "",
+             identification_line(ua_status), "",
              "Read-only inventory of SEC XBRL company facts. Figures are as reported to SEC; nothing is estimated. "
              '"Used now" means the app\'s current SEC fallback keeps the field (TTM or latest only).', ""]
     if ok:
@@ -415,7 +427,8 @@ def main(argv=None) -> int:
             fh.write(report)
     else:
         print(report)
-    print(f"SEC audit status: {sm['status']} ({sm['available']} of {sm['total']} companies)", file=sys.stderr)
+    print(f"SEC audit status: {sm['status']} ({sm['available']} of {sm['total']} companies); "
+          f"SEC_USER_AGENT {sec.user_agent_status()}", file=sys.stderr)
     # 0 complete, 1 partial, 2 no data: the workflow fails on no data so a green run means data was retrieved
     return sm["exit_code"]
 

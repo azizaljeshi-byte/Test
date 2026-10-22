@@ -39,6 +39,10 @@ jobs:
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"
+            # SEC filings, dilution checks and the fundamentals fallback need SEC to accept our requests
+            if [ -z "$SEC_USER_AGENT" ]; then
+              echo "::warning title=SEC_USER_AGENT not set::Add the SEC_USER_AGENT repository secret (a name and email). Without it SEC requests use a generic identifier and SEC may refuse some."
+            fi
           fi
       - if: steps.cfg.outputs.enabled == 'true'
         uses: actions/checkout@v4

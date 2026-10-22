@@ -613,11 +613,75 @@ def test_sec_analysis_events_offerings_and_dilution():
     assert {s.code: s for s in sig_big}["sec_offering"].severity == 1   # shelf filings are routine for large caps
 
 
+def _fresh_ticker_list(monkeypatch):
+    monkeypatch.setattr(sec, "_ticker_list", {"tickers": None, "fetched": 0.0, "failed": 0.0, "error": None})
+
+
 def test_sec_ticker_lookup_uses_bundled_ciks(monkeypatch):
-    sec._ticker_map.cache_clear()
+    _fresh_ticker_list(monkeypatch)
     monkeypatch.setattr(sec, "_get", lambda url: (_ for _ in ()).throw(OSError("offline")))
     assert sec.cik_for("AAPL") == 320193 and sec.cik_for("brk.b") == 1067983
-    sec._ticker_map.cache_clear()
+    assert sec.cik_for(" BRK/B ") == 1067983                            # spellings of a share class
+
+
+def test_sec_ticker_list_failure_is_reported_and_retried_not_remembered(monkeypatch):
+    """Non-S&P tickers (RIVN) need SEC's ticker list. A failed download used to be cached for the life of
+    the process and reported as "no SEC CIK"; now the reason is kept and the download is retried."""
+    _fresh_ticker_list(monkeypatch)
+    monkeypatch.delenv("SEC_USER_AGENT", raising=False)
+    calls, fail = [], [True]
+
+    def get(url):
+        calls.append(url)
+        if fail[0]:
+            raise OSError("HTTP Error 403: Forbidden")
+        return {"0": {"cik_str": 1874178, "ticker": "RIVN", "title": "Rivian Automotive, Inc."}}
+    monkeypatch.setattr(sec, "_get", get)
+    t0 = 1_000_000.0
+    cik, why = sec.cik_lookup("RIVN", now=t0)
+    assert cik is None and "SEC ticker list unavailable" in why and "403" in why
+    assert "SEC_USER_AGENT is missing" in why                         # the likely cause is named
+    assert sec.cik_lookup("MSFT", now=t0) == (789019, None)            # S&P names don't need the list
+    sec.cik_lookup("RIVN", now=t0 + 60)
+    assert len(calls) == 1                                              # no hammering inside the retry window
+    fail[0] = False
+    assert sec.cik_lookup("rivn ", now=t0 + sec.TICKER_LIST_RETRY + 1) == (1874178, None)   # retried, found
+    assert sec.cik_lookup("ZZZZ", now=t0 + sec.TICKER_LIST_RETRY + 2) == (None, "not in SEC's ticker list")
+    fail[0] = True                                                      # a later failure keeps the last good list
+    later = t0 + sec.TICKER_LIST_RETRY + sec.TICKER_LIST_TTL + 10
+    assert sec.cik_lookup("RIVN", now=later) == (1874178, None) and len(calls) == 3
+
+
+def test_sec_user_agent_status_and_fallback_never_expose_the_value(monkeypatch):
+    sent = []
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def urlopen(req, timeout):
+        sent.append(req.get_header("User-agent"))
+        return Resp(b"{}")
+    monkeypatch.setattr(sec.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(sec, "_warned_user_agent", False)
+    monkeypatch.delenv("SEC_USER_AGENT", raising=False)
+    assert sec.user_agent_status() == "missing"
+    sec._get("https://data.sec.gov/x.json")
+    sec._get("https://data.sec.gov/y.json")
+    assert sent == [sec.DEFAULT_USER_AGENT] * 2 and sec._warned_user_agent  # still works, warned once
+    monkeypatch.setenv("SEC_USER_AGENT", "just-a-name")
+    assert sec.user_agent_status() == "invalid"
+    monkeypatch.setenv("SEC_USER_AGENT", "Jane Doe jane.doe@example.com")
+    assert sec.user_agent_status() == "configured"
+    sec._get("https://data.sec.gov/z.json")
+    assert sent[-1] == "Jane Doe jane.doe@example.com"
+    md = sec_audit.markdown([], today=date(2026, 10, 22))
+    assert "SEC identification (SEC_USER_AGENT): configured." in md and "jane" not in md.lower()
+    monkeypatch.delenv("SEC_USER_AGENT")
+    assert "**not configured** (missing)" in sec_audit.markdown([], today=date(2026, 10, 22))
 
 
 def test_market_screen_and_run_on_demo():
@@ -1397,19 +1461,21 @@ def test_sec_audit_report_status_and_unavailable_tickers(monkeypatch):
         if "companyfacts" in url:
             return AUDIT_COMPANY
         raise OSError("submissions down")
-    ok = sec_audit.audit_ticker("AEX", today=date(2026, 10, 22), get=get, cik_for=lambda t: 999)
+    ok = sec_audit.audit_ticker("AEX", today=date(2026, 10, 22), get=get, lookup=lambda t: (999, None))
     assert ok["status"] == "ok" and ok["sic"] is None                   # submissions missing: unknown, not invented
-    gone = sec_audit.audit_ticker("ZZZZ", get=get, cik_for=lambda t: None)
-    assert gone == {"ticker": "ZZZZ", "status": "unavailable", "reason": "no SEC CIK for this ticker"}
-    down = sec_audit.audit_ticker("AEX", get=lambda url: (_ for _ in ()).throw(OSError("403")), cik_for=lambda t: 1)
+    gone = sec_audit.audit_ticker("ZZZZ", get=get, lookup=lambda t: (None, "not in SEC's ticker list"))
+    assert gone == {"ticker": "ZZZZ", "status": "unavailable", "reason": "not in SEC's ticker list"}
+    listless = sec_audit.audit_ticker("RIVN", get=get, lookup=lambda t: (None, "SEC ticker list unavailable (403)"))
+    assert listless["reason"] == "SEC ticker list unavailable (403)"   # the real reason, not "no CIK"
+    down = sec_audit.audit_ticker("AEX", get=lambda url: (_ for _ in ()).throw(OSError("403")), lookup=lambda t: (1, None))
     assert down["status"] == "unavailable" and "403" in down["reason"]
     assert sec_audit.summary([ok])["status"] == "COMPLETE"
     assert sec_audit.summary([ok, gone]) | {} == {"status": "PARTIAL", "total": 2, "available": 1, "unavailable": 1,
                                                   "exit_code": 1}
     assert sec_audit.summary([gone, down])["status"] == "NO DATA"
     md = sec_audit.markdown([ok, gone], today=date(2026, 10, 22))
-    assert "**Status: PARTIAL**: 1 of 2 companies retrieved" in md and "ZZZZ (no SEC CIK" in md
-    assert "| Revenue | yes | ✓ 6y ⚠ |" in md and "Unavailable: no SEC CIK" in md and "coverage only" in md
+    assert "**Status: PARTIAL**: 1 of 2 companies retrieved" in md and "ZZZZ (not in SEC's ticker list)" in md
+    assert "| Revenue | yes | ✓ 6y ⚠ |" in md and "Unavailable: not in SEC's ticker list" in md and "coverage only" in md
     import re
     assert not re.search(r"\bnan\b", md.lower())                       # no missing number shown as nan
     # the command's exit code tells the workflow whether any data was retrieved

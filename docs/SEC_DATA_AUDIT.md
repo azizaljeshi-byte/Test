@@ -58,7 +58,10 @@ The repo is public, so only run it on **public example tickers**, never a list o
   summary page and as a downloadable `sec-data-audit` artifact (Markdown and JSON). It uses the
   `SEC_USER_AGENT` secret.
   - **Status line:** the report opens with **COMPLETE**, **PARTIAL** or **NO DATA**, with counts and the
-    reason for each unavailable company.
+    reason for each unavailable company. The reason says whether SEC's ticker list couldn't be downloaded
+    or the ticker isn't in it.
+  - **Identification line:** whether `SEC_USER_AGENT` was configured, never its value. The job also shows
+    a warning when the secret is missing.
   - **Job result:** fails on NO DATA and shows a warning on PARTIAL, so a green run means SEC data was
     retrieved. The command's exit code is 0 / 1 / 2 to match.
 - **Locally:** `python -m stockwatch.sec_audit MSFT MU RIVN BRK-B JPM AVGO --markdown audit.md --json audit.json`
