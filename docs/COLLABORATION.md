@@ -61,7 +61,13 @@ Claude and ChatGPT act on GitHub through the owner's account. Codex posts as its
 Unless the owner asks for it explicitly, pull requests must not change how stocks are scored, judged or
 traded. That logic lives in `stockwatch/technical.py`, `fundamental.py`, `relative.py`, `signals.py`,
 `catalysts.py`, `deepdive.py`, `street.py`, `analogs.py`, `tradeplan.py`, `turbo.py`, `market.py`, and the
-verdict rules in `engine.py`. It also covers thresholds such as the reassess rebound and the radar rings in `ui.py`.
+verdict rules in `engine.py`. It also covers:
+
+- **Tier rules and their defaults** in `stockwatch/config.py`: `DEFAULT_TIERS` (fundamental/technical
+  weights, stop-loss %, trailing-stop ATR multiple, maximum position size) and `risk_per_trade_pct`, which
+  sets position sizing.
+- **The same rules in `portfolio.example.yaml`:** its `tiers:` and `settings:` blocks.
+- **Thresholds in `ui.py`:** for example the reassess rebound and the radar rings.
 
 When a pull request does touch it, the description must say so and explain which numbers or calls change and
 why. Reviewers should check that claim against the diff.

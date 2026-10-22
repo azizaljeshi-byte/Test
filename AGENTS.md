@@ -15,7 +15,7 @@ workflow between Claude, ChatGPT, Codex and the owner are in `docs/COLLABORATION
 - **Branches:** branch off the latest default branch, one topic per branch. Don't push to `claude/*` or `chatgpt/*` branches.
 - **Pull requests:** open one into the default branch and fill in `.github/pull_request_template.md`. Your pull requests are reviewed by ChatGPT first, then Claude. Answer every blocking finding with a fix pushed to the same branch, or a reply saying why not.
 - **Merging:** never merge, not even your own pull request. The owner merges and then reboots the app.
-- **Methodology:** don't change scoring, signals, verdicts, trade plans or their thresholds unless the owner asks. When a change does, say so in the pull request. The list of protected files is in `docs/COLLABORATION.md`.
+- **Methodology:** don't change scoring, signals, verdicts, trade plans, tier rules (weights, stops, position limits, sizing) or their thresholds unless the owner asks. When a change does, say so in the pull request. The list of protected files is in `docs/COLLABORATION.md`.
 - **Tests:** `python -m pytest -q` (no network needed; Yahoo, SEC and Finnhub are faked). Keep them green and add tests for new logic.
 - **Lint:** `python -m pyflakes stockwatch/*.py dashboard.py tests/*.py`.
 - **Offline UI:** `STOCKWATCH_DEMO=1 streamlit run dashboard.py`. Check screen changes at phone width (390px).
