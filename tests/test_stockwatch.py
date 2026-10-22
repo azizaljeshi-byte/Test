@@ -1535,9 +1535,9 @@ def test_sec_audit_and_quality_are_not_wired_into_the_app():
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     for path in [root / "dashboard.py", *sorted((root / "stockwatch").glob("*.py"))]:
-        if path.name not in ("sec_audit.py", "sec_quality.py", "valuation_lab.py"):
+        if path.name not in ("sec_audit.py", "sec_quality.py", "valuation_lab.py", "valuation_scenarios.py"):
             text = path.read_text()
-            assert "sec_audit" not in text and "sec_quality" not in text and "valuation_lab" not in text, path.name
+            assert "sec_audit" not in text and "sec_quality" not in text and "valuation_lab" not in text and "valuation_scenarios" not in text, path.name
 
 
 # ---- SEC data quality (read-only; Phase 1B of the valuation work)
