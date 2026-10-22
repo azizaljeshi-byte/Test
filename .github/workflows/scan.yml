@@ -77,6 +77,7 @@ jobs:
       DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
     steps:
       - name: Check configuration
         id: cfg
@@ -86,6 +87,10 @@ jobs:
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"
+            # the scan's fundamentals fall back to SEC filings when Yahoo refuses
+            if [ -z "$SEC_USER_AGENT" ]; then
+              echo "::warning title=SEC_USER_AGENT not set::Add the SEC_USER_AGENT repository secret (a name and email). Without it SEC requests use a generic identifier and SEC may refuse some."
+            fi
           fi
       - if: steps.cfg.outputs.enabled == 'true'
         uses: actions/checkout@v4

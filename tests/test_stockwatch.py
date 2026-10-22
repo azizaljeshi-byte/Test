@@ -652,6 +652,26 @@ def test_sec_ticker_list_failure_is_reported_and_retried_not_remembered(monkeypa
     assert sec.cik_lookup("RIVN", now=later) == (1874178, None) and len(calls) == 3
 
 
+def test_every_workflow_job_that_runs_stockwatch_identifies_itself_to_sec():
+    """Any job running StockWatch code may reach SEC (filings, or the fundamentals fallback when Yahoo
+    refuses), so each must pass the SEC_USER_AGENT secret. The S&P market job once didn't."""
+    import yaml
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    checked = []
+    for wf in sorted((root / ".github" / "workflows").glob("*.yml")):
+        jobs = (yaml.safe_load(wf.read_text()) or {}).get("jobs") or {}
+        for name, job in jobs.items():
+            runs = " ".join(str(step.get("run", "")) for step in job.get("steps") or [])
+            if "stockwatch" not in runs:
+                continue
+            checked.append(f"{wf.name}:{name}")
+            env = {**(job.get("env") or {})}
+            assert env.get("SEC_USER_AGENT") == "${{ secrets.SEC_USER_AGENT }}", f"{wf.name}:{name}"
+            assert "SEC_USER_AGENT not set" in runs, f"{wf.name}:{name} doesn't warn when it's missing"
+    assert {"scan.yml:scan", "scan.yml:market", "sec-audit.yml:audit"} <= set(checked)
+
+
 def test_sec_user_agent_status_and_fallback_never_expose_the_value(monkeypatch):
     sent = []
 

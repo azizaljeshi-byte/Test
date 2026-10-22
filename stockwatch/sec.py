@@ -139,9 +139,9 @@ def cik_lookup(ticker: str, now: float | None = None) -> tuple[int | None, str |
     """(CIK, None), or (None, why): the reason separates "SEC's ticker list couldn't be downloaded"
     from "the ticker isn't in it", so a network or identification problem isn't reported as a
     company having no SEC filings."""
-    t = _norm(ticker)
-    if t in _bundled_ciks():
-        return _bundled_ciks()[t], None
+    t, bundled = _norm(ticker), _bundled_ciks()
+    if t in bundled:
+        return bundled[t], None
     tickers = _sec_tickers(now)
     if tickers is not None and t in tickers:
         return tickers[t], None
