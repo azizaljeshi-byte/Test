@@ -2,7 +2,7 @@
 
 This summarises the whole project so far, for picking it up in a new conversation. It describes the state as of
 commit `b232d30` on branch `claude/stock-dashboard-alerts-rr9r83` (also the repo's default branch): 28 commits,
-about 8,000 lines of Python, 150 passing tests. The README has the user-facing setup guide; this file covers what's
+about 8,000 lines of Python, 172 passing tests. The README has the user-facing setup guide; this file covers what's
 built, why, and what to watch out for.
 
 ## 1. What it is
@@ -139,13 +139,14 @@ against each other. On top of that, every stock gets a plain-English briefing an
 | `stockwatch/finnhub.py` | Finnhub fallback client (paced under 60 requests a minute) |
 | `stockwatch/sec_audit.py` | read-only SEC financial-data audit (valuation Phase 1, `docs/SEC_DATA_AUDIT.md`); not imported by the app |
 | `stockwatch/sec_quality.py` | read-only SEC data-quality checks: selection provenance, revisions, stale and conflicting figures, checks against the filing (Phase 1B, `docs/SEC_DATA_QUALITY.md`); not imported by the app |
+| `stockwatch/chart_patterns.py` | isolated historical OHLCV shape research, chronological validation and standalone chart reports (`docs/CHART_PATTERN_LAB.md`); never imported by the app |
 | `stockwatch/valuation_lab.py` | read-only valuation research: which model fits each company and why, reverse valuation and cash runway, gated on Phase 1B data quality (Phase 2A-1, `docs/VALUATION_RESEARCH.md`; assumptions in `valuation_assumptions.yaml`); not imported by the app |
 | `stockwatch/valuation_scenarios.py` | isolated Phase 2A-2 evidence-gated FCFF/cyclical/bank scenario research and JSON/Markdown ledger (`docs/VALUATION_SCENARIOS.md`); not imported by the app |
 | `stockwatch/config.py` | portfolio loading: Google Sheet, then `STOCKWATCH_PORTFOLIO` secret, then `portfolio.yaml`, then `portfolio.example.yaml` |
 | `stockwatch/ui.py` | all CSS and HTML builders (cards, panels, tables, ladders) |
 | `.github/workflows/scan.yml` | scheduled scan and push job, plus the daily S&P job |
 | `.github/workflows/sec-audit.yml` | manual-only job that runs the SEC data audit on example tickers |
-| `tests/test_stockwatch.py`, `tests/test_valuation_scenarios.py` | 150 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses |
+| `tests/test_stockwatch.py`, `tests/test_valuation_scenarios.py`, `tests/test_chart_patterns.py` | 172 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses and isolated chart research |
 
 **Data flow:** the provider fetches (cached), `engine.evaluate` builds an `Evaluation` (scores, signals, research,
 plan), `store.save_snapshot` writes JSON to SQLite, and the dashboard reads only the store. Alerts of severity 2 or
@@ -184,7 +185,7 @@ back empty are cached until their TTL runs out, so **reboot the app after adding
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                                   # 150 tests, no network needed
+python -m pytest -q                                   # 172 tests, no network needed
 STOCKWATCH_DEMO=1 streamlit run dashboard.py          # offline UI with synthetic data
 python -m stockwatch.scanner --once --demo            # one sweep from the CLI
 python -m stockwatch.market --demo                    # S&P scan from the CLI
