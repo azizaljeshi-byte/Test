@@ -1661,11 +1661,22 @@ def test_sec_quality_flags_conflicts_duplicates_stale_and_unknown():
 def test_sec_quality_ttm_shows_its_parts_and_says_why_when_it_cant():
     ref = sq.reference(QUALITY_COMPANY, QDAY)
     t = sq.ttm(QUALITY_COMPANY, "revenue", QDAY, ref)
-    assert t["status"] == sq.USABLE and t["value"] == pytest.approx(1360e6)        # 700 + 1260 - 600
+    assert t["value"] == pytest.approx(1360e6)                                     # 700 + 1260 - 600
     assert [name for name, _ in t["parts"]] == ["year to date", "+ last fiscal year", "- same period a year earlier"]
     assert t["parts"][1][1]["accn"] == "0000000001-26-000011"                     # the amended fiscal year
+    # the amended fiscal year makes the TTM contested, naming both filings
+    assert t["status"] == sq.RECONCILE and "2025-01-01 to 2025-12-31 was revised: 1.2B (0000000001-26-000005" in t[
+        "reason"] and "1.3B (0000000001-26-000011" in t["reason"]
     # annual-only figure: the fiscal year itself
     assert sq.ttm(QUALITY_COMPANY, "net_income", QDAY, ref)["parts"][0][0] == "fiscal year"
+    # two values for the fiscal year in one filing: no TTM number at all
+    ocf = sq.ttm(QUALITY_COMPANY, "operating_cash_flow", QDAY, ref)
+    assert ocf["status"] == sq.UNKNOWN and ocf["value"] is None and "no number is trusted" in ocf["reason"]
+    # the fiscal year's own conflicting tags carry over from select()
+    sel = sq.select(QUALITY_COMPANY, "capex", QDAY, ref)
+    capex = sq.ttm(QUALITY_COMPANY, "capex", QDAY, ref, sel)
+    assert capex["status"] == sq.STALE and "fiscal-year figure: other tags disagree" in capex["reason"]   # stale ranks higher
+    assert "other tags disagree" not in sq.ttm(QUALITY_COMPANY, "capex", QDAY, ref)["reason"]   # without it: only the age
     # a quarter with nothing to complete it
     t = sq.ttm(QUALITY_COMPANY, "interest_expense", QDAY, ref)
     assert t["status"] == sq.UNKNOWN and t["value"] is None and "no last fiscal year" in t["reason"]
@@ -1718,7 +1729,13 @@ def test_sec_quality_marks_generic_measures_not_applicable_for_banks_and_insurer
 
 INSTANCE = b"""<?xml version="1.0" encoding="utf-8"?>
 <xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance" xmlns:us-gaap="http://fasb.org/us-gaap/2025"
-  xmlns:xbrldi="http://xbrl.org/2006/xbrldi" xmlns:dei="http://xbrl.sec.gov/dei/2025">
+  xmlns:xbrldi="http://xbrl.org/2006/xbrldi" xmlns:dei="http://xbrl.sec.gov/dei/2025"
+  xmlns:cur="http://www.xbrl.org/2003/iso4217">
+ <xbrli:unit id="usd"><xbrli:measure>cur:USD</xbrli:measure></xbrli:unit>
+ <xbrli:unit id="eur"><xbrli:measure>cur:EUR</xbrli:measure></xbrli:unit>
+ <xbrli:unit id="usdPerShare"><xbrli:divide><xbrli:unitNumerator><xbrli:measure>cur:USD</xbrli:measure>
+  </xbrli:unitNumerator><xbrli:unitDenominator><xbrli:measure>xbrli:shares</xbrli:measure></xbrli:unitDenominator>
+  </xbrli:divide></xbrli:unit>
  <xbrli:context id="FY"><xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0000000001</xbrli:identifier>
   </xbrli:entity><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate><xbrli:endDate>2025-12-31</xbrli:endDate>
   </xbrli:period></xbrli:context>
@@ -1757,7 +1774,8 @@ def test_sec_quality_checks_figures_against_the_filing_itself():
     # a segment figure isn't a company-wide one
     parsed = sq.parse_instance(INSTANCE)
     assert ("NetCashProvidedByUsedInOperatingActivities", "2025-01-01", "2025-12-31") not in parsed
-    assert parsed[("Revenues", "2025-01-01", "2025-12-31")] == [1200e6] and not any(k[0] == "DocumentType" for k in parsed)
+    assert parsed[("Revenues", "2025-01-01", "2025-12-31")] == [(1200e6, "{http://www.xbrl.org/2003/iso4217}USD")]
+    assert not any(k[0] == "DocumentType" for k in parsed)
     assert rows["capex"]["result"] == "matches" and rows["capex"]["filing"] == f"{folder}/0000000001-26-000005-index.htm"
     assert asked.count(f"{folder}/index.json") == 1                       # one download per filing
     ctx = {c["concept"]: c["value"] for c in r["reconciliation"]["capex_context"]}
@@ -1807,3 +1825,60 @@ def test_sec_quality_checks_debt_adds_up_and_flags_stale_balance_sheet_figures()
     rows, _ = bs(500e6, 400e6, 50e6)
     assert rows["debt_long"]["status"] == sq.RECONCILE and "doesn't equal noncurrent 400.0M plus current 50.0M" in \
         rows["debt_long"]["notes"][-1]
+
+
+def test_sec_quality_ttm_with_a_contested_year_to_date():
+    def company(ytd_facts):
+        return {"facts": {"us-gaap": {"Revenues": {"units": {"USD": [
+            _q(1000e6, *FY25), _q(450e6, "2025-01-01", "2025-06-30", "10-Q", "2025-07-30", "0000000001-25-000020"),
+            *ytd_facts]}}}}}
+    both = company([_q(500e6, "2026-01-01", "2026-06-30", "10-Q", "2026-07-30", "0000000001-26-000020"),
+                    _q(520e6, "2026-01-01", "2026-06-30", "10-Q", "2026-07-30", "0000000001-26-000020")])
+    t = sq.ttm(both, "revenue", QDAY, sq.reference(both, QDAY))
+    assert t["status"] == sq.UNKNOWN and t["value"] is None and "0000000001-26-000020: 500.0M, 520.0M" in t["reason"]
+    revised = company([_q(500e6, "2026-01-01", "2026-06-30", "10-Q", "2026-07-30", "0000000001-26-000020"),
+                       _q(520e6, "2026-01-01", "2026-06-30", "10-Q/A", "2026-08-30", "0000000001-26-000030")])
+    t = sq.ttm(revised, "revenue", QDAY, sq.reference(revised, QDAY))
+    assert t["status"] == sq.RECONCILE and t["value"] == pytest.approx(1070e6)     # 520 + 1000 - 450, latest filed
+    assert "500.0M (0000000001-26-000020" in t["reason"] and "520.0M (0000000001-26-000030" in t["reason"]
+    clean = company([_q(500e6, "2026-01-01", "2026-06-30", "10-Q", "2026-07-30", "0000000001-26-000020")])
+    t = sq.ttm(clean, "revenue", QDAY, sq.reference(clean, QDAY))
+    assert t["status"] == sq.USABLE and t["value"] == pytest.approx(1050e6) and "reason" not in t
+
+
+def test_sec_quality_filing_check_only_matches_usd():
+    usd = "{http://www.xbrl.org/2003/iso4217}USD"
+    parsed = sq.parse_instance(INSTANCE)
+    assert parsed[("Revenues", "2025-01-01", "2025-12-31")] == [(1200e6, usd)]
+    company = {"cik": 1, "facts": {"us-gaap": {k: {"units": {"USD": [_q(v, *FY25)]}} for k, v in (
+        ("Revenues", 1200e6), ("NetIncomeLoss", 70e6), ("NetCashProvidedByUsedInOperatingActivities", 90e6),
+        ("PaymentsToAcquirePropertyPlantAndEquipment", 30e6))}}}
+    filing = INSTANCE.replace(b"</xbrli:xbrl>", b"""
+ <us-gaap:NetIncomeLoss contextRef="FY_eur" unitRef="eur" decimals="-6">70000000</us-gaap:NetIncomeLoss>
+ <us-gaap:NetCashProvidedByUsedInOperatingActivities contextRef="FY" unitRef="nowhere">90000000</us-gaap:NetCashProvidedByUsedInOperatingActivities>
+ <us-gaap:EarningsPerShareDiluted contextRef="FY" unitRef="usdPerShare" decimals="2">1.5</us-gaap:EarningsPerShareDiluted>
+</xbrli:xbrl>""").replace(b'<us-gaap:PaymentsToAcquirePropertyPlantAndEquipment contextRef="FY" unitRef="usd"',
+              b'<us-gaap:PaymentsToAcquirePropertyPlantAndEquipment contextRef="FY" unitRef="eur"')
+    # NetIncomeLoss: 99M in USD (differs) is in the context FY; the EUR copy needs its own context
+    filing = filing.replace(b'<xbrli:context id="FY_seg">', b"""<xbrli:context id="FY_eur"><xbrli:entity>
+  <xbrli:identifier scheme="http://www.sec.gov/CIK">0000000001</xbrli:identifier></xbrli:entity><xbrli:period>
+  <xbrli:startDate>2025-01-01</xbrli:startDate><xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>
+ <xbrli:context id="FY_seg">""")
+    parsed = sq.parse_instance(filing)
+    assert parsed[("EarningsPerShareDiluted", "2025-01-01", "2025-12-31")] == [
+        (1.5, usd + "/{http://www.xbrl.org/2003/instance}shares")]
+    assert sorted(parsed[("NetIncomeLoss", "2025-01-01", "2025-12-31")]) == [
+        (70e6, "{http://www.xbrl.org/2003/iso4217}EUR"), (99e6, usd)]
+
+    def get_bytes(url):
+        if url.endswith("index.json"):
+            return b'{"directory": {"item": [{"name": "x-20251231_htm.xml"}]}}'
+        return filing
+    fields = {k: sq.select(company, k, QDAY, sq.reference(company, QDAY)) for k in sq.FIELDS}
+    rows = {r["key"]: r for r in sq.reconcile(1, company, fields, QDAY, get_bytes)["rows"]}
+    assert rows["revenue"]["result"] == "matches"
+    # the same number in euros doesn't confirm a USD figure; the USD value differs
+    assert rows["net_income"]["result"] == "differs" and rows["net_income"]["filing_values"] == [99e6]
+    assert rows["operating_cash_flow"]["result"] == "unverified"                   # only a segment and an undeclared unit
+    assert "undeclared unit" in rows["operating_cash_flow"]["reason"]
+    assert rows["capex"]["result"] == "unverified" and "only in EUR, not USD" in rows["capex"]["reason"]

@@ -15,6 +15,7 @@ Nothing in the app imports this module. Run it with explicit public tickers:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import sys
 import urllib.request
@@ -217,7 +218,7 @@ def select(company: dict, key: str, as_of: date, ref: dict) -> dict:
     that reports that period is selected; other concepts reporting the same period are compared."""
     label, kind, unit, concepts = FIELDS[key]
     out = {"key": key, "label": label, "kind": kind, "unit": unit, "selected": None, "first": None,
-           "alternatives": []}
+           "alternatives": [], "carried": []}
     by_concept, units = _candidates(company, concepts, unit, as_of)
     periods = {c: [f for f in fs if kind == "instant" or _is_annual(f)] for c, fs in by_concept.items()}
     periods = {c: fs for c, fs in periods.items() if fs}
@@ -245,6 +246,7 @@ def select(company: dict, key: str, as_of: date, ref: dict) -> dict:
     if len(starts) > 1:
         flags.append((RECONCILE, f"{len(starts)} different period starts for the period ending {end} "
                                  f"({', '.join(starts)}): a fiscal-year change or a tagging error"))
+        out["carried"].append(flags[-1][1])
     by_filing: dict = {}
     for f in group:
         by_filing.setdefault(f.get("accn"), set()).add(f["val"])
@@ -284,8 +286,10 @@ def select(company: dict, key: str, as_of: date, ref: dict) -> dict:
         flags.append((RECONCILE, "other tags disagree for the same period: " + ", ".join(
             f"{a['concept']} {_fmt(a['value'], unit)} ({_pct(a['value'], latest['val'])})" for a in clash)
             + f" vs {name} {_fmt(latest['val'], unit)}"))
+        out["carried"].append(flags[-1][1])
     if (scope := _scope_flag(concept, concepts)):
         flags.append(scope)
+        out["carried"].append(scope[1])
 
     if kind == "instant" and ref["end"] and _gap(ref["end"], end) > INSTANT_STALE:
         flags.append((STALE, f"latest figure is for {end}, {_gap(ref['end'], end)} days before the company's "
@@ -309,9 +313,33 @@ def _find(facts: list[dict], end: date, length: int) -> dict | None:
     return max(cands, key=lambda f: f.get("filed") or "") if cands else None
 
 
-def ttm(company: dict, key: str, as_of: date, ref: dict) -> dict:
+def _contest(facts: list[dict], part: dict, unit: str) -> tuple[str, str] | None:
+    """Does any other fact give a different value for this part's exact period? Two values in one filing
+    leave no trustworthy number (unknown); a different value in another filing is a revision a person
+    must reconcile. Every filing involved is named."""
+    same = sorted((f for f in facts if f.get("start") == part.get("start") and f["end"] == part["end"]),
+                  key=lambda f: f.get("filed") or "")
+    by_filing: dict = {}
+    for f in same:
+        by_filing.setdefault(f.get("accn"), set()).add(f["val"])
+    period = f"{part['start']} to {part['end']}"
+    dup = {a: v for a, v in by_filing.items() if len(v) > 1}
+    if dup:
+        return UNKNOWN, f"one filing gives several values for {period} (" + "; ".join(
+            f"{a}: {', '.join(_fmt(v, unit) for v in sorted(vs))}" for a, vs in dup.items()) + "): no number is trusted"
+    vals = [f["val"] for f in same]
+    if any(_differs(v, part["val"]) for v in vals):
+        return RECONCILE, f"{period} was revised: " + ", ".join(
+            f"{_fmt(f['val'], unit)} ({f.get('accn')}, filed {f.get('filed')})" for f in same)
+    return None
+
+
+def ttm(company: dict, key: str, as_of: date, ref: dict, selection: dict | None = None) -> dict:
     """Trailing twelve months with the facts it's built from (the same rule as the app's SEC fallback:
-    latest year-to-date + last fiscal year - the same year-to-date a year earlier, one concept)."""
+    latest year-to-date + last fiscal year - the same year-to-date a year earlier, one concept).
+
+    A part that was revised, or that one filing contradicts, makes the result needs reconciliation or
+    unknown; so do the fiscal year's own problems found by select() (conflicting tags, scope)."""
     _label, _kind, unit, concepts = FIELDS[key]
     by_concept = {c: [f for f in fs if f.get("start")]
                   for c, fs in _candidates(company, concepts, unit, as_of)[0].items()}
@@ -328,8 +356,10 @@ def ttm(company: dict, key: str, as_of: date, ref: dict) -> dict:
         return out | {"status": UNKNOWN, "reason": f"no period of a year or less ends {newest}"}
     ytd = max(at_end, key=lambda f: (_days(f), f.get("filed") or ""))
     d = _days(ytd)
+    flags: list[tuple[str, str]] = []
     if d >= 350:
-        out.update(value=ytd["val"], parts=[("fiscal year", _source(ytd, concept))], status=USABLE)
+        fy, chosen = ytd, [("fiscal year", ytd)]
+        value = ytd["val"]
     else:
         fy = _find(facts, date.fromisoformat(ytd["start"]) - timedelta(days=1), 365)
         prior = _find(facts, date.fromisoformat(ytd["end"]) - timedelta(days=365), d)
@@ -337,14 +367,24 @@ def ttm(company: dict, key: str, as_of: date, ref: dict) -> dict:
                    if not f]
         if missing:
             return out | {"status": UNKNOWN, "reason": "can't be built: no " + " and no ".join(missing)}
-        out.update(value=ytd["val"] + fy["val"] - prior["val"], status=USABLE, parts=[
-            ("year to date", _source(ytd, concept)), ("+ last fiscal year", _source(fy, concept)),
-            ("- same period a year earlier", _source(prior, concept))])
+        chosen = [("year to date", ytd), ("+ last fiscal year", fy), ("- same period a year earlier", prior)]
+        value = ytd["val"] + fy["val"] - prior["val"]
         if abs(_gap(prior["start"], fy["start"])) > 10:
-            out.update(status=RECONCILE, reason=f"the year-earlier period starts {prior['start']}, not with that "
-                                                f"fiscal year ({fy['start']}): the parts don't line up")
+            flags.append((RECONCILE, f"the year-earlier period starts {prior['start']}, not with that fiscal year "
+                                     f"({fy['start']}): the parts don't line up"))
+    for _name, part in chosen:
+        if (c := _contest(facts, part, unit)):
+            flags.append(c)
+    sel = (selection or {}).get("selected")
+    if sel and sel["concept"] == out["concept"] and sel["start"] == fy.get("start") and sel["end"] == fy["end"]:
+        flags += [(RECONCILE, f"fiscal-year figure: {t}") for t in selection.get("carried", [])]
     if ref["end"] and _gap(ref["end"], newest) > INSTANT_STALE:
-        out.update(status=STALE, reason=f"ends {newest}; the company's latest report is for {ref['end']}")
+        flags.append((STALE, f"ends {newest}; the company's latest report is for {ref['end']}"))
+    status = _status(flags)
+    out.update(value=None if status == UNKNOWN else value, status=status,
+               parts=[(name, _source(f, concept)) for name, f in chosen])
+    if flags:
+        out["reason"] = "; ".join(t for _, t in flags)
     return out
 
 
@@ -496,6 +536,7 @@ def sector(submissions: dict | None, cover_classes: int) -> dict:
 # ------------------------------------------------ check against the filing
 
 XBRLI = "{http://www.xbrl.org/2003/instance}"
+ISO4217 = "http://www.xbrl.org/2003/iso4217"
 
 
 def _archive(cik: int, accn: str) -> str:
@@ -522,10 +563,36 @@ def pick_instance(names: list[str]) -> str | None:
     return plain[0] if plain else None
 
 
-def parse_instance(xml: bytes) -> dict[tuple, list[float]]:
-    """{(concept, start, end): values} for facts without dimensions (company-wide totals), the same
-    kind of fact SEC's company-facts API serves."""
+def _units(xml: bytes, root) -> dict[str, str]:
+    """{unit id: measure} with namespace prefixes resolved, e.g. "{http://www.xbrl.org/2003/iso4217}USD".
+    A divided unit (per share) becomes "numerator/denominator"; anything unresolvable is left out."""
+    prefixes = {p: uri for _event, (p, uri) in ET.iterparse(io.BytesIO(xml), events=("start-ns",))}
+
+    def resolve(text: str | None) -> str | None:
+        text = (text or "").strip()
+        if ":" not in text:
+            return None
+        p, local = text.split(":", 1)
+        return f"{{{prefixes[p]}}}{local}" if p in prefixes else None
+    units = {}
+    for u in root.iter(f"{XBRLI}unit"):
+        measures = [resolve(m.text) for m in u.findall(f"{XBRLI}measure")]
+        div = u.find(f"{XBRLI}divide")
+        if div is not None:
+            num, den = ([resolve(m.text) for m in div.findall(f"{XBRLI}{part}/{XBRLI}measure")]
+                        for part in ("unitNumerator", "unitDenominator"))
+            measures = [f"{num[0]}/{den[0]}"] if len(num) == len(den) == 1 and num[0] and den[0] else [None]
+        if len(measures) == 1 and measures[0]:
+            units[u.get("id")] = measures[0]
+    return units
+
+
+def parse_instance(xml: bytes) -> dict[tuple, list[tuple[float, str | None]]]:
+    """{(concept, start, end): [(value, unit)]} for facts without dimensions (company-wide totals), the
+    same kind of fact SEC's company-facts API serves. The unit is the resolved measure (USD is
+    "{http://www.xbrl.org/2003/iso4217}USD"), or None when the filing doesn't declare it."""
     root = ET.fromstring(xml)
+    units = _units(xml, root)
     contexts = {}
     for ctx in root.iter(f"{XBRLI}context"):
         if ctx.find(f"{XBRLI}entity/{XBRLI}segment") is not None or ctx.find(f"{XBRLI}scenario") is not None:
@@ -536,7 +603,7 @@ def parse_instance(xml: bytes) -> dict[tuple, list[float]]:
         start = (p.findtext(f"{XBRLI}startDate") or "").strip() or None
         end = (p.findtext(f"{XBRLI}endDate") or p.findtext(f"{XBRLI}instant") or "").strip()
         contexts[ctx.get("id")] = (start, end)
-    out: dict[tuple, list[float]] = {}
+    out: dict[tuple, list[tuple[float, str | None]]] = {}
     for el in root:
         ref = el.get("contextRef")
         if ref not in contexts or not el.tag.startswith("{"):
@@ -548,7 +615,7 @@ def parse_instance(xml: bytes) -> dict[tuple, list[float]]:
             val = float((el.text or "").strip())
         except ValueError:
             continue
-        out.setdefault((name, *contexts[ref]), []).append(val)
+        out.setdefault((name, *contexts[ref]), []).append((val, units.get(el.get("unitRef"))))
     return out
 
 
@@ -589,14 +656,21 @@ def reconcile(cik: int, company: dict, fields: dict, as_of: date, get_bytes=None
             rows.append(row | {"result": "unverified", "reason": f"filing not read: {type(filing).__name__}: {filing}"})
             continue
         row["instance"] = filing["instance"]
-        found = filing["facts"].get((sel["concept"], sel["start"], sel["end"]))
+        found = filing["facts"].get((sel["concept"], sel["start"], sel["end"])) or []
+        usd = sorted({v for v, u in found if u == f"{{{ISO4217}}}USD"})
+        other = sorted({str(u).split("}")[-1] if u else "an undeclared unit" for v, u in found
+                        if u != f"{{{ISO4217}}}USD"})
         if not found:
             rows.append(row | {"result": "unverified", "reason": f"the filing has no company-wide {sel['concept']} "
                                                                   f"for {sel['start']} to {sel['end']}"})
-        elif any(not _differs(v, sel["value"], 1e-9) for v in found):
-            rows.append(row | {"result": "matches", "filing_values": sorted(set(found))})
+        elif not usd:
+            # SEC's figure is in USD: a number in another unit can't confirm it, even if it's equal
+            rows.append(row | {"result": "unverified", "filing_values": [],
+                               "reason": f"the filing reports it only in {', '.join(other)}, not USD"})
+        elif any(not _differs(v, sel["value"], 1e-9) for v in usd):
+            rows.append(row | {"result": "matches", "filing_values": usd})
         else:
-            rows.append(row | {"result": "differs", "filing_values": sorted(set(found))})
+            rows.append(row | {"result": "differs", "filing_values": usd})
     context = []
     cap = fields["capex"].get("selected")
     if cap:
@@ -617,7 +691,7 @@ def quality_company(ticker: str, company: dict, submissions: dict | None, as_of:
     fields = {k: select(company, k, as_of, ref) for k in FIELDS}
     for k, f in fields.items():
         if f["kind"] == "flow" and f["unit"] == "USD":
-            f["ttm"] = ttm(company, k, as_of, ref)
+            f["ttm"] = ttm(company, k, as_of, ref, f)
     sh = shares(company, as_of, ref)
     cover = next(r for r in sh["rows"] if r["key"] == "cover")
     sect = sector(submissions, len(cover["values"]))
@@ -675,7 +749,7 @@ def markdown(reports: list[dict], as_of: date | None = None, ua_status: str | No
              + (f"; unavailable: {', '.join(gone)}" if gone else "") + ".", "", identification_line(ua_status), "",
              "Read-only. Each figure is the one an input would use, with where it came from. Nothing is estimated, "
              "filled in or normalized, and there is no valuation here. Only filings made by the as-of date are used.",
-             "", "Statuses: **usable** (no problem found; not a guarantee the figure suits a valuation) · "
+             "", "Statuses: **usable** (no problem found; not the same as valuation-ready) · "
              "**needs reconciliation** (revised, conflicting tags or duplicate facts, or a choice a person must "
              "make) · **stale** (older than the company's latest report) · **unknown** (not reported, or not in "
              "USD) · **not applicable** (a generic measure that doesn't fit this kind of company).", ""]

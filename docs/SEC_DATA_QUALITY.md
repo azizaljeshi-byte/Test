@@ -12,7 +12,7 @@ Every figure gets one:
 
 | Status | Meaning |
 |---|---|
-| **usable** | No problem found. This isn't a guarantee the figure suits a valuation. |
+| **usable** | No problem found. Not the same as valuation-ready: scope choices and disclosures outside XBRL still matter. |
 | **needs reconciliation** | A person must check or choose: the figure was revised, another tag for the same measure disagrees, one filing gives two values, the selected tag has a wider or narrower scope (e.g. includes noncontrolling interests), or several share classes. |
 | **stale** | Older than the company's latest report. Don't use it as current. |
 | **unknown** | Not reported, or reported only in another currency. Never treated as zero, estimated or converted. |
@@ -36,7 +36,11 @@ Every figure gets one:
   - **Balance-sheet figures:** stale when older than the latest balance sheet.
   - **Dilution disclosures:** stale when older than the latest fiscal year.
   - **Everything:** stale when the company hasn't reported for 200 days.
-- **Trailing twelve months:** built the same way as the app's SEC fallback (latest year-to-date + last fiscal year − the same period a year earlier, one tag), with each part's period and accession number. If a part is missing, the report says which.
+- **Trailing twelve months:** built the same way as the app's SEC fallback (latest year-to-date + last fiscal year − the same period a year earlier, one tag), with each part's period and accession number.
+  - **A missing part:** the report says which.
+  - **A part revised in a later filing:** "needs reconciliation", with every filing's value named.
+  - **A part given two values in one filing:** "unknown", with no number shown.
+  - **The fiscal year's own problems** (conflicting tags, a scope choice) carry over from the figure selection.
 - **Balance sheet on one date** (the latest cash or equity date): cash, short-term investments, short- and long-term debt, and operating and finance leases.
   - A component not reported for that date is unknown. It is never carried forward from an older date.
   - Lease current portions are shown separately.
@@ -58,7 +62,8 @@ income, operating cash flow and capex are looked up in the issuer's own filing:
 
 1. Find the filing by the selected figure's accession number.
 2. Download its XBRL instance.
-3. Find the same tag and period without dimensions (a company-wide figure).
+3. Find the same tag and period without dimensions (a company-wide figure), in **USD** (the filing's unit declarations are resolved).
+   The same number in another currency, or in a unit the filing doesn't declare, is **unverified**, never a match.
 
 - **Inline XBRL:** it tags the numbers printed in the 10-K, so a match confirms that StockWatch retrieved the right figure for the right period.
 - **What it doesn't check:** the issuer's accounting, or whether the figure suits a valuation.
