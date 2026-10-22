@@ -192,7 +192,7 @@ def test_comparable_difference_is_suppressed_for_diluted_base():
 def test_adapter_is_not_imported_by_app_or_trading_modules():
     root = Path(__file__).resolve().parents[1]
     for path in [root / 'dashboard.py', *(root / 'stockwatch').glob('*.py')]:
-        if path.name not in ('valuation_evidence.py', 'sec_access.py', 'msft_dossier.py'):  # standalone manual runner
+        if path.name not in ('valuation_evidence.py', 'sec_access.py', 'msft_dossier.py', 'valuation_readiness.py'):  # standalone manual runner
             tree = ast.parse(path.read_text())
             names = {a.name.split('.')[-1] for node in ast.walk(tree)
                      if isinstance(node, (ast.Import, ast.ImportFrom)) for a in node.names}
