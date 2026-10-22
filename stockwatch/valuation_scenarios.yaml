@@ -1,0 +1,29 @@
+# Phase 2A-2 research configuration; no numeric company forecasts have been invented.
+version: 2a-2.1
+approved: false
+lineage: Issue 8 owner-approved handoff 6341705172 and consolidated methodology 6340117227
+# Explicit illustrative policy assumption from ChatGPT's specification, not market measurement.
+equity_risk_premium:
+  value: 0.05
+  source: Issue 8, comment 6340117227; illustrative research assumption, not adopted policy
+min_rate_growth_spread: 0.02
+sensitivity_rates: [0.08, 0.10, 0.12]
+terminal_growth_sensitivity: [0.015, 0.025, 0.035]
+# Conservative prototype freshness assumptions, subject to review/owner adoption.
+freshness_days:
+  price: 7
+  capital: 200
+  treasury_10y: 7
+  beta: 120
+  borrowing_cost: 200
+  comparables: 120
+  normalization: 550
+# Packet schema and fully synthetic worked example: docs/VALUATION_SCENARIOS.md.
+# Real observations, source dates and analyst driver cases must be provided before values can compute.
+companies:
+  MSFT: {}
+  AVGO: {}
+  MU: {}
+  JPM: {}
+  RIVN: {}
+  BRK-B: {}
