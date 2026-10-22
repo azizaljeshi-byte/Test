@@ -170,6 +170,8 @@ def fcff_projection(revenue, working_capital, case, rate, *, min_spread=.02):
     """
     revenue, wc = finite(revenue, 'baseline revenue'), finite(working_capital, 'operating working capital')
     rate, gt, roic = finite(rate, 'rate'), case['terminal_growth'], case['terminal_roic']
+    if finite(case['terminal']['non_sbc_dilution'], 'terminal non-SBC dilution') != 0:
+        raise EvidenceGap('terminal non-SBC dilution must be zero: perpetual common-share issuance is unsupported in this prototype', REQUIRED)
     if revenue <= 0 or rate-gt < min_spread or not 0 <= gt < roic <= 1:
         raise EvidenceGap('positive revenue, r−g ≥ minimum spread and 0 ≤ g < terminal ROIC ≤ 1 required')
     years, pv, owner_pv, shares_factor = [], 0., 0., 1.
@@ -204,22 +206,32 @@ def fcff_projection(revenue, working_capital, case, rate, *, min_spread=.02):
     tv_pv = terminal_fcff/(rate-gt)/(1+rate)**10
     ev = pv+tv_pv
     return {'years': years, 'enterprise_value': ev, 'explicit_pv': pv, 'terminal_pv': tv_pv,
-            'owner_enterprise_pv': owner_pv+tv_pv/shares_factor,
+            'dilution_weighting_pv': owner_pv+tv_pv/shares_factor,
             'terminal_share': tv_pv/ev if ev > 0 else None, 'terminal_fcff': terminal_fcff,
             'terminal_reinvestment': terminal_reinvestment, 'terminal_roic': roic,
             'dilution_factor': shares_factor, 'rate': rate, 'terminal_growth': gt}
 
 
-def equity_value(ev, bridge):
+def equity_value(ev, bridge, weighting_pv=None):
     """All values in nominal USD, per reconciled fully diluted common share outstanding at valuation.
 
-    Non-SBC dilution assumes no offsetting financing proceeds: a conservative explicit scenario,
-    not an issuance forecast. Future SBC is already a cost in EBIT and isn't diluted again.
+    Bridge the undiluted enterprise claim first. The PV-weighted ownership fraction then applies
+    to the entire COMMON equity claim, not to contractual debt. It assumes no issuance proceeds,
+    no change to enterprise operations/funding, and zero additional dilution after year ten.
     """
     equity = ev+bridge['equity_adjustment']
     if equity < 0:
         raise EvidenceGap('enterprise PV does not cover senior claims: negative common residual, no defensible per-share price in this model')
-    return {'equity_value': equity, 'equity_per_share': equity/bridge['shares'],
+    weight = 1.
+    if weighting_pv is not None:
+        if ev <= 0:
+            raise EvidenceGap('positive enterprise PV required to establish a common-claim dilution weight')
+        weight = finite(weighting_pv, 'dilution weighting PV')/ev
+        if not 0 < weight <= 1+1e-9:
+            raise EvidenceGap('common-claim dilution weight outside (0, 1]: loss-funding/issuance economics require a separate model')
+        weight = min(weight, 1.)
+    return {'equity_value': equity*weight, 'equity_per_share': equity*weight/bridge['shares'],
+            'undiluted_equity_value': equity, 'dilution_claim_weight': weight,
             'share_count': bridge['shares'], 'equity_adjustment': bridge['equity_adjustment']}
 
 
@@ -254,7 +266,7 @@ def cycle_evidence(company, as_of):
             'median_ocf_conversion': median(r['operating_cash_flow']/r['revenue'] for r in rows),
             'min_operating_margin': min(margins), 'max_operating_margin': max(margins),
             'worst_revenue_change': min(drops),
-            'caveat': 'Historical medians are normalization evidence, not forecasts of demand/pricing. Scenario margins, investment and conversion still need attributed assumptions.'}
+            'caveat': 'Historical medians use nominal fiscal revenue, without inflation adjustment. They are normalization evidence, not forecasts of demand/pricing. Scenario margins, investment and conversion still need attributed assumptions.'}
 
 
 def _observed_gates(q):
@@ -341,7 +353,7 @@ def evaluate(q, company, packet, as_of, cfg):
         if rate is not None:
             for name, case in cases.items():
                 model = fcff_projection(revenue, wc, case, rate['rate'], min_spread=cfg['min_rate_growth_spread'])
-                out['scenarios'][name] = model | equity_value(model['owner_enterprise_pv'], bridge)
+                out['scenarios'][name] = model | equity_value(model['enterprise_value'], bridge, model['dilution_weighting_pv'])
             values = [out['scenarios'][n]['equity_per_share'] for n in ('bear', 'base', 'bull')]
             if values != sorted(values):
                 raise EvidenceGap('bear/base/bull driver cases do not produce an ordered range; reconcile assumptions')
@@ -352,7 +364,7 @@ def evaluate(q, company, packet, as_of, cfg):
                     model = fcff_projection(revenue, wc, case, r, min_spread=cfg['min_rate_growth_spread'])
                     out['sensitivity_only'].append({'rate': r, 'growth': gt, 'basis': 'assumed discount rate, not measured WACC',
                                                     'terminal_share': model['terminal_share'],
-                                                    **equity_value(model['owner_enterprise_pv'], bridge)})
+                                                    **equity_value(model['enterprise_value'], bridge, model['dilution_weighting_pv'])})
                 except EvidenceGap as exc:
                     out['sensitivity_only'].append({'rate': r, 'growth': gt, 'status': UNAVAILABLE, 'reason': str(exc)})
         if rate is None:
@@ -425,6 +437,7 @@ def _evaluate_bank(obs, contracts, scenarios, as_of, cfg):
                        'note': 'Peer P/TBV context, not averaged into the residual-income scenarios.'}
     return {'status': COMPUTED, 'gaps': [], 'cost_of_capital': rate, 'bank_observations': vals, 'scenarios': results,
             'cross_check': cross_check,
+            'bank_gating_only': ['historical_rotce', 'cet1_ratio', 'credit_loss_ratio', 'funding_cost'],
             'bank_formula': '(TCE − explicit capital reserve) × (sustainable ROTCE − g) / (Ke − g) / reconciled shares',
             'caveat': 'Steady-state residual-income lens; sustainable ROTCE and reserve are explicit analyst assumptions, not forecasts or regulatory approval.'}
 
@@ -463,8 +476,9 @@ def markdown(reports):
              'Future finance-lease-funded investment is included in the investment assumptions. Terminal FCFF = NOPAT₁₁ × (1 − g/ROIC).', '',
              'Equity bridge: enterprise present value + cash + surplus investments − debt (including finance leases) '
              '− preferred claims − noncontrolling interests. Divide by reconciled fully diluted common shares. '
-             'Additional non-SBC dilution reduces each year’s ownership at that year, not every cash flow by the year-10 share count. '
-             'The initial surplus cash/senior-claim adjustment is at time zero; future capital proceeds are not assumed.', '']
+             'Bridge undiluted EV to common equity first, then multiply the entire common claim by the PV-weighted ownership fraction. '
+             'Contractual debt is not diluted; net cash is part of the common claim. Issuance proceeds and changes to operations/funding '
+             'are not assumed. Additional non-SBC terminal dilution must be zero.', '']
     for r in reports:
         lines += [f"## {r['ticker']} — {r['status']}", '', f"As of {r['as_of']}", '']
         if r.get('family'):
@@ -490,7 +504,7 @@ def markdown(reports):
                                  f"{y['working_capital']:.2f} | {y['fcff']:.2f} | {y['dilution_factor']:.4f} |")
         # Include complete formulas/inputs and sources in a readable auditable ledger.
         for key in ('required_evidence', 'sec_inputs', 'capital_bridge', 'cost_of_capital', 'cycle_normalization', 'evidence_packet',
-                    'scenarios', 'sensitivity_only', 'cross_check', 'bank_observations', 'runway', 'phase2a1_risk_context'):
+                    'scenarios', 'sensitivity_only', 'cross_check', 'bank_observations', 'bank_gating_only', 'runway', 'phase2a1_risk_context'):
             if r.get(key):
                 lines += ['', f'### {key.replace("_", " ").title()}', '', '```json', json.dumps(r[key], indent=2, allow_nan=False), '```']
         lines += ['', *['- '+c for c in r.get('caveats', [])], '']

@@ -99,10 +99,17 @@ def test_sbc_charged_once_and_dilution_time_weighting():
     m = vs.fcff_projection(100., 10., c, .1)
     assert m['enterprise_value'] == pytest.approx(150.)  # pre-SBC EBIT20 − SBC5; no second subtraction
     c = vs.driver_case(case(dilution=.1), 'diluted', DAY)
+    c['terminal']['non_sbc_dilution'] = 0.
     diluted = vs.fcff_projection(100., 10., c, .1)
-    assert diluted['owner_enterprise_pv'] < diluted['enterprise_value']
-    expected = sum(20./1.1**t/1.1**t for t in range(1, 11))+200./1.1**10/1.1**10
-    assert diluted['owner_enterprise_pv'] == pytest.approx(expected)
+    # Five 10% years, followed by the explicit linear fade to zero at year ten.
+    rates = [.1]*5 + [.08, .06, .04, .02, 0.]
+    factor, expected = 1., 0.
+    for t, dilution in enumerate(rates, 1):
+        factor *= 1+dilution
+        expected += 20./1.1**t/factor
+    expected += 200./1.1**10/factor
+    assert diluted['dilution_weighting_pv'] < diluted['enterprise_value']
+    assert diluted['dilution_weighting_pv'] == pytest.approx(expected)
 
 
 def test_rate_growth_negative_cashflow_and_invalid_inputs():
@@ -330,3 +337,49 @@ def test_optional_price_failure_preserves_the_core_ledger(with_packet):
     else:
         assert result['status'] == vs.UNAVAILABLE and result['gaps'] and not result['scenarios']
     assert 'Optional risk context failed' in vs.markdown([result | {'phase2a1_risk_context': context}])
+
+
+@pytest.mark.parametrize('adjustment', [-120., 0., 120., -190.])
+@pytest.mark.parametrize('schedule', ['five_year_fade', 'flat_ten_year_stress'])
+def test_dilution_weights_common_equity_after_the_bridge(adjustment, schedule):
+    # Review's rounded timing PV180.21 is the existing five-year+fade convention.
+    # An explicitly constant 2% for all ten years gives175.34; test that arithmetic too.
+    ev, factor, timing_pv = 200., 1., 0.
+    rates = [.02]*5+[.016, .012, .008, .004, 0.] if schedule == 'five_year_fade' else [.02]*10
+    for t, dilution in enumerate(rates, 1):
+        factor *= 1+dilution
+        timing_pv += 20./1.1**t/factor
+    timing_pv += 200./1.1**10/factor
+    if schedule == 'five_year_fade':
+        assert timing_pv == pytest.approx(180.210203895)
+        c = vs.driver_case(case(dilution=.02), 'base', DAY)
+        c['terminal']['non_sbc_dilution'] = 0.
+        model = vs.fcff_projection(100., 10., c, .1)
+        assert model['enterprise_value'] == pytest.approx(ev)
+        assert model['dilution_weighting_pv'] == pytest.approx(timing_pv)
+    else:
+        assert timing_pv == pytest.approx(175.34123804)
+    bridge = {'equity_adjustment': adjustment, 'shares': 10.}
+    r = vs.equity_value(ev, bridge, timing_pv)
+    assert r['undiluted_equity_value'] == ev+adjustment
+    assert r['equity_adjustment'] == adjustment  # contractual balances themselves are never scaled
+    assert r['equity_per_share'] == pytest.approx((ev+adjustment)*(timing_pv/ev)/10.)
+    assert r['dilution_claim_weight'] == pytest.approx(timing_pv/ev)
+    if schedule == 'five_year_fade' and adjustment == -120.:
+        assert round(r['equity_per_share'], 2) == 7.21
+    if schedule == 'five_year_fade' and adjustment == 120.:
+        assert round(r['equity_per_share'], 2) == 28.83
+    # Highly levered positive common equity must not be refused just because timing_pv < debt.
+    assert r['equity_value'] > 0
+
+
+@pytest.mark.parametrize('terminal_dilution', [-.02, .02, .10])
+def test_perpetual_terminal_issuance_is_refused_not_ignored(terminal_dilution):
+    c = vs.driver_case(case(dilution=.02), 'base', DAY)
+    c['terminal']['non_sbc_dilution'] = terminal_dilution
+    with pytest.raises(vs.EvidenceGap, match='terminal non-SBC dilution must be zero'):
+        vs.fcff_projection(100., 10., c, .1)  # r10%, g0%, d2% must not silently use F/r
+    p = packet()
+    p['scenarios']['base']['terminal']['non_sbc_dilution']['value'] = terminal_dilution
+    r = vs.evaluate(quality(), company(), p, DAY, cfg())
+    assert r['status'] == vs.REQUIRED and not r['scenarios'] and not r['sensitivity_only']
