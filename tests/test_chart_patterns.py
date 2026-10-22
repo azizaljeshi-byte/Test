@@ -138,7 +138,7 @@ def test_unknown_benchmark_days_and_bad_current_window():
 def test_no_production_imports_and_wilson():
     root = Path(__file__).resolve().parents[1]
     for p in [root/'dashboard.py', *(root/'stockwatch').glob('*.py')]:
-        if p.name != 'chart_patterns.py':
+        if p.name not in ('chart_patterns.py', 'research_lab.py'):  # the Research view's bridge
             assert 'chart_patterns' not in p.read_text()
     lo, hi = cp.wilson(5, 10)
     assert lo < .5 < hi

@@ -2,7 +2,7 @@
 
 This summarises the whole project so far, for picking it up in a new conversation. It describes the state as of
 commit `b232d30` on branch `claude/stock-dashboard-alerts-rr9r83` (also the repo's default branch): 28 commits,
-about 8,000 lines of Python, 172 passing tests. The README has the user-facing setup guide; this file covers what's
+about 8,000 lines of Python, 180 passing tests. The README has the user-facing setup guide; this file covers what's
 built, why, and what to watch out for.
 
 ## 1. What it is
@@ -93,7 +93,7 @@ against each other. On top of that, every stock gets a plain-English briefing an
     - **New rows:** get an automatic company overview in the Fleet tab.
     - **Fallback:** the YAML list.
 17. **Navigation.**
-    - **Driven by the URL:** `?view=radar|turbo|target|market|log|fleet&t=TICKER`, so cards, brief tickers and scan results link to Details.
+    - **Driven by the URL:** `?view=radar|turbo|target|market|log|fleet|research&t=TICKER`, so cards, brief tickers and scan results link to Details.
     - **Radar filters follow card verdicts and show counts:** Risk, Opportunity, Hold, Held, Watch.
 19. **Radar scope** (`ui.radar`, `ui.ring`, `ui.rows`). The Radar tab opens on a round scope with one dot per stock:
     - **Direction is the card verdict:** buy zone at the top, risk bottom-left, hold/watch bottom-right. Wedges widen with their count.
@@ -120,6 +120,10 @@ against each other. On top of that, every stock gets a plain-English briefing an
     - **Status shown:** code version, New York time and session, data source, ticker list source, and whether the Finnhub fallback is on.
     - **Per-stock table:** quote source and errors, and whether fundamentals are "ok" or "blocked".
     - **Buttons:** "Test Finnhub key" and "Fetch raw quote".
+20. **Research view** (`?view=research`, Issue #14). Read-only; nothing in it feeds scores, plans, alerts or the portfolio.
+    - **Valuation:** which evidence each real company has on file for the Phase 2A-2 models (all empty, so ASSUMPTIONS REQUIRED and no fair value), a "Check SEC data" button for any ticker, and a separately marked SYNTHETIC worked example with a dilution toggle.
+    - **Chart patterns:** the pinned AMZN 2013-2018 example (INSUFFICIENT EVIDENCE: 4 matches a window, 0 out-of-sample checks) with each match's chart and outcomes, and a button to run the lab on a ticker.
+    - **On-demand only:** both buttons run on a background thread, one check at a time per app process; results are kept 12 hours, failures can be retried at once. A chart run on decades of history takes up to a minute or two of CPU.
 
 ## 3. Code map
 
@@ -138,15 +142,16 @@ against each other. On top of that, every stock gets a plain-English briefing an
 | `stockwatch/notify.py` | console / ntfy / Telegram / email |
 | `stockwatch/finnhub.py` | Finnhub fallback client (paced under 60 requests a minute) |
 | `stockwatch/sec_audit.py` | read-only SEC financial-data audit (valuation Phase 1, `docs/SEC_DATA_AUDIT.md`); not imported by the app |
-| `stockwatch/sec_quality.py` | read-only SEC data-quality checks: selection provenance, revisions, stale and conflicting figures, checks against the filing (Phase 1B, `docs/SEC_DATA_QUALITY.md`); not imported by the app |
-| `stockwatch/chart_patterns.py` | isolated historical OHLCV shape research, chronological validation and standalone chart reports (`docs/CHART_PATTERN_LAB.md`); never imported by the app |
-| `stockwatch/valuation_lab.py` | read-only valuation research: which model fits each company and why, reverse valuation and cash runway, gated on Phase 1B data quality (Phase 2A-1, `docs/VALUATION_RESEARCH.md`; assumptions in `valuation_assumptions.yaml`); not imported by the app |
-| `stockwatch/valuation_scenarios.py` | isolated Phase 2A-2 evidence-gated FCFF/cyclical/bank scenario research and JSON/Markdown ledger (`docs/VALUATION_SCENARIOS.md`); not imported by the app |
+| `stockwatch/sec_quality.py` | read-only SEC data-quality checks: selection provenance, revisions, stale and conflicting figures, checks against the filing (Phase 1B, `docs/SEC_DATA_QUALITY.md`); reached by the app only through `research_lab` |
+| `stockwatch/chart_patterns.py` | isolated historical OHLCV shape research, chronological validation and standalone chart reports (`docs/CHART_PATTERN_LAB.md`); reached by the app only through `research_lab` |
+| `stockwatch/valuation_lab.py` | read-only valuation research: which model fits each company and why, reverse valuation and cash runway, gated on Phase 1B data quality (Phase 2A-1, `docs/VALUATION_RESEARCH.md`; assumptions in `valuation_assumptions.yaml`); reached by the app only through `research_lab` |
+| `stockwatch/valuation_scenarios.py` | isolated Phase 2A-2 evidence-gated FCFF/cyclical/bank scenario research and JSON/Markdown ledger (`docs/VALUATION_SCENARIOS.md`); reached by the app only through `research_lab` |
+| `stockwatch/research_lab.py` | the only bridge from the page to the research modules: evidence completeness, the synthetic example, pinned chart example, on-demand background checks (`Jobs`); imports nothing from scoring, plans, alerts or storage (tested) |
 | `stockwatch/config.py` | portfolio loading: Google Sheet, then `STOCKWATCH_PORTFOLIO` secret, then `portfolio.yaml`, then `portfolio.example.yaml` |
 | `stockwatch/ui.py` | all CSS and HTML builders (cards, panels, tables, ladders) |
 | `.github/workflows/scan.yml` | scheduled scan and push job, plus the daily S&P job |
 | `.github/workflows/sec-audit.yml` | manual-only job that runs the SEC data audit on example tickers |
-| `tests/test_stockwatch.py`, `tests/test_valuation_scenarios.py`, `tests/test_chart_patterns.py` | 172 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses and isolated chart research |
+| `tests/test_stockwatch.py`, `tests/test_valuation_scenarios.py`, `tests/test_chart_patterns.py`, `tests/test_research_lab.py` | 180 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses, isolated research and the Research view's boundaries |
 
 **Data flow:** the provider fetches (cached), `engine.evaluate` builds an `Evaluation` (scores, signals, research,
 plan), `store.save_snapshot` writes JSON to SQLite, and the dashboard reads only the store. Alerts of severity 2 or
@@ -185,7 +190,7 @@ back empty are cached until their TTL runs out, so **reboot the app after adding
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                                   # 172 tests, no network needed
+python -m pytest -q                                   # 180 tests, no network needed
 STOCKWATCH_DEMO=1 streamlit run dashboard.py          # offline UI with synthetic data
 python -m stockwatch.scanner --once --demo            # one sweep from the CLI
 python -m stockwatch.market --demo                    # S&P scan from the CLI

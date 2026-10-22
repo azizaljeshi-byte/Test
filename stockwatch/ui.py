@@ -177,6 +177,12 @@ a.mc-a:hover .mc-li { border-color:var(--a); }
 .mc-brief li { font-size:.86rem; line-height:1.55; color:var(--ink); margin:.12rem 0; }
 .mc-brief li::marker { color:var(--muted); }
 .mc-brief a { color:var(--opp); text-decoration:none; font-weight:600; border-bottom:1px solid rgba(61,255,168,.35); }
+/* ---- research lab: status flags and the synthetic-example marker */
+.mc-flag { border:1px solid var(--line); border-left:4px solid var(--c); border-radius:10px; padding:.5rem .75rem;
+  margin:.35rem 0 .6rem; color:var(--soft); font-size:.8rem; line-height:1.45; }
+.mc-flag b { color:var(--c); font-family:var(--mono); letter-spacing:.05em; }
+.mc-synth { color:var(--warn); font-family:var(--mono); font-size:.72rem; letter-spacing:.14em; text-transform:uppercase;
+  border:1px dashed var(--warn); border-radius:8px; padding:.3rem .6rem; margin-bottom:.4rem; display:inline-block; }
 .mc-tbl { overflow-x:auto; margin:.3rem 0 .6rem; }
 .mc-tbl table { width:100%; border-collapse:collapse; font-size:.76rem; }
 .mc-tbl th { color:var(--muted); font-weight:500; text-align:right; padding:.3rem .45rem; border-bottom:1px solid var(--line); white-space:nowrap; font-size:.7rem; }
@@ -972,3 +978,13 @@ def turbo_card(d: dict, deep: bool) -> str:
             f'<div class="cols"><div><div class="lab" style="font-family:var(--mono);font-size:.62rem;letter-spacing:.2em;color:{OPP}">FOR</div><ul style="margin:.2rem 0 0;padding-left:1.1rem">{pros}</ul></div>'
             f'<div><div class="lab" style="font-family:var(--mono);font-size:.62rem;letter-spacing:.2em;color:{RISK}">AGAINST</div><ul style="margin:.2rem 0 0;padding-left:1.1rem">{cons}</ul></div></div>'
             f'</div>')
+
+
+RESEARCH_STATUS = {"INSUFFICIENT EVIDENCE": WARN, "computed research scenarios": INFO, "ASSUMPTIONS REQUIRED": WARN,
+                   "UNAVAILABLE": MUTED, "INCOMPLETE": WARN, "READY TO CHECK": INFO}
+
+
+def flag(status: str, text: str, color: str | None = None) -> str:
+    """A research status line: the status in its color, then the plain-English reason (already escaped)."""
+    c = color or RESEARCH_STATUS.get(status, MUTED)
+    return f'<div class="mc-flag" style="--c:{c}"><b>{escape(status)}</b> · {text}</div>'

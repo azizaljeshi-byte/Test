@@ -282,7 +282,7 @@ def test_investment_margin_and_terminal_sensitivities_have_expected_direction():
 def test_no_live_app_imports():
     root = Path(__file__).resolve().parents[1]
     for p in [root/'dashboard.py', *(root/'stockwatch').glob('*.py')]:
-        if p.name not in ('valuation_scenarios.py',):
+        if p.name not in ('valuation_scenarios.py', 'research_lab.py'):  # the Research view's bridge
             assert 'valuation_scenarios' not in p.read_text(), p.name
 
 
