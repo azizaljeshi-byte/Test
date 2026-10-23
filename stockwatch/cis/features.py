@@ -76,7 +76,8 @@ def check(df: pd.DataFrame, symbol: str, sha256: str | None = None) -> Quality:
     if not np.isfinite(px).all() or (px <= 0).any():
         q.problems.append("non-finite or non-positive prices")
     o, h, l, c = (df[k].astype(float) for k in OHLC)
-    if ((h < l) | (h < np.maximum(o, c)) | (l > np.minimum(o, c))).any():
+    eps = 1e-4                                    # 0.01%: float rounding in vendor data, not a malformed bar
+    if ((h < l) | (h < np.maximum(o, c) * (1 - eps)) | (l > np.minimum(o, c) * (1 + eps))).any():
         q.problems.append("high/low don't contain open and close")
     vol = df["Volume"].astype(float)
     if not np.isfinite(vol).all() or (vol < 0).any():

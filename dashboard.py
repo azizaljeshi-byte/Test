@@ -16,6 +16,7 @@ from plotly.subplots import make_subplots
 
 from stockwatch import briefing, finnhub, live, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
+from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
 from stockwatch.data import NY, get_provider, selected_provider, us_session
 from stockwatch.engine import evaluate
@@ -923,6 +924,70 @@ def _cis_why(title: str, why: dict):
     st.markdown(html, unsafe_allow_html=True)
 
 
+@st.cache_resource
+def cis_jobs(code_version: str) -> research_lab.Jobs:
+    return research_lab.Jobs(ttl=15 * 60)
+
+
+def _cis_watchlist_submit(snaps: list[dict]):
+    # on_click: the comparison runs on its own thread (Yahoo bars, Finnhub at about one call a second)
+    fq = finnhub.quote if finnhub.enabled() else None
+    st.session_state.cis_note = cis_jobs(CODE_VERSION).submit(
+        "cis_watchlist", "ALL", lambda: cis_watchlist.run(snaps, data, datetime.now(NY), fq))
+
+
+@st.fragment(run_every="5s")
+def _cis_watchlist_wait():
+    job = cis_jobs(CODE_VERSION).get("cis_watchlist", "ALL")
+    if job and job["state"] == "running":
+        st.caption(f"⏳ Comparing your list… {int(time.time() - job['started'])}s. You can leave this page.")
+    else:
+        st.rerun()
+
+
+def _cis_watchlist(snaps: list[dict]):
+    """Whole-list shadow comparison: CIS only where levels are reviewed; candidates are diagnostics only."""
+    st.markdown('<div class="mc-section">Your whole list · shadow comparison</div>', unsafe_allow_html=True)
+    st.caption("CIS calls only for stocks with reviewed levels; everything else keeps its legacy call. Automatic "
+               "candidate levels are shown as a diagnostic: they failed validation, so they never make a call. "
+               + ("Finnhub cross-checks each price." if finnhub.enabled() else "Add FINNHUB_API_KEY to cross-check prices."))
+    st.button("Compare my list", key="cis_wl_go", on_click=_cis_watchlist_submit, args=(snaps,))
+    if note := st.session_state.pop("cis_note", None):
+        st.toast(note)
+    job = cis_jobs(CODE_VERSION).get("cis_watchlist", "ALL")
+    if not job:
+        return
+    if job["state"] == "running":
+        _cis_watchlist_wait()
+        return
+    if job["state"] == "error":
+        st.markdown(ui.flag("UNAVAILABLE", escape(job["error"][:200])), unsafe_allow_html=True)
+        return
+    rows = job["result"]
+    cov = cis_watchlist.coverage(rows)
+    st.caption(f"Checked {job['when']} UTC · " + " · ".join(f"{k}: {v}" for k, v in cov.items() if v))
+    st.markdown(ui.table(["Stock", "CIS", "Legacy", "Candidate"], [
+        [r["ticker"] + (" (held)" if r["held"] else ""), r["action"], r["legacy"]["stance"],
+         (r.get("candidate") or {}).get("state") or ("data problem" if r.get("data") != "ok" else "none")]
+        for r in rows], wrap_all=True), unsafe_allow_html=True)
+    with st.expander("Why, per stock", expanded=False):
+        for r in rows:
+            d, c = r.get("discrepancy") or {}, r.get("candidate") or {}
+            bits = [f"alerts: {r['alert_preview']}", f"price check: {r['second_source']['status']}"]
+            if r.get("data") != "ok":
+                bits.append(f"data: {r.get('data')}")
+            elif c.get("why"):
+                bits.append(f"no candidate: {c['why']}")
+            if c.get("floor"):
+                bits.append(f"candidate floor {c['floor'][0]:g}–{c['floor'][1]:g}, failure {c['failure']:g}")
+            if d.get("stop_vs_candidate_failure") is not None:
+                bits.append(f"legacy stop {d['stop_vs_candidate_failure']:+.1%} vs candidate failure")
+            if d.get("legacy_target_is_measured_move"):
+                bits.append("legacy target is a measured move (no chart level)")
+            st.markdown(f"**{escape(r['ticker'])}** · " + escape(" · ".join(bits)) + "<br>"
+                        + escape(" ".join(r["reasons"][:3])), unsafe_allow_html=True)
+
+
 def _cis_levels_only(symbol: str, why: str):
     """Without the private reference prices: the packet's levels, states and shadow calls, no charts or history."""
     p = cis_decision.reviewed_packets()[symbol]
@@ -1087,6 +1152,7 @@ if view == "research":
 
     elif area == "Chart judgment":
         _chart_judgment()
+        _cis_watchlist(snaps)
 
     else:
         st.markdown('<div class="mc-section">Pinned example · AMZN 2013-2018</div>', unsafe_allow_html=True)

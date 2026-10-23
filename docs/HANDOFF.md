@@ -2,7 +2,7 @@
 
 This summarises the whole project so far, for picking it up in a new conversation. It describes the state as of
 commit `b232d30` on branch `claude/stock-dashboard-alerts-rr9r83` (also the repo's default branch): 28 commits,
-about 8,000 lines of Python, 483 passing tests. The README has the user-facing setup guide; this file covers what's
+about 8,000 lines of Python, 502 passing tests (467 + 35 skipped without the private reference data). The README has the user-facing setup guide; this file covers what's
 built, why, and what to watch out for.
 
 ## 1. What it is
@@ -156,13 +156,13 @@ against each other. On top of that, every stock gets a plain-English briefing an
 | `stockwatch/msft_dossier.py` | standalone MSFT multi-year/TTM filing evidence and decision-first business-economics dossier (`docs/MSFT_DOSSIER.md`); no valuation or app integration |
 | `stockwatch/sec_access.py` | isolated manual MSFT official SEC access/filing diagnostic, identity gate, pacing/retry and coverage (`docs/SEC_ACCESS_DIAGNOSTIC.md`) |
 | `stockwatch/valuation_evidence.py` | standalone MSFT SEC evidence/filing-match pilot, partial packet and decision-first gap report (`docs/VALUATION_EVIDENCE.md`); not imported by the app |
-| `stockwatch/cis/` | CIS chart judgment v1 (Issue #29), separate from scoring/plans/alerts: `features` (completed-bar quality and indicators), `level_packet` (immutable reviewed floor/ceiling packets), `state` (SUPPORT HOLD … TREND BREAKDOWN, RESISTANCE TEST … FAILED BREAKOUT), `history` (same-stock analogues), `explain`/`presentation` (Research → Chart judgment), `decision` (shadow state → action adapter, `STOCKWATCH_CIS_DECISIONS=shadow`, off by default), `shadow` (old-vs-CIS comparison), `source_check` (offline second-source comparison), `fixtures/` (frozen 23 Oct 2026 inputs). See `docs/CIS_DECISIONS.md` and `docs/CIS_PROVIDER_CHECK.md` |
+| `stockwatch/cis/` | CIS chart judgment v1 (Issue #29), separate from scoring/plans/alerts: `features` (completed-bar quality and indicators), `level_packet` (immutable reviewed floor/ceiling packets), `state` (SUPPORT HOLD … TREND BREAKDOWN, RESISTANCE TEST … FAILED BREAKOUT), `history` (same-stock analogues), `explain`/`presentation` (Research → Chart judgment), `decision` (shadow state → action adapter, `STOCKWATCH_CIS_DECISIONS=shadow`, off by default), `shadow` (old-vs-CIS comparison), `source_check` (offline second-source comparison), `candidates` (automatic candidate levels, unreviewed, diagnostic only), `validate` (reference comparison and walk-forward), `watchlist` (whole-list shadow with the Finnhub cross-check), `refdata` (private, hash-verified reference prices; not in the repo), `fixtures/` (method docs, packets, acceptance ledger, manifest). See `docs/CIS_DECISIONS.md`, `docs/CIS_PHASE2.md` and `docs/CIS_PROVIDER_CHECK.md` |
 | `stockwatch/research_lab.py` | the only bridge from the page to the research modules: evidence completeness, the synthetic example, pinned chart example, on-demand background checks (`Jobs`); imports nothing from scoring, plans, alerts or storage (tested) |
 | `stockwatch/config.py` | portfolio loading: Google Sheet, then `STOCKWATCH_PORTFOLIO` secret, then `portfolio.yaml`, then `portfolio.example.yaml` |
 | `stockwatch/ui.py` | all CSS and HTML builders (cards, panels, tables, ladders) |
 | `.github/workflows/scan.yml` | scheduled scan and push job, plus the daily S&P job |
 | `.github/workflows/sec-audit.yml` | manual-only job that runs the SEC data audit on example tickers |
-| `tests/test_stockwatch.py`, `tests/test_valuation_scenarios.py`, `tests/test_chart_patterns.py`, `tests/test_research_lab.py`, `tests/test_valuation_evidence.py`, `tests/test_sec_access.py`, `tests/test_msft_dossier.py`, `tests/test_cash_conversion.py`, `tests/test_valuation_readiness.py`, `tests/test_portfolio_risk.py`, `tests/test_ci_scan.py`, `tests/test_cis.py`, `tests/test_cis_decision.py` | 483 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses, isolated research, the Research view's boundaries, the private portfolio report, the scheduled scan with a fake Telegram, and the CIS chart framework against its frozen fixtures |
+| `tests/test_stockwatch.py`, `tests/test_valuation_scenarios.py`, `tests/test_chart_patterns.py`, `tests/test_research_lab.py`, `tests/test_valuation_evidence.py`, `tests/test_sec_access.py`, `tests/test_msft_dossier.py`, `tests/test_cash_conversion.py`, `tests/test_valuation_readiness.py`, `tests/test_portfolio_risk.py`, `tests/test_ci_scan.py`, `tests/test_cis.py`, `tests/test_cis_decision.py`, `tests/test_cis_phase2.py` | 502 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses, isolated research, the Research view's boundaries, the private portfolio report, the scheduled scan with a fake Telegram, and the CIS chart framework against its frozen fixtures |
 
 **Data flow:** the provider fetches (cached), `engine.evaluate` builds an `Evaluation` (scores, signals, research,
 plan), `store.save_snapshot` writes JSON to SQLite, and the dashboard reads only the store. Alerts of severity 2 or
@@ -195,6 +195,7 @@ back empty are cached until their TTL runs out, so **reboot the app after adding
 | `SMTP_*`, `ALERT_EMAIL_TO` | optional | email for the dashboard's own sweeps (not the scheduled scan) |
 | `STOCKWATCH_SWEEP_SECONDS` / `_QUOTE_SECONDS` / `_MARKET_SECONDS` | optional | live tracker intervals (120 / 60 / 1800) |
 | `STOCKWATCH_DEMO=1` | local | synthetic offline data |
+| `STOCKWATCH_CIS_DATA` | local | folder with the private CIS reference prices (default `~/.stockwatch/cis-data`), verified against the handoff manifest |
 | `STOCKWATCH_CIS_DECISIONS` | Streamlit / local | `shadow` shows the CIS chart decision beside the existing call on Details (Issue #29); off when unset. No active mode exists |
 | `portfolio.yaml` `settings` / `tiers` | file or secret | intervals, cooldown, `risk_per_trade_pct`, tier weights, stops, maximum position size |
 
@@ -204,7 +205,7 @@ back empty are cached until their TTL runs out, so **reboot the app after adding
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                                   # 483 tests, no network needed
+python -m pytest -q                                   # 502 tests with the private CIS data, no network needed
 STOCKWATCH_DEMO=1 streamlit run dashboard.py          # offline UI with synthetic data
 python -m stockwatch.scanner --once --demo            # one sweep from the CLI
 python -m stockwatch.market --demo                    # S&P scan from the CLI
