@@ -1,0 +1,794 @@
+{
+  "source_commit": "a56080b04039587f8d2c76bd5d100c21fa796fa0",
+  "fundamental_input": "Website displays 77 rounded; no independently reproduced fundamental feed. BUY SETUP is supplied as an observed UI verdict for plan reproduction. No analyst/fair-value target inputs inferred.",
+  "snapshots": {
+    "completed": {
+      "as_of": "2026-10-22",
+      "rows": 1254,
+      "raw_technical_score": 78.24497764231124,
+      "relative_points": 8.0,
+      "technical_score": 83.20183851339245,
+      "conditional_composite_using_rounded_UI_fund77": 80.72110310803546,
+      "metrics": {
+        "price": 443.8500061035156,
+        "rsi": 67.92015244047371,
+        "sma50": 395.03799926757813,
+        "sma200": 436.9118493652344,
+        "atr": 13.019117775432038,
+        "high_52w": 592.8499755859375,
+        "low_52w": 332.0199890136719,
+        "drawdown_52w": -0.2513282881308365,
+        "ret_1m": 0.11436108387284993,
+        "ret_3m": 0.3151111291956019,
+        "volume_ratio": 1.2355624791365305,
+        "day_change": 0.03674206102432187,
+        "trend": "mixed",
+        "trailing_stop": 411.3022116649355,
+        "score_parts": [
+          [
+            "Price above the 200-day average",
+            12.0
+          ],
+          [
+            "50-day below 200-day (downtrend structure)",
+            -6.0
+          ],
+          [
+            "Price above the 50-day average",
+            8.0
+          ],
+          [
+            "RSI 68: healthy momentum",
+            4.0
+          ],
+          [
+            "MACD above its signal line",
+            4.0
+          ],
+          [
+            "3-month price change +32%",
+            10.0
+          ]
+        ],
+        "raw_points": 32.0,
+        "rs_spy_1m": 0.11997690517689041,
+        "rs_spy_3m": 0.26887254795315596,
+        "rs_sector_3m": NaN,
+        "rs_line_rising": true,
+        "sector_etf": null
+      },
+      "last_bar": {
+        "Open": 430.75,
+        "High": 444.1499938964844,
+        "Low": 427.4700012207031,
+        "Close": 443.8500061035156,
+        "Volume": 2776000.0
+      },
+      "levels": {
+        "support": 430.8500061035156,
+        "support_touches": 1,
+        "resistance": 448.1699981689453,
+        "resistance_touches": 4
+      },
+      "plan": {
+        "stance": "BUY NOW",
+        "bias": "neutral",
+        "sma20": 418.2375,
+        "entry_low": 437.3404472157996,
+        "entry_high": 443.8500061035156,
+        "entry": 440.5952266596576,
+        "trigger": null,
+        "stop": 424.3404472157996,
+        "stop_basis": "below support at 430.85",
+        "risk_per_share": 16.254779443858013,
+        "targets": [
+          {
+            "price": 473.10478554737364,
+            "label": "2R measured move",
+            "r": 2.0
+          },
+          {
+            "price": 497.4869547131607,
+            "label": "measured move",
+            "r": 3.5000000000000018
+          }
+        ],
+        "rr": 2.0,
+        "outlook": "Mixed signals. Likely range-bound between 430.85 and 448.17 until one side breaks.",
+        "horizon": "Swing trade: 2-8 weeks",
+        "exits": [
+          "Stop: sell if it closes below 424.34 (below support at 430.85).",
+          "Take a third at 473.10 (2R measured move) and move the stop to break-even.",
+          "Trail the rest under the 20-day average (now 418.24); sell the remainder near 497.49 (measured move).",
+          "Sell early if a thesis-break alert fires (weak fundamentals with a technical breakdown) or on a death cross.",
+          "Time stop: if the first target isn't reached within 6 weeks, reassess instead of waiting."
+        ],
+        "notes": [],
+        "price": 443.8500061035156
+      },
+      "older_scenarios": {
+        "n": 18,
+        "loose": false,
+        "horizon_days": 30,
+        "win_rate": 0.5,
+        "loss_rate": 0.4444444444444444,
+        "neither_rate": 0.05555555555555558,
+        "median_days_to_target": 13.0,
+        "median_days_to_stop": 7.5,
+        "median_return": 0.021246165407745266,
+        "recent": [
+          {
+            "date": "2025-10-29",
+            "outcome": "target",
+            "days": 8,
+            "return": 0.01817362303620329
+          },
+          {
+            "date": "2025-11-05",
+            "outcome": "neither",
+            "days": 30,
+            "return": 0.02431870777928724
+          },
+          {
+            "date": "2025-11-12",
+            "outcome": "stop",
+            "days": 2,
+            "return": 0.009363237378400058
+          },
+          {
+            "date": "2025-11-19",
+            "outcome": "stop",
+            "days": 15,
+            "return": 0.0030815921458531292
+          },
+          {
+            "date": "2025-11-26",
+            "outcome": "stop",
+            "days": 9,
+            "return": -0.002577330545405987
+          }
+        ],
+        "match": "mixed trend, RSI 68"
+      },
+      "refined_plan_no_street": {
+        "stance": "BUY NOW",
+        "bias": "neutral",
+        "sma20": 418.2375,
+        "entry_low": 437.3404472157996,
+        "entry_high": 443.8500061035156,
+        "entry": 440.5952266596576,
+        "trigger": null,
+        "stop": 424.3404472157996,
+        "stop_basis": "below support at 430.85",
+        "risk_per_share": 16.254779443858013,
+        "targets": [
+          {
+            "price": 473.10478554737364,
+            "label": "2R measured move",
+            "r": 2.0
+          },
+          {
+            "price": 497.4869547131607,
+            "label": "measured move",
+            "r": 3.5000000000000018
+          }
+        ],
+        "rr": 2.0,
+        "outlook": "Mixed signals. Likely range-bound between 430.85 and 448.17 until one side breaks.",
+        "horizon": "Swing trade: 2-8 weeks",
+        "exits": [
+          "Stop: sell if it closes below 424.34 (below support at 430.85).",
+          "Take a third at 473.10 (2R measured move) and move the stop to break-even.",
+          "Trail the rest under the 20-day average (now 418.24); sell the remainder near 497.49 (measured move).",
+          "Sell early if a thesis-break alert fires (weak fundamentals with a technical breakdown) or on a death cross.",
+          "Time stop: if 473.10 isn't reached within about 20 trading days (~4 weeks), reassess rather than wait."
+        ],
+        "notes": [],
+        "price": 443.8500061035156,
+        "history": {
+          "n": 18,
+          "loose": false,
+          "horizon_days": 30,
+          "win_rate": 0.5,
+          "loss_rate": 0.4444444444444444,
+          "neither_rate": 0.05555555555555558,
+          "median_days_to_target": 13.0,
+          "median_days_to_stop": 7.5,
+          "median_return": 0.021246165407745266,
+          "recent": [
+            {
+              "date": "2025-10-29",
+              "outcome": "target",
+              "days": 8,
+              "return": 0.01817362303620329
+            },
+            {
+              "date": "2025-11-05",
+              "outcome": "neither",
+              "days": 30,
+              "return": 0.02431870777928724
+            },
+            {
+              "date": "2025-11-12",
+              "outcome": "stop",
+              "days": 2,
+              "return": 0.009363237378400058
+            },
+            {
+              "date": "2025-11-19",
+              "outcome": "stop",
+              "days": 15,
+              "return": 0.0030815921458531292
+            },
+            {
+              "date": "2025-11-26",
+              "outcome": "stop",
+              "days": 9,
+              "return": -0.002577330545405987
+            }
+          ],
+          "match": "mixed trend, RSI 68"
+        },
+        "timeframe": "Target 1 was reached in a median of 13 trading days (about 3 weeks) in 18 similar past setups",
+        "time_stop_days": 20,
+        "forward": [],
+        "forward_score": 1.0
+      },
+      "prior20_volume_ratio": 1.2697948018918845
+    },
+    "vendor_intraday": {
+      "as_of": "2026-10-23",
+      "rows": 1255,
+      "raw_technical_score": 75.39887164489481,
+      "relative_points": 6.958458773312167,
+      "technical_score": 80.19200775415986,
+      "conditional_composite_using_rounded_UI_fund77": 78.91520465249592,
+      "metrics": {
+        "price": 454.6700134277344,
+        "rsi": 71.57281271800204,
+        "sma50": 396.1059997558594,
+        "sma200": 436.2238493347168,
+        "atr": 12.965608578163456,
+        "high_52w": 592.8499755859375,
+        "low_52w": 332.0199890136719,
+        "drawdown_52w": -0.23307745272593505,
+        "ret_1m": 0.13804071368297732,
+        "ret_3m": 0.27419227793977474,
+        "volume_ratio": 0.4973248790032464,
+        "day_change": 0.024377621213089062,
+        "trend": "mixed",
+        "trailing_stop": 422.2559919823257,
+        "score_parts": [
+          [
+            "Price above the 200-day average",
+            12.0
+          ],
+          [
+            "50-day below 200-day (downtrend structure)",
+            -6.0
+          ],
+          [
+            "Price above the 50-day average",
+            8.0
+          ],
+          [
+            "MACD above its signal line",
+            4.0
+          ],
+          [
+            "3-month price change +27%",
+            10.0
+          ]
+        ],
+        "raw_points": 28.0,
+        "rs_spy_1m": 0.14496563006004082,
+        "rs_spy_3m": 0.2319486257770722,
+        "rs_sector_3m": NaN,
+        "rs_line_rising": true,
+        "sector_etf": null
+      },
+      "last_bar": {
+        "Open": 443.6499938964844,
+        "High": 454.8299865722656,
+        "Low": 442.55999755859375,
+        "Close": 454.6700134277344,
+        "Volume": 1082209.0
+      },
+      "levels": {
+        "support": 448.1699981689453,
+        "support_touches": 4,
+        "resistance": 461.8450012207031,
+        "resistance_touches": 2
+      },
+      "plan": {
+        "stance": "BUY NOW",
+        "bias": "neutral",
+        "sma20": 420.71200103759764,
+        "entry_low": 448.18720913865263,
+        "entry_high": 454.6700134277344,
+        "entry": 451.4286112831935,
+        "trigger": null,
+        "stop": 441.68719387986357,
+        "stop_basis": "below support at 448.17",
+        "risk_per_share": 9.741417403329933,
+        "targets": [
+          {
+            "price": 470.91144608985337,
+            "label": "2R measured move",
+            "r": 2.0
+          },
+          {
+            "price": 485.52357219484827,
+            "label": "measured move",
+            "r": 3.5
+          }
+        ],
+        "rr": 2.0,
+        "outlook": "Mixed signals. Likely range-bound between 448.17 and 461.85 until one side breaks.",
+        "horizon": "Swing trade: 2-8 weeks",
+        "exits": [
+          "Stop: sell if it closes below 441.69 (below support at 448.17).",
+          "Take a third at 470.91 (2R measured move) and move the stop to break-even.",
+          "Trail the rest under the 20-day average (now 420.71); sell the remainder near 485.52 (measured move).",
+          "Sell early if a thesis-break alert fires (weak fundamentals with a technical breakdown) or on a death cross.",
+          "Time stop: if the first target isn't reached within 6 weeks, reassess instead of waiting."
+        ],
+        "notes": [],
+        "price": 454.6700134277344
+      },
+      "older_scenarios": {
+        "n": 15,
+        "loose": false,
+        "horizon_days": 30,
+        "win_rate": 0.5333333333333333,
+        "loss_rate": 0.4666666666666667,
+        "neither_rate": 0.0,
+        "median_days_to_target": 3.5,
+        "median_days_to_stop": 3.0,
+        "median_return": 0.041355282024759354,
+        "recent": [
+          {
+            "date": "2025-10-29",
+            "outcome": "target",
+            "days": 7,
+            "return": 0.01817362303620329
+          },
+          {
+            "date": "2025-11-05",
+            "outcome": "target",
+            "days": 3,
+            "return": 0.02431870777928724
+          },
+          {
+            "date": "2025-11-12",
+            "outcome": "stop",
+            "days": 2,
+            "return": 0.009363237378400058
+          },
+          {
+            "date": "2025-11-19",
+            "outcome": "stop",
+            "days": 1,
+            "return": 0.0030815921458531292
+          },
+          {
+            "date": "2025-11-26",
+            "outcome": "stop",
+            "days": 3,
+            "return": -0.002577330545405987
+          }
+        ],
+        "match": "mixed trend, RSI 72"
+      },
+      "refined_plan_no_street": {
+        "stance": "BUY NOW",
+        "bias": "neutral",
+        "sma20": 420.71200103759764,
+        "entry_low": 448.18720913865263,
+        "entry_high": 454.6700134277344,
+        "entry": 451.4286112831935,
+        "trigger": null,
+        "stop": 441.68719387986357,
+        "stop_basis": "below support at 448.17",
+        "risk_per_share": 9.741417403329933,
+        "targets": [
+          {
+            "price": 470.91144608985337,
+            "label": "2R measured move",
+            "r": 2.0
+          },
+          {
+            "price": 485.52357219484827,
+            "label": "measured move",
+            "r": 3.5
+          }
+        ],
+        "rr": 2.0,
+        "outlook": "Mixed signals. Likely range-bound between 448.17 and 461.85 until one side breaks.",
+        "horizon": "Swing trade: 2-8 weeks",
+        "exits": [
+          "Stop: sell if it closes below 441.69 (below support at 448.17).",
+          "Take a third at 470.91 (2R measured move) and move the stop to break-even.",
+          "Trail the rest under the 20-day average (now 420.71); sell the remainder near 485.52 (measured move).",
+          "Sell early if a thesis-break alert fires (weak fundamentals with a technical breakdown) or on a death cross.",
+          "Time stop: if 470.91 isn't reached within about 10 trading days (~2 weeks), reassess rather than wait."
+        ],
+        "notes": [],
+        "price": 454.6700134277344,
+        "history": {
+          "n": 15,
+          "loose": false,
+          "horizon_days": 30,
+          "win_rate": 0.5333333333333333,
+          "loss_rate": 0.4666666666666667,
+          "neither_rate": 0.0,
+          "median_days_to_target": 3.5,
+          "median_days_to_stop": 3.0,
+          "median_return": 0.041355282024759354,
+          "recent": [
+            {
+              "date": "2025-10-29",
+              "outcome": "target",
+              "days": 7,
+              "return": 0.01817362303620329
+            },
+            {
+              "date": "2025-11-05",
+              "outcome": "target",
+              "days": 3,
+              "return": 0.02431870777928724
+            },
+            {
+              "date": "2025-11-12",
+              "outcome": "stop",
+              "days": 2,
+              "return": 0.009363237378400058
+            },
+            {
+              "date": "2025-11-19",
+              "outcome": "stop",
+              "days": 1,
+              "return": 0.0030815921458531292
+            },
+            {
+              "date": "2025-11-26",
+              "outcome": "stop",
+              "days": 3,
+              "return": -0.002577330545405987
+            }
+          ],
+          "match": "mixed trend, RSI 72"
+        },
+        "timeframe": "Target 1 was reached in a median of 4 trading days (about 1 week) in 15 similar past setups",
+        "time_stop_days": 10,
+        "forward": [],
+        "forward_score": 1.0
+      },
+      "prior20_volume_ratio": 0.4816775342160899
+    },
+    "UI_price_reconstruction": {
+      "as_of": "2026-10-23",
+      "rows": 1255,
+      "raw_technical_score": 75.39887164489481,
+      "relative_points": 6.95032904837642,
+      "technical_score": 80.18684180622091,
+      "conditional_composite_using_rounded_UI_fund77": 78.91210508373254,
+      "metrics": {
+        "price": 454.57,
+        "rsi": 71.54286257127859,
+        "sma50": 396.1039994873047,
+        "sma200": 436.22334926757816,
+        "atr": 12.965608578163456,
+        "high_52w": 592.8499755859375,
+        "low_52w": 332.0199890136719,
+        "drawdown_52w": -0.23324615211339061,
+        "ret_1m": 0.1377903797059934,
+        "ret_3m": 0.2739119948035531,
+        "volume_ratio": 0.4973248790032464,
+        "day_change": 0.024152289622779044,
+        "trend": "mixed",
+        "trailing_stop": 422.15597855459134,
+        "score_parts": [
+          [
+            "Price above the 200-day average",
+            12.0
+          ],
+          [
+            "50-day below 200-day (downtrend structure)",
+            -6.0
+          ],
+          [
+            "Price above the 50-day average",
+            8.0
+          ],
+          [
+            "MACD above its signal line",
+            4.0
+          ],
+          [
+            "3-month price change +27%",
+            10.0
+          ]
+        ],
+        "raw_points": 28.0,
+        "rs_spy_1m": 0.14471377281430553,
+        "rs_spy_3m": 0.23167763494588067,
+        "rs_sector_3m": NaN,
+        "rs_line_rising": true,
+        "sector_etf": null
+      },
+      "last_bar": {
+        "Open": 443.6499938964844,
+        "High": 454.8299865722656,
+        "Low": 442.55999755859375,
+        "Close": 454.57,
+        "Volume": 1082209.0
+      },
+      "levels": {
+        "support": 448.1699981689453,
+        "support_touches": 4,
+        "resistance": 461.8450012207031,
+        "resistance_touches": 2
+      },
+      "plan": {
+        "stance": "BUY NOW",
+        "bias": "neutral",
+        "sma20": 420.70700036621093,
+        "entry_low": 448.08719571091825,
+        "entry_high": 454.57,
+        "entry": 451.3285978554591,
+        "trigger": null,
+        "stop": 425.3973806991322,
+        "stop_basis": "2x ATR below entry",
+        "risk_per_share": 25.93121715632691,
+        "targets": [
+          {
+            "price": 503.19103216811294,
+            "label": "2R measured move",
+            "r": 2.0
+          },
+          {
+            "price": 592.8499755859375,
+            "label": "52-week high",
+            "r": 5.457567875711875
+          }
+        ],
+        "rr": 2.0,
+        "outlook": "Mixed signals. Likely range-bound between 448.17 and 461.85 until one side breaks.",
+        "horizon": "Swing trade: 2-8 weeks",
+        "exits": [
+          "Stop: sell if it closes below 425.40 (2x ATR below entry).",
+          "Take a third at 503.19 (2R measured move) and move the stop to break-even.",
+          "Trail the rest under the 20-day average (now 420.71); sell the remainder near 592.85 (52-week high).",
+          "Sell early if a thesis-break alert fires (weak fundamentals with a technical breakdown) or on a death cross.",
+          "Time stop: if the first target isn't reached within 6 weeks, reassess instead of waiting."
+        ],
+        "notes": [],
+        "price": 454.57
+      },
+      "older_scenarios": {
+        "n": 15,
+        "loose": false,
+        "horizon_days": 30,
+        "win_rate": 0.4,
+        "loss_rate": 0.26666666666666666,
+        "neither_rate": 0.33333333333333337,
+        "median_days_to_target": 20.5,
+        "median_days_to_stop": 9.0,
+        "median_return": 0.041355282024759354,
+        "recent": [
+          {
+            "date": "2025-10-29",
+            "outcome": "neither",
+            "days": 30,
+            "return": 0.01817362303620329
+          },
+          {
+            "date": "2025-11-05",
+            "outcome": "neither",
+            "days": 30,
+            "return": 0.02431870777928724
+          },
+          {
+            "date": "2025-11-12",
+            "outcome": "stop",
+            "days": 4,
+            "return": 0.009363237378400058
+          },
+          {
+            "date": "2025-11-19",
+            "outcome": "neither",
+            "days": 30,
+            "return": 0.0030815921458531292
+          },
+          {
+            "date": "2025-11-26",
+            "outcome": "stop",
+            "days": 11,
+            "return": -0.002577330545405987
+          }
+        ],
+        "match": "mixed trend, RSI 72"
+      },
+      "refined_plan_no_street": {
+        "stance": "BUY NOW",
+        "bias": "neutral",
+        "sma20": 420.70700036621093,
+        "entry_low": 448.08719571091825,
+        "entry_high": 454.57,
+        "entry": 451.3285978554591,
+        "trigger": null,
+        "stop": 425.3973806991322,
+        "stop_basis": "2x ATR below entry",
+        "risk_per_share": 25.93121715632691,
+        "targets": [
+          {
+            "price": 503.19103216811294,
+            "label": "2R measured move",
+            "r": 2.0
+          },
+          {
+            "price": 592.8499755859375,
+            "label": "52-week high",
+            "r": 5.457567875711875
+          }
+        ],
+        "rr": 2.0,
+        "outlook": "Mixed signals. Likely range-bound between 448.17 and 461.85 until one side breaks.",
+        "horizon": "Swing trade: 2-8 weeks",
+        "exits": [
+          "Stop: sell if it closes below 425.40 (2x ATR below entry).",
+          "Take a third at 503.19 (2R measured move) and move the stop to break-even.",
+          "Trail the rest under the 20-day average (now 420.71); sell the remainder near 592.85 (52-week high).",
+          "Sell early if a thesis-break alert fires (weak fundamentals with a technical breakdown) or on a death cross.",
+          "Time stop: if 503.19 isn't reached within about 31 trading days (~6 weeks), reassess rather than wait."
+        ],
+        "notes": [],
+        "price": 454.57,
+        "history": {
+          "n": 15,
+          "loose": false,
+          "horizon_days": 30,
+          "win_rate": 0.4,
+          "loss_rate": 0.26666666666666666,
+          "neither_rate": 0.33333333333333337,
+          "median_days_to_target": 20.5,
+          "median_days_to_stop": 9.0,
+          "median_return": 0.041355282024759354,
+          "recent": [
+            {
+              "date": "2025-10-29",
+              "outcome": "neither",
+              "days": 30,
+              "return": 0.01817362303620329
+            },
+            {
+              "date": "2025-11-05",
+              "outcome": "neither",
+              "days": 30,
+              "return": 0.02431870777928724
+            },
+            {
+              "date": "2025-11-12",
+              "outcome": "stop",
+              "days": 4,
+              "return": 0.009363237378400058
+            },
+            {
+              "date": "2025-11-19",
+              "outcome": "neither",
+              "days": 30,
+              "return": 0.0030815921458531292
+            },
+            {
+              "date": "2025-11-26",
+              "outcome": "stop",
+              "days": 11,
+              "return": -0.002577330545405987
+            }
+          ],
+          "match": "mixed trend, RSI 72"
+        },
+        "timeframe": "Target 1 was reached in a median of 20 trading days (about 4 weeks) in 15 similar past setups",
+        "time_stop_days": 31,
+        "forward": [],
+        "forward_score": 1.0
+      },
+      "prior20_volume_ratio": 0.4816775342160899
+    }
+  },
+  "sensitivity": [
+    {
+      "price": 454.57,
+      "entry_low": 448.08719571091825,
+      "stop": 425.3973806991322,
+      "basis": "2x ATR below entry",
+      "target1": 503.19103216811294,
+      "target2": 592.8499755859375,
+      "n": 15,
+      "target_first": 0.4,
+      "refined_stance": "BUY NOW"
+    },
+    {
+      "price": 454.6,
+      "entry_low": 448.1171957109183,
+      "stop": 425.42738069913224,
+      "basis": "2x ATR below entry",
+      "target1": 503.22103216811297,
+      "target2": 592.8499755859375,
+      "n": 15,
+      "target_first": 0.4,
+      "refined_stance": "BUY NOW"
+    },
+    {
+      "price": 454.63,
+      "entry_low": 448.14719571091825,
+      "stop": 425.4573806991322,
+      "basis": "2x ATR below entry",
+      "target1": 503.25103216811294,
+      "target2": 592.8499755859375,
+      "n": 15,
+      "target_first": 0.4,
+      "refined_stance": "BUY NOW"
+    },
+    {
+      "price": 454.65,
+      "entry_low": 448.16719571091824,
+      "stop": 425.4773806991322,
+      "basis": "2x ATR below entry",
+      "target1": 503.2710321681129,
+      "target2": 592.8499755859375,
+      "n": 15,
+      "target_first": 0.4,
+      "refined_stance": "BUY NOW"
+    },
+    {
+      "price": 454.67,
+      "entry_low": 448.1871957109183,
+      "stop": 441.68719387986357,
+      "basis": "below support at 448.17",
+      "target1": 470.9114058066503,
+      "target2": 485.5235117700437,
+      "n": 15,
+      "target_first": 0.5333333333333333,
+      "refined_stance": "BUY NOW"
+    }
+  ],
+  "data_quality": {
+    "ISRG": {
+      "rows": 6627,
+      "first": "2000-06-16",
+      "last": "2026-10-22",
+      "duplicates": 0,
+      "null_cells": 0,
+      "zero_volume_rows": 0,
+      "boundary_dates": [
+        "2001-09-17",
+        "2004-06-14",
+        "2007-01-03",
+        "2012-10-31",
+        "2018-12-06",
+        "2025-01-10"
+      ],
+      "raw_sha256": "c801a5649817f4f53084e33825ac71a55513b493f4e9db08c971b83298b99aec"
+    },
+    "SPY": {
+      "rows": 8491,
+      "first": "1993-01-29",
+      "last": "2026-10-22",
+      "duplicates": 0,
+      "null_cells": 0,
+      "zero_volume_rows": 0,
+      "boundary_dates": [
+        "1994-04-28",
+        "2001-09-17",
+        "2004-06-14",
+        "2007-01-03",
+        "2012-10-31",
+        "2018-12-06",
+        "2025-01-10"
+      ],
+      "raw_sha256": "b10fa4ecc329ef5973464a2894e3c2b0b46008fe48c9c3f849505ef64f7db7bb"
+    }
+  }
+}

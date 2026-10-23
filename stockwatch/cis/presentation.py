@@ -153,3 +153,9 @@ def history_rows(r: dict) -> list[list[str]]:
 def excursion_rows(r: dict) -> list[list[str]]:
     """The path inside each 20-session window: best high, worst low, and the endpoint category."""
     return [[a["date"], _ret(a["mfe"]), _ret(a["mae"]), a["category"] or "not yet"] for a in r["history"]["analogues"]]
+
+
+def recent(r: dict, n: int = 10) -> list[dict]:
+    """The last n completed sessions as plain bars (for the decision adapter's floor-defense check)."""
+    return [{"session": str(i.date()), "high": float(x.High), "low": float(x.Low), "close": float(x.Close), "completed": True}
+            for i, x in r["bars"].iloc[-n:].iterrows()]

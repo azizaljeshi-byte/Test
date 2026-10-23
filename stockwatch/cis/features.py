@@ -96,8 +96,9 @@ def check(df: pd.DataFrame, symbol: str, sha256: str | None = None) -> Quality:
 
 
 def completed(df: pd.DataFrame, through: str | date) -> pd.DataFrame:
-    """Only sessions on or before the last completed session. A forming bar never enters indicators."""
-    return df[df.index <= pd.Timestamp(through)]
+    """Only sessions on or before the last completed session. A forming bar never enters indicators.
+    Compares calendar dates, so timezone-aware (Yahoo) and naive (fixture) indexes both work."""
+    return df[df.index.date <= pd.Timestamp(through).date()]
 
 
 def default_boundary(index: pd.DatetimeIndex, now: datetime) -> date | None:

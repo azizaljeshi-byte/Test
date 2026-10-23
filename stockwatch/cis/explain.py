@@ -10,7 +10,7 @@ import json
 from datetime import datetime
 from functools import lru_cache
 
-from . import features, history, level_packet, state
+from . import decision, features, history, level_packet, state
 
 NY = features.NY
 BOUNDARY = "2026-10-22"
@@ -34,18 +34,17 @@ REFERENCE = {
              "lesson": "A daily recovery with little room to the first ceiling and earnings ahead.",
              "upside_extra": None},
 }
-STATE_LABEL = {"above_floor": "Above the floor", "testing_floor": "Testing the floor", "warning": "Warning",
-               "failure": "Tactical failure", "major_damage": "Major damage", "undetermined": "Undetermined"}
+STATE_LABEL = decision.DOWN_LABEL          # owner-approved names (Issue #29); internal ids unchanged
 STATE_MEANING = {
     "above_floor": "above this setup's floor; entry quality and the longer trend are separate questions",
     "testing_floor": "inside the floor zone; buyers need to defend it. Falling into support is not a buy signal",
     "warning": "the constructive floor is lost: stop adding and review a reduction under the plan",
-    "failure": "the tactical thesis is invalidated: its exit rule applies",
+    "failure": "the tactical thesis is invalidated: a tactical exit applies under its trade contract, not an automatic "
+               "sale of a long-term holding",
     "major_damage": "the broader base is compromised; tactical failure has already happened",
     "undetermined": "there's no defensible floor to judge against",
 }
-CEILING_LABEL = {"pending": "not reached", "testing": "being tested", "close_above": "closed above",
-                 "retest_defended": "retest defended", "failed_breakout": "failed breakout"}
+CEILING_LABEL = decision.UP_LABEL
 
 
 def money(v) -> str:
@@ -124,7 +123,7 @@ def takeaway(r) -> str:
     parts = [f"{STATE_LABEL[conf]} on the {p['as_of_completed_session']} close ({money(p['completed_close'])}) "
              f"against the {_zone(dn['zone'])} floor."]
     if ev["quote_state"] != conf:
-        parts.append(f"The live quote reads {STATE_LABEL[ev['quote_state']].lower()}, provisionally, until a "
+        parts.append(f"The live quote reads {STATE_LABEL[ev['quote_state']]}, provisionally, until a "
                      "session closes there.")
     if rm and rm["ceiling"]:
         parts.append(f"The first ceiling ({rm['ceiling']['low']:g}–{rm['ceiling']['high']:g}) is "
@@ -149,11 +148,11 @@ def why_downside(r) -> dict:
     obs.append(_obs(f"Completed close {money(p['completed_close'])} on {p['as_of_completed_session']}; floor "
                     f"{_zone(dn['zone'])}, warning below {dn['warning']:g}, failure below {dn['failure']:g}, "
                     f"major damage below {dn['major_damage']:g}.",
-                    f"Confirmed state: {STATE_LABEL[conf].lower()} — {STATE_MEANING[conf]}.",
+                    f"Confirmed state: {STATE_LABEL[conf]} — {STATE_MEANING[conf]}.",
                     "Daily-close rule: only a completed session changes this."))
     if ev["quote_state"] != conf:
         obs.append(_obs(f"Quote {money(q['price'])} at {ny_time(q['observed_at_utc'])} (partial session).",
-                        f"Provisionally {STATE_LABEL[ev['quote_state']].lower()}.",
+                        f"Provisionally {STATE_LABEL[ev['quote_state']]}.",
                         "Not confirmed until a session closes below that level."))
     for b in ev["session_extreme_breaches"]:
         if b["crossed_below"]:

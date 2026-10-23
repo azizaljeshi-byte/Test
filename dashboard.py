@@ -15,7 +15,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from stockwatch import briefing, finnhub, live, research_lab, technical, tradeplan, turbo, ui
-from stockwatch.cis import explain as cis_explain, presentation as cis_view
+from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
 from stockwatch.data import NY, get_provider, selected_provider, us_session
 from stockwatch.engine import evaluate
@@ -268,6 +268,30 @@ def radar_list(snaps: list[dict], brief: str):
 if view == "radar":
     radar_list(snaps, ui.mission_brief(briefing.portfolio(snaps, prevs, reg), tickers))
 
+# ---------------------------------------------------------------- CIS shadow decision (STOCKWATCH_CIS_DECISIONS=shadow)
+def _cis_shadow_card(ticker: str, snap: dict):
+    """The CIS call beside the existing one, labelled. Shadow only: it feeds no verdict, plan or alert."""
+    packet = cis_decision.reviewed_packets().get(ticker)
+    held = not snap["payload"]["watchlist"]
+    peek = data.peek_history(ticker) if hasattr(data, "peek_history") else None   # never fetch inline
+    d = cis_decision.decide(packet, cis_decision.live_inputs(packet, peek, snap["payload"].get("quote"),
+                                                             datetime.now(NY)) if packet else None,
+                            held, snap["tier"])
+    st.markdown('<div class="mc-section">CIS chart decision · shadow</div>', unsafe_allow_html=True)
+    if not d["supported"]:
+        st.markdown(ui.flag("CIS UNSUPPORTED", escape(d["reasons"][0]) + ". The call above is the legacy StockWatch "
+                            "call.", ui.MUTED), unsafe_allow_html=True)
+        return
+    st.markdown(ui.flag(d["action"], f"{escape(d['downside']['confirmed'])} · shadow only: not active, no order "
+                        "placed, no alert", ui.INFO), unsafe_allow_html=True)
+    lv = d["levels"]
+    st.markdown("<ul class='cis-why'>" + "".join(f"<li>{escape(r)}</li>" for r in d["reasons"]) + "</ul>",
+                unsafe_allow_html=True)
+    st.caption(f"Floor {lv['floor'][0]:g}–{lv['floor'][1]:g} · support break below {lv['warning']:g} · trade invalidated "
+               f"below {lv['failure']:g} · trend breakdown below {lv['major_damage']:g} · ceilings: "
+               + ", ".join(f"{c['low']:g}–{c['high']:g} {c['label'].lower()}" for c in d["upside"]))
+
+
 # ---------------------------------------------------------------- target detail
 if view == "target":
     order = [s["ticker"] for s in sorted(snaps, key=ui.urgency)]
@@ -308,6 +332,9 @@ if view == "target":
         st.markdown(ui.trade_plan(plan, sizing, risk_pct, portfolio_value), unsafe_allow_html=True)
         st.select_slider("Risk per trade (% of portfolio lost if the stop is hit)", [0.25, 0.5, 1.0, 1.5, 2.0],
                          value=risk_pct, key="risk_pct")
+
+    if cis_decision.mode() == "shadow":
+        _cis_shadow_card(ticker, snap)
 
     street_m = research.get("street") or {}
     if street_m:
@@ -900,7 +927,7 @@ def _chart_judgment():
                                   label_visibility="collapsed") or "PODD"
     r = cis_explain.report(symbol)
     p, ev, q = r["packet"], r["evaluation"], r["packet"]["quote"]
-    st.markdown(ui.flag(cis_explain.STATE_LABEL[ev["confirmed_state"]].upper(),
+    st.markdown(ui.flag(cis_explain.STATE_LABEL[ev["confirmed_state"]],
                         f"{escape(symbol)} · confirmed on the {escape(p['as_of_completed_session'])} close "
                         f"{cis_explain.money(p['completed_close'])}",
                         ui.RISK if ev["confirmed_state"] in ("warning", "failure", "major_damage") else ui.OPP),
@@ -908,7 +935,7 @@ def _chart_judgment():
     if ev["quote_state"] != ev["confirmed_state"]:
         st.markdown(ui.flag("PROVISIONAL", f"quote {cis_explain.money(q['price'])} at "
                             f"{escape(cis_explain.ny_time(q['observed_at_utc']))} reads "
-                            f"{escape(cis_explain.STATE_LABEL[ev['quote_state']].lower())}; not a close", ui.WARN),
+                            f"{escape(cis_explain.STATE_LABEL[ev['quote_state']])}; not a close", ui.WARN),
                     unsafe_allow_html=True)
     st.caption((f"Quote {cis_explain.money(q['price'])} at {cis_explain.ny_time(q['observed_at_utc'])} (partial "
                 "session) · " if ev["quote_state"] == ev["confirmed_state"] else "")
@@ -922,6 +949,10 @@ def _chart_judgment():
     tabs = st.tabs(["Overview", "Key levels", "Analysis & numbers", "Scenarios", "Past reactions", "What changes"])
     with tabs[0]:
         st.markdown(f"**{escape(r['takeaway'])}**")
+        calls = {label: cis_decision.decide(p, cis_decision.inputs_from_packet(p, cis_view.recent(r)), held, tier)["action"]
+                 for label, held, tier in (("held, core", True, 1), ("held, Tier 2", True, 2), ("watchlist", False, 2))}
+        st.markdown(ui.flag("SHADOW CALL", " · ".join(f"{escape(k)}: <b>{escape(v)}</b>" for k, v in calls.items())
+                            + " · not active, no order placed", ui.INFO), unsafe_allow_html=True)
         st.caption(r["lesson"])
         st.plotly_chart(cis_view.candles(r, ["Floor", "Failure & damage", "Ceilings"]), width="stretch",
                         config={"displayModeBar": False}, key=f"cis_ov_{symbol}")

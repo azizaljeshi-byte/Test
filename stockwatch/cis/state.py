@@ -59,13 +59,15 @@ def location(price: float | None, zone) -> str | None:
     return "below" if price < zone["low"] else "above" if price > zone["high"] else "inside"
 
 
-def ceiling_state(zone, bars) -> dict:
+def ceiling_state(zone, bars, start: str = "pending") -> dict:
     """Walk dated bars in order. Each bar: {session, high, low, close, completed}.
 
+    `start` is the state recorded in the packet at its as-of session; the bars are the sessions after it.
     Returns the state, whether a retest has been confirmed, the dated events behind it, and whether the
     latest partial bar is attempting the zone."""
     lo, hi = zone["low"], zone["high"]
-    state, broke, events, attempt = "pending", False, [], False
+    state, events, attempt = start, [], False
+    broke = start in ("close_above", "retest_defended")
     for b in bars:
         if not b.get("completed"):
             attempt = b["high"] >= lo                 # a wick or forming bar is a test, never a confirmation
@@ -94,7 +96,7 @@ def ceiling_state(zone, bars) -> dict:
         elif state == "testing":
             state = "close_above"
             events.append((b["session"], "close_above"))
-    return {"state": state, "retest_confirmed": any(e == "retest_defended" for _, e in events) and broke,
+    return {"state": state, "retest_confirmed": broke and (state == "retest_defended" or any(e == "retest_defended" for _, e in events)),
             "events": events, "partial_attempt": attempt}
 
 
