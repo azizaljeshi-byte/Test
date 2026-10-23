@@ -16,6 +16,16 @@ log = logging.getLogger("stockwatch")
 
 
 def run_once(portfolio, provider, store: Store) -> list[Evaluation]:
+    evals, alerts = analyse(portfolio, provider, store)
+    notify.send(alerts)
+    log.info("scanned %d tickers, %d new alerts", len(evals), len(alerts))
+    return evals
+
+
+def analyse(portfolio, provider, store: Store, quiet: bool = False) -> tuple[list[Evaluation], list[tuple]]:
+    """Evaluate every holding, save the snapshots and record the new alerts, without delivering them.
+
+    quiet=True keeps tickers out of the log (public CI runs)."""
     # stocks with nothing on screen yet (after a reboot, or new in the sheet) are saved as soon as they're
     # analysed, so the page fills in during a slow sweep; their final save replaces that row, keeping one
     # snapshot per sweep for the "what changed" comparisons
@@ -35,13 +45,12 @@ def run_once(portfolio, provider, store: Store) -> list[Evaluation]:
         else:
             store.save_snapshot(e)
         if e.error:
-            log.warning("%s: %s", e.ticker, e.error)
+            if not quiet:
+                log.warning("%s: %s", e.ticker, e.error)
             continue
         alerts += [(e.ticker, e.price, e.verdict, s)
                    for s in store.record_alerts(e, portfolio.settings.alert_cooldown_hours)]
-    notify.send(alerts)
-    log.info("scanned %d tickers, %d new alerts", len(evals), len(alerts))
-    return evals
+    return evals, alerts
 
 
 def refresh_quotes(portfolio, provider, store: Store) -> int:

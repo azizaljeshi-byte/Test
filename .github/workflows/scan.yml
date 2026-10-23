@@ -8,7 +8,22 @@ on:
     - cron: "*/15 0-1 * * 2-6"
     # S&P 500 opportunity scan once a day before the open (8:50am New York in summer, 7:50am in winter)
     - cron: "50 12 * * 1-5"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "What to run. The default sends nothing."
+        type: choice
+        default: holdings-dry-run
+        options:
+          - holdings-dry-run
+          - holdings-scan
+          - telegram-check
+          - telegram-test-send
+          - market-scan
+      confirm:
+        description: "Type SEND to allow telegram-test-send (one fixed test message, no holdings)"
+        required: false
+        default: ""
 
 concurrency:
   group: stockwatch-scan
@@ -16,10 +31,16 @@ concurrency:
 
 jobs:
   scan:
-    if: github.event.schedule != '50 12 * * 1-5'
+    # schedule: the live holdings scan; manual runs: whichever holdings/Telegram mode was picked.
+    # It always runs: a missing notification secret is reported, not a reason to skip the scan.
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule != '50 12 * * 1-5') ||
+      (github.event_name == 'workflow_dispatch' && inputs.mode != 'market-scan')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
+      MODE: ${{ github.event_name == 'schedule' && 'holdings-scan' || inputs.mode }}
+      CONFIRM: ${{ inputs.confirm }}
       STOCKWATCH_PORTFOLIO: ${{ secrets.STOCKWATCH_PORTFOLIO }}
       STOCKWATCH_SHEET_URL: ${{ secrets.STOCKWATCH_SHEET_URL }}
       NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
@@ -30,42 +51,30 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
     steps:
-      # nothing to do until a notification channel is configured, so don't burn a runner on it
-      - name: Check configuration
-        id: cfg
-        run: |
-          if [ -z "$NTFY_TOPIC" ] && [ -z "$TELEGRAM_BOT_TOKEN" ]; then
-            echo "No NTFY_TOPIC or TELEGRAM_BOT_TOKEN secret set - skipping scan."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-            # SEC filings, dilution checks and the fundamentals fallback need SEC to accept our requests
-            if [ -z "$SEC_USER_AGENT" ]; then
-              echo "::warning title=SEC_USER_AGENT not set::Add the SEC_USER_AGENT repository secret (a name and email). Without it SEC requests use a generic identifier and SEC may refuse some."
-            fi
-          fi
-      - if: steps.cfg.outputs.enabled == 'true'
-        uses: actions/checkout@v4
-      - if: steps.cfg.outputs.enabled == 'true'
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - if: steps.cfg.outputs.enabled == 'true'
-        run: pip install -r requirements.txt
-      # keep the alert history between runs so the same alert isn't re-sent every 15 min
-      - if: steps.cfg.outputs.enabled == 'true'
+      - run: pip install -r requirements.txt
+      - name: SEC identification
+        run: |
+          if [ -z "$SEC_USER_AGENT" ]; then
+            echo "::warning title=SEC_USER_AGENT not set::Add the SEC_USER_AGENT repository secret (a name and email). Without it SEC requests use a generic identifier and SEC may refuse some."
+          fi
+      # the alert history, so the same alert isn't re-sent every 15 min. It's saved only when the job
+      # succeeds, so alerts that weren't delivered (failed send, no channel) are retried next run.
+      - if: startsWith(env.MODE, 'holdings')
         uses: actions/cache@v4
         with:
           path: data/stockwatch.db
           key: stockwatch-db-${{ github.run_id }}
           restore-keys: stockwatch-db-
-      - if: steps.cfg.outputs.enabled == 'true'
-        name: Scan and notify
-        run: python -m stockwatch.scanner --once
+      - name: Run ${{ env.MODE }}
+        run: python -m stockwatch.ci_scan --mode "$MODE" --confirm "$CONFIRM"
 
   market:
-    if: github.event.schedule == '50 12 * * 1-5' || github.event_name == 'workflow_dispatch'
+    if: github.event.schedule == '50 12 * * 1-5' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'market-scan')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

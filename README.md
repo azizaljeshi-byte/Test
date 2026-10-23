@@ -229,16 +229,16 @@ The dashboard only scans while it's open. For alerts while your phone is in your
    - `NTFY_TOPIC`: the topic name from step 1
    - `STOCKWATCH_PORTFOLIO`: your holdings YAML (the same text as in the Streamlit secret)
 3. Optional: under the **Variables** tab, add `DASHBOARD_URL` with your Streamlit app link, so tapping a notification opens the dashboard.
-4. Test it: **Actions → StockWatch scan → Run workflow**. The schedule runs on its own after that.
+4. Test it: **Actions → StockWatch scan → Run workflow** (the default mode is a dry run that sends nothing). The schedule runs on its own after that.
 
-Push priority follows severity. Urgent risks (stop hit, thesis breakdown) arrive as high-priority notifications; opportunities arrive as normal ones. The job does nothing until `NTFY_TOPIC` (or Telegram) is set.
+Push priority follows severity. Urgent risks (stop hit, thesis breakdown) arrive as high-priority notifications; opportunities arrive as normal ones. The scan runs even with no channel set, and each run's summary says what it analysed and whether alerts were delivered (see [docs/TELEGRAM_ALERTS.md](docs/TELEGRAM_ALERTS.md)).
 
 **Things to know:**
 - **Use the Google Sheet for your ticker list** (see above). The job reads the same sheet as the dashboard, so additions are scanned for notifications too. Without a sheet, the job reads only the `STOCKWATCH_PORTFOLIO` secret, and tickers added in the dashboard aren't scanned.
 - **Don't also set `NTFY_TOPIC` in Streamlit,** or you'll get duplicate pushes when you sweep from the app.
 - **GitHub pauses scheduled jobs after 60 days with no repo activity.** Re-enable it from the Actions tab.
 
-Telegram works the same way: set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` instead of (or as well as) `NTFY_TOPIC`.
+**Telegram:** set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` instead of (or as well as) `NTFY_TOPIC`. Set-up, the manual check and test-send modes, and how to read a run's summary are in [docs/TELEGRAM_ALERTS.md](docs/TELEGRAM_ALERTS.md).
 
 ### 2. Dashboard on your phone (Streamlit Community Cloud)
 1. Sign in at **share.streamlit.io** with GitHub. Click **Create app** and pick this repo, the branch, and `dashboard.py`.

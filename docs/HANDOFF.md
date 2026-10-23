@@ -2,7 +2,7 @@
 
 This summarises the whole project so far, for picking it up in a new conversation. It describes the state as of
 commit `b232d30` on branch `claude/stock-dashboard-alerts-rr9r83` (also the repo's default branch): 28 commits,
-about 8,000 lines of Python, 284 passing tests. The README has the user-facing setup guide; this file covers what's
+about 8,000 lines of Python, 308 passing tests. The README has the user-facing setup guide; this file covers what's
 built, why, and what to watch out for.
 
 ## 1. What it is
@@ -84,9 +84,9 @@ against each other. On top of that, every stock gets a plain-English briefing an
     - **Session:** decided by the New York clock, not Yahoo's `marketState`, which lags.
     - **On the cards:** PRE / AH, or "AH (last night)", outside regular hours; LIVE with the time during regular hours.
 15. **Notifications.**
-    - **Channel:** ntfy pushes (and optionally Telegram or email).
+    - **Channel:** Telegram (the owner's choice), or ntfy or email.
     - **Schedule:** a GitHub Actions job every 15 minutes from 4am to 8pm New York, plus a daily S&P scan push at 12:50 UTC.
-    - **Skipped:** the job does nothing until `NTFY_TOPIC` or Telegram is set.
+    - **Runner:** `stockwatch/ci_scan.py` (Issue #21). The scan always runs; the run summary gives counts and statuses only (public log) and goes red for a missing or example portfolio, a failed scan, half-set Telegram secrets, a failed send, or alerts with no channel. Manual runs default to a dry run. See `docs/TELEGRAM_ALERTS.md`.
 16. **Ticker list from a Google Sheet.**
     - **Source:** the "StockWatch Holdings" sheet in the owner's Drive, link-shared as Viewer. Columns: Ticker, Tier, Shares, Avg cost, Target price, Notes.
     - **Readers:** both the app and the GitHub job read it.
@@ -139,7 +139,8 @@ against each other. On top of that, every stock gets a plain-English briefing an
 | `stockwatch/live.py` | background tracker, sweep and market-scan locks |
 | `stockwatch/scanner.py` | `run_once`, `refresh_quotes`, CLI (`python -m stockwatch.scanner [--once] [--demo]`) |
 | `stockwatch/store.py` | SQLite: snapshots, alerts (deduplicated by ticker+code within a cooldown), ticker overrides, market scans, watermark |
-| `stockwatch/notify.py` | console / ntfy / Telegram / email |
+| `stockwatch/notify.py` | console / ntfy / Telegram / email; returns each channel's outcome, never echoes credentials |
+| `stockwatch/ci_scan.py` | the scheduled holdings scan's runner: portfolio source checks, dry run, Telegram check and test send, privacy-safe run summary (`docs/TELEGRAM_ALERTS.md`) |
 | `stockwatch/finnhub.py` | Finnhub fallback client (paced under 60 requests a minute) |
 | `stockwatch/sec_audit.py` | read-only SEC financial-data audit (valuation Phase 1, `docs/SEC_DATA_AUDIT.md`); not imported by the app |
 | `stockwatch/sec_quality.py` | read-only SEC data-quality checks: selection provenance, revisions, stale and conflicting figures, checks against the filing (Phase 1B, `docs/SEC_DATA_QUALITY.md`); reached by the app only through `research_lab` |
@@ -155,7 +156,7 @@ against each other. On top of that, every stock gets a plain-English briefing an
 | `stockwatch/ui.py` | all CSS and HTML builders (cards, panels, tables, ladders) |
 | `.github/workflows/scan.yml` | scheduled scan and push job, plus the daily S&P job |
 | `.github/workflows/sec-audit.yml` | manual-only job that runs the SEC data audit on example tickers |
-| `tests/test_stockwatch.py`, `tests/test_valuation_scenarios.py`, `tests/test_chart_patterns.py`, `tests/test_research_lab.py`, `tests/test_valuation_evidence.py`, `tests/test_sec_access.py`, `tests/test_msft_dossier.py`, `tests/test_cash_conversion.py`, `tests/test_valuation_readiness.py` | 284 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses, isolated research and the Research view's boundaries |
+| `tests/test_stockwatch.py`, `tests/test_valuation_scenarios.py`, `tests/test_chart_patterns.py`, `tests/test_research_lab.py`, `tests/test_valuation_evidence.py`, `tests/test_sec_access.py`, `tests/test_msft_dossier.py`, `tests/test_cash_conversion.py`, `tests/test_valuation_readiness.py`, `tests/test_ci_scan.py` | 308 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses, isolated research, the Research view's boundaries and the scheduled scan with a fake Telegram |
 
 **Data flow:** the provider fetches (cached), `engine.evaluate` builds an `Evaluation` (scores, signals, research,
 plan), `store.save_snapshot` writes JSON to SQLite, and the dashboard reads only the store. Alerts of severity 2 or
@@ -194,7 +195,7 @@ back empty are cached until their TTL runs out, so **reboot the app after adding
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                                   # 284 tests, no network needed
+python -m pytest -q                                   # 308 tests, no network needed
 STOCKWATCH_DEMO=1 streamlit run dashboard.py          # offline UI with synthetic data
 python -m stockwatch.scanner --once --demo            # one sweep from the CLI
 python -m stockwatch.market --demo                    # S&P scan from the CLI
