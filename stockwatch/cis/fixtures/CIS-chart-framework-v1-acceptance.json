@@ -1,0 +1,1214 @@
+{
+  "fixture_version": "1.0",
+  "recorded_date": "2026-10-23",
+  "scope": "Functional fixtures from dated analyst levels, not automated level-selection validation or trade recommendations. Synthetic cases are explicitly marked test vectors.",
+  "packets": [
+    {
+      "contract_version": "1.0",
+      "method_id": "independent_chart_judgment_v1",
+      "packet_id": "ISRG-2026-10-22-v1",
+      "symbol": "ISRG",
+      "currency": "USD",
+      "timeframe": "daily",
+      "level_selection": "analyst_selected",
+      "review_status": "user_accepted_in_chat",
+      "action_mode": "explain_only",
+      "as_of_completed_session": "2026-10-22",
+      "completed_close": 443.8500061035156,
+      "quote": {
+        "price": 454.6700134277344,
+        "observed_at_utc": "2026-10-23T15:09:08+00:00",
+        "session": "regular",
+        "is_partial": true
+      },
+      "session_range": {
+        "low": 442.55999755859375,
+        "high": 454.8299865722656,
+        "is_partial": true
+      },
+      "downside": {
+        "zone": {
+          "low": 436,
+          "high": 440
+        },
+        "warning": 436,
+        "failure": 424,
+        "major_damage": 398.99,
+        "anchor_evidence": [
+          {
+            "role": "floor",
+            "session_date": "2026-10-22",
+            "field": "SMA200",
+            "value": 436.9118493652344,
+            "source_file": "ISRG-adjusted-daily.csv",
+            "reason": "Reclaimed long average; confluence, not an exact order price."
+          },
+          {
+            "role": "floor",
+            "session_date": "2026-10-20",
+            "field": "High",
+            "value": 440.3999938964844,
+            "source_file": "ISRG-adjusted-daily.csv",
+            "reason": "Nearby recovered price region."
+          },
+          {
+            "role": "failure",
+            "session_date": "2026-10-22",
+            "field": "Low",
+            "value": 427.4700012207031,
+            "source_file": "ISRG-adjusted-daily.csv",
+            "reason": "424 is analyst protection below this local low, not equal to the observed low."
+          },
+          {
+            "role": "major_damage",
+            "session_date": "2026-10-21",
+            "field": "Low",
+            "value": 398.989990234375,
+            "source_file": "ISRG-adjusted-daily.csv",
+            "reason": "Gap-reversal structural low."
+          }
+        ]
+      },
+      "upside": {
+        "ceilings": [
+          {
+            "id": "ceiling-1",
+            "zone": {
+              "low": 462,
+              "high": 463
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-05-07",
+                "field": "High",
+                "value": 462.3999938964844,
+                "source_file": "ISRG-adjusted-daily.csv",
+                "reason": "Actual dated price reference; broad band is analyst-selected."
+              }
+            ]
+          },
+          {
+            "id": "ceiling-2",
+            "zone": {
+              "low": 471,
+              "high": 473
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-04-08",
+                "field": "High",
+                "value": 471.9800109863281,
+                "source_file": "ISRG-adjusted-daily.csv",
+                "reason": "Actual dated price reference; broad band is analyst-selected."
+              }
+            ]
+          },
+          {
+            "id": "ceiling-3",
+            "zone": {
+              "low": 489,
+              "high": 492
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-03-23",
+                "field": "High",
+                "value": 489.0,
+                "source_file": "ISRG-adjusted-daily.csv",
+                "reason": "Actual dated price reference; broad band is analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-04-22",
+                "field": "High",
+                "value": 491.1499938964844,
+                "source_file": "ISRG-adjusted-daily.csv",
+                "reason": "Actual dated price reference; broad band is analyst-selected."
+              }
+            ]
+          }
+        ]
+      },
+      "scenarios": {
+        "method": "subjective_not_calibrated",
+        "horizon_trading_sessions": 20,
+        "anchor": 443.8500061035156,
+        "neutral_band": 13.019117775432038,
+        "lower": 430.8308883280836,
+        "upper": 456.8691238789477,
+        "weights_pct": {
+          "up": 40,
+          "sideways": 35,
+          "down": 25
+        },
+        "confidence": "low"
+      },
+      "provenance": {
+        "raw_source_file": "ISRG-vendor-source.json",
+        "evidence_file": "ISRG-scanner-audit.json",
+        "level_rationale": "Ceiling bands rounded outward around earlier independent actual anchors; no automatic selection claimed.",
+        "calendar_verified": false,
+        "raw_sha256": "c801a5649817f4f53084e33825ac71a55513b493f4e9db08c971b83298b99aec"
+      },
+      "expected": {
+        "confirmed_state": "above_floor",
+        "quote_state": "above_floor",
+        "session_extreme_breaches": [
+          {
+            "threshold": "warning",
+            "level": 436,
+            "crossed_below": false,
+            "quote_recovered_at_or_above": true
+          },
+          {
+            "threshold": "failure",
+            "level": 424,
+            "crossed_below": false,
+            "quote_recovered_at_or_above": true
+          },
+          {
+            "threshold": "major_damage",
+            "level": 398.99,
+            "crossed_below": false,
+            "quote_recovered_at_or_above": true
+          }
+        ]
+      }
+    },
+    {
+      "contract_version": "1.0",
+      "method_id": "independent_chart_judgment_v1",
+      "packet_id": "FICO-2026-10-22-v1",
+      "symbol": "FICO",
+      "currency": "USD",
+      "timeframe": "daily",
+      "level_selection": "analyst_selected",
+      "review_status": "user_accepted_in_chat",
+      "action_mode": "explain_only",
+      "as_of_completed_session": "2026-10-22",
+      "completed_close": 823.27001953125,
+      "quote": {
+        "price": 813.530029296875,
+        "observed_at_utc": "2026-10-23T15:46:14+00:00",
+        "session": "regular",
+        "is_partial": true
+      },
+      "session_range": {
+        "low": 805.1400146484375,
+        "high": 828.6199951171875,
+        "is_partial": true
+      },
+      "downside": {
+        "zone": {
+          "low": 780,
+          "high": 790
+        },
+        "warning": 780,
+        "failure": 750,
+        "major_damage": 660,
+        "anchor_evidence": [
+          {
+            "role": "floor",
+            "session_date": "2026-10-16",
+            "field": "High",
+            "value": 785.6400146484375,
+            "source_file": "FICO-20261023-adjusted.csv",
+            "reason": "Recent broken resistance, candidate support."
+          },
+          {
+            "role": "floor",
+            "session_date": "2026-10-20",
+            "field": "Low",
+            "value": 786.75,
+            "source_file": "FICO-20261023-adjusted.csv",
+            "reason": "Later higher session low."
+          },
+          {
+            "role": "failure",
+            "session_date": "2026-10-16",
+            "field": "Low",
+            "value": 755.0,
+            "source_file": "FICO-20261023-adjusted.csv",
+            "reason": "750 is selected below the observed 755 low."
+          },
+          {
+            "role": "major_damage",
+            "session_date": "2026-10-09",
+            "field": "Low",
+            "value": 663.1199951171875,
+            "source_file": "FICO-20261023-adjusted.csv",
+            "reason": "660 is selected just below deeper October support."
+          }
+        ]
+      },
+      "upside": {
+        "ceilings": [
+          {
+            "id": "ceiling-1",
+            "zone": {
+              "low": 832,
+              "high": 855
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-09-28",
+                "field": "Low",
+                "value": 832.0,
+                "source_file": "FICO-20261023-adjusted.csv",
+                "reason": "Actual dated price reference; broad band is analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-09-28",
+                "field": "High",
+                "value": 853.5499877929688,
+                "source_file": "FICO-20261023-adjusted.csv",
+                "reason": "Actual dated price reference; broad band is analyst-selected."
+              }
+            ]
+          },
+          {
+            "id": "ceiling-2",
+            "zone": {
+              "low": 885,
+              "high": 900
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-09-04",
+                "field": "Low",
+                "value": 885.0,
+                "source_file": "FICO-20261023-adjusted.csv",
+                "reason": "Actual dated price reference; broad band is analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-09-08",
+                "field": "Low",
+                "value": 899.0,
+                "source_file": "FICO-20261023-adjusted.csv",
+                "reason": "Actual dated price reference; broad band is analyst-selected."
+              }
+            ]
+          },
+          {
+            "id": "ceiling-3",
+            "zone": {
+              "low": 918,
+              "high": 933
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-10-22",
+                "field": "SMA50",
+                "value": 918.1418017578125,
+                "source_file": "FICO-20261023-adjusted.csv",
+                "reason": "Actual dated price reference; broad band is analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-09-04",
+                "field": "Close",
+                "value": 932.260009765625,
+                "source_file": "FICO-20261023-adjusted.csv",
+                "reason": "Actual dated price reference; broad band is analyst-selected."
+              }
+            ]
+          }
+        ]
+      },
+      "scenarios": {
+        "method": "subjective_not_calibrated",
+        "horizon_trading_sessions": 20,
+        "anchor": 823.27001953125,
+        "neutral_band": 44.426096987067446,
+        "lower": 778.8439225441825,
+        "upper": 867.6961165183175,
+        "weights_pct": {
+          "up": 25,
+          "sideways": 30,
+          "down": 45
+        },
+        "confidence": "low"
+      },
+      "provenance": {
+        "raw_source_file": "FICO-20261023-source.json",
+        "evidence_file": "FICO-independent-evidence.json",
+        "level_rationale": "Local rebound health is distinct from a bearish longer trend.",
+        "calendar_verified": false,
+        "raw_sha256": "8b3cc2189c8f08d0c0ab3198c1f3cf7855c5e4a6930f883ee680300662c720a8"
+      },
+      "expected": {
+        "confirmed_state": "above_floor",
+        "quote_state": "above_floor",
+        "session_extreme_breaches": [
+          {
+            "threshold": "warning",
+            "level": 780,
+            "crossed_below": false,
+            "quote_recovered_at_or_above": true
+          },
+          {
+            "threshold": "failure",
+            "level": 750,
+            "crossed_below": false,
+            "quote_recovered_at_or_above": true
+          },
+          {
+            "threshold": "major_damage",
+            "level": 660,
+            "crossed_below": false,
+            "quote_recovered_at_or_above": true
+          }
+        ]
+      }
+    },
+    {
+      "contract_version": "1.0",
+      "method_id": "independent_chart_judgment_v1",
+      "packet_id": "CRDO-2026-10-22-v1",
+      "symbol": "CRDO",
+      "currency": "USD",
+      "timeframe": "daily",
+      "level_selection": "analyst_selected",
+      "review_status": "user_accepted_in_chat",
+      "action_mode": "explain_only",
+      "as_of_completed_session": "2026-10-22",
+      "completed_close": 162.77000427246094,
+      "quote": {
+        "price": 153.00999450683594,
+        "observed_at_utc": "2026-10-23T15:57:51+00:00",
+        "session": "regular",
+        "is_partial": true
+      },
+      "session_range": {
+        "low": 142.88999938964844,
+        "high": 155.7899932861328,
+        "is_partial": true
+      },
+      "downside": {
+        "zone": {
+          "low": 180,
+          "high": 185
+        },
+        "warning": 180,
+        "failure": 160,
+        "major_damage": 149,
+        "anchor_evidence": [
+          {
+            "role": "floor",
+            "session_date": "2026-10-22",
+            "field": "SMA200",
+            "value": 180.82720024108886,
+            "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+            "reason": "Lost reclaim region."
+          },
+          {
+            "role": "floor",
+            "session_date": "2026-10-21",
+            "field": "Open",
+            "value": 184.08999633789065,
+            "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+            "reason": "Recent failed-reclaim price region."
+          },
+          {
+            "role": "failure",
+            "session_date": "2026-10-20",
+            "field": "Low",
+            "value": 161.0,
+            "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+            "reason": "160 is selected below 161 support."
+          },
+          {
+            "role": "major_damage",
+            "session_date": "2026-09-14",
+            "field": "Low",
+            "value": 149.13999938964844,
+            "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+            "reason": "149 is the rounded September-base damage threshold."
+          }
+        ]
+      },
+      "upside": {
+        "ceilings": [
+          {
+            "id": "ceiling-1",
+            "zone": {
+              "low": 160,
+              "high": 165
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-09-10",
+                "field": "Low",
+                "value": 159.1999969482422,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-09-16",
+                "field": "High",
+                "value": 164.5500030517578,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-10-20",
+                "field": "Low",
+                "value": 161.0,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-10-22",
+                "field": "Low",
+                "value": 161.25999450683594,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              }
+            ]
+          },
+          {
+            "id": "ceiling-2",
+            "zone": {
+              "low": 180,
+              "high": 185
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-10-19",
+                "field": "High",
+                "value": 181.13999938964844,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-10-21",
+                "field": "Low",
+                "value": 178.58999633789062,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-10-21",
+                "field": "Open",
+                "value": 184.08999633789065,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-10-21",
+                "field": "Close",
+                "value": 182.27999877929688,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              }
+            ]
+          },
+          {
+            "id": "ceiling-3",
+            "zone": {
+              "low": 195,
+              "high": 200
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-09-24",
+                "field": "High",
+                "value": 196.4250030517578,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-09-29",
+                "field": "High",
+                "value": 199.3800048828125,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-10-12",
+                "field": "Close",
+                "value": 200.83999633789065,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-10-13",
+                "field": "High",
+                "value": 199.86399841308597,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              }
+            ]
+          },
+          {
+            "id": "ceiling-4",
+            "zone": {
+              "low": 214,
+              "high": 215
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-09-25",
+                "field": "High",
+                "value": 214.8699951171875,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              }
+            ]
+          },
+          {
+            "id": "ceiling-5",
+            "zone": {
+              "low": 231,
+              "high": 232
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-10-02",
+                "field": "High",
+                "value": 231.58999633789065,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              }
+            ]
+          },
+          {
+            "id": "ceiling-6",
+            "zone": {
+              "low": 245,
+              "high": 250
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-06-02",
+                "field": "High",
+                "value": 245.9499969482422,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-08-07",
+                "field": "High",
+                "value": 250.0,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              }
+            ]
+          },
+          {
+            "id": "ceiling-7",
+            "zone": {
+              "low": 270,
+              "high": 287
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-06-12",
+                "field": "High",
+                "value": 270.2120056152344,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-08-17",
+                "field": "High",
+                "value": 286.239990234375,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              }
+            ]
+          },
+          {
+            "id": "ceiling-8",
+            "zone": {
+              "low": 308,
+              "high": 309
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-06-22",
+                "field": "High",
+                "value": 308.6700134277344,
+                "source_file": "CRDO-CRDO-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              }
+            ]
+          }
+        ]
+      },
+      "scenarios": {
+        "method": "subjective_not_calibrated",
+        "horizon_trading_sessions": 20,
+        "anchor": 162.77000427246094,
+        "neutral_band": 15.419538806937625,
+        "lower": 147.3504654655233,
+        "upper": 178.18954307939856,
+        "weights_pct": {
+          "up": 20,
+          "sideways": 30,
+          "down": 50
+        },
+        "confidence": "low"
+      },
+      "provenance": {
+        "raw_source_file": "CRDO-CRDO-20261023-source.json",
+        "evidence_file": "CRDO-independent-evidence.json",
+        "level_rationale": "Last close confirms warning; live quote and session wick give different provisional facts.",
+        "calendar_verified": false,
+        "raw_sha256": "ae988ca15878ce1253883aa9fc6e3646db3528e319b501ca482575f56a03f144"
+      },
+      "expected": {
+        "confirmed_state": "warning",
+        "quote_state": "failure",
+        "session_extreme_breaches": [
+          {
+            "threshold": "warning",
+            "level": 180,
+            "crossed_below": true,
+            "quote_recovered_at_or_above": false
+          },
+          {
+            "threshold": "failure",
+            "level": 160,
+            "crossed_below": true,
+            "quote_recovered_at_or_above": false
+          },
+          {
+            "threshold": "major_damage",
+            "level": 149,
+            "crossed_below": true,
+            "quote_recovered_at_or_above": true
+          }
+        ]
+      }
+    },
+    {
+      "contract_version": "1.0",
+      "method_id": "independent_chart_judgment_v1",
+      "packet_id": "PODD-2026-10-22-v1",
+      "symbol": "PODD",
+      "currency": "USD",
+      "timeframe": "daily",
+      "level_selection": "analyst_selected",
+      "review_status": "analyst_proposed",
+      "action_mode": "explain_only",
+      "as_of_completed_session": "2026-10-22",
+      "completed_close": 148.1199951171875,
+      "quote": {
+        "price": 148.50999450683594,
+        "observed_at_utc": "2026-10-23T16:22:12+00:00",
+        "session": "regular",
+        "is_partial": true
+      },
+      "session_range": {
+        "low": 145.0,
+        "high": 148.92999267578125,
+        "is_partial": true
+      },
+      "downside": {
+        "zone": {
+          "low": 140,
+          "high": 142
+        },
+        "warning": 140,
+        "failure": 133,
+        "major_damage": 126,
+        "anchor_evidence": [
+          {
+            "role": "floor",
+            "session_date": "2026-10-19",
+            "field": "Low",
+            "value": 139.4600067138672,
+            "source_file": "PODD-PODD-20261023-adjusted.csv",
+            "reason": "Recent defended-low region; 140 is a rounded warning convention."
+          },
+          {
+            "role": "floor",
+            "session_date": "2026-10-21",
+            "field": "Low",
+            "value": 140.80999755859375,
+            "source_file": "PODD-PODD-20261023-adjusted.csv",
+            "reason": "Recent buyer defense within the zone."
+          },
+          {
+            "role": "failure",
+            "session_date": "2026-10-14",
+            "field": "Low",
+            "value": 133.5800018310547,
+            "source_file": "PODD-PODD-20261023-adjusted.csv",
+            "reason": "133 is selected below this swing low."
+          },
+          {
+            "role": "major_damage",
+            "session_date": "2026-08-05",
+            "field": "Low",
+            "value": 126.4000015258789,
+            "source_file": "PODD-PODD-20261023-adjusted.csv",
+            "reason": "126 is selected below the wider base."
+          }
+        ]
+      },
+      "upside": {
+        "ceilings": [
+          {
+            "id": "ceiling-1",
+            "zone": {
+              "low": 150,
+              "high": 152
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-09-02",
+                "field": "High",
+                "value": 151.5,
+                "source_file": "PODD-PODD-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              }
+            ]
+          },
+          {
+            "id": "ceiling-2",
+            "zone": {
+              "low": 155,
+              "high": 159
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-08-19",
+                "field": "High",
+                "value": 155.1699981689453,
+                "source_file": "PODD-PODD-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-05-19",
+                "field": "High",
+                "value": 158.32000732421875,
+                "source_file": "PODD-PODD-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              }
+            ]
+          },
+          {
+            "id": "ceiling-3",
+            "zone": {
+              "low": 161,
+              "high": 165
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-06-10",
+                "field": "High",
+                "value": 161.35000610351562,
+                "source_file": "PODD-PODD-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-07-02",
+                "field": "Close",
+                "value": 164.47999572753906,
+                "source_file": "PODD-PODD-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              }
+            ]
+          },
+          {
+            "id": "ceiling-4",
+            "zone": {
+              "low": 169,
+              "high": 173
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-07-16",
+                "field": "High",
+                "value": 169.85000610351562,
+                "source_file": "PODD-PODD-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-07-28",
+                "field": "High",
+                "value": 172.9199981689453,
+                "source_file": "PODD-PODD-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              }
+            ]
+          },
+          {
+            "id": "ceiling-5",
+            "zone": {
+              "low": 181,
+              "high": 184
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-10-22",
+                "field": "SMA200",
+                "value": 182.90590042114258,
+                "source_file": "PODD-PODD-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              }
+            ]
+          },
+          {
+            "id": "ceiling-6",
+            "zone": {
+              "low": 194,
+              "high": 206
+            },
+            "current_quote_location": "below",
+            "confirmation": "pending",
+            "anchor_evidence": [
+              {
+                "role": "ceiling",
+                "session_date": "2026-04-13",
+                "field": "Low",
+                "value": 194.6100006103516,
+                "source_file": "PODD-PODD-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              },
+              {
+                "role": "ceiling",
+                "session_date": "2026-04-17",
+                "field": "High",
+                "value": 205.9499969482422,
+                "source_file": "PODD-PODD-20261023-adjusted.csv",
+                "reason": "Actual dated ceiling reference; zone boundaries are analyst-selected."
+              }
+            ]
+          }
+        ]
+      },
+      "scenarios": {
+        "method": "subjective_not_calibrated",
+        "horizon_trading_sessions": 20,
+        "anchor": 148.1199951171875,
+        "neutral_band": 4.57012809840864,
+        "lower": 143.54986701877885,
+        "upper": 152.69012321559615,
+        "weights_pct": {
+          "up": 35,
+          "sideways": 35,
+          "down": 30
+        },
+        "confidence": "low"
+      },
+      "provenance": {
+        "raw_source_file": "PODD-PODD-20261023-source.json",
+        "evidence_file": "PODD-independent-evidence.json",
+        "level_rationale": "New final test; precise levels have not yet received a separate user acceptance.",
+        "calendar_verified": false,
+        "raw_sha256": "d99c4ba0d651f8735833094fb9678685e2827182330ddac8ce8069dd444fa659"
+      },
+      "expected": {
+        "confirmed_state": "above_floor",
+        "quote_state": "above_floor",
+        "session_extreme_breaches": [
+          {
+            "threshold": "warning",
+            "level": 140,
+            "crossed_below": false,
+            "quote_recovered_at_or_above": true
+          },
+          {
+            "threshold": "failure",
+            "level": 133,
+            "crossed_below": false,
+            "quote_recovered_at_or_above": true
+          },
+          {
+            "threshold": "major_damage",
+            "level": 126,
+            "crossed_below": false,
+            "quote_recovered_at_or_above": true
+          }
+        ]
+      },
+      "verified_event": {
+        "type": "earnings",
+        "date": "2026-11-04",
+        "session": "before_open",
+        "announced": "2026-10-01",
+        "source": "https://investors.insulet.com/news/news-details/2026/Insulet-to-Announce-Third-Quarter-2026-Financial-Results-on-November-4-2026/default.aspx"
+      }
+    }
+  ],
+  "synthetic_downside_vectors": [
+    {
+      "id": "podd-floor-high-equality",
+      "symbol": "PODD",
+      "price": 142,
+      "expected": "above_floor"
+    },
+    {
+      "id": "podd-floor-low-equality",
+      "symbol": "PODD",
+      "price": 140,
+      "expected": "testing_floor"
+    },
+    {
+      "id": "podd-floor-warning",
+      "symbol": "PODD",
+      "price": 139.99,
+      "expected": "warning"
+    },
+    {
+      "id": "podd-failure-equality",
+      "symbol": "PODD",
+      "price": 133,
+      "expected": "warning"
+    },
+    {
+      "id": "podd-failure-confirmed",
+      "symbol": "PODD",
+      "price": 132.99,
+      "expected": "failure"
+    },
+    {
+      "id": "podd-major-equality",
+      "symbol": "PODD",
+      "price": 126,
+      "expected": "failure"
+    },
+    {
+      "id": "podd-major-confirmed",
+      "symbol": "PODD",
+      "price": 125.99,
+      "expected": "major_damage"
+    },
+    {
+      "id": "podd-gap-skips-stages",
+      "symbol": "PODD",
+      "price": 120,
+      "expected": "major_damage"
+    },
+    {
+      "id": "isrg-small-move-a",
+      "symbol": "ISRG",
+      "price": 454.65,
+      "expected": "above_floor",
+      "packet_must_not_mutate": true
+    },
+    {
+      "id": "isrg-small-move-b",
+      "symbol": "ISRG",
+      "price": 454.67,
+      "expected": "above_floor",
+      "packet_must_not_mutate": true
+    }
+  ],
+  "synthetic_upside_vectors": [
+    {
+      "id": "wick-is-not-confirmation",
+      "zone": {
+        "low": 150,
+        "high": 152
+      },
+      "bars": [
+        {
+          "session": "synthetic-1",
+          "high": 153,
+          "low": 149,
+          "close": 151,
+          "completed": false
+        }
+      ],
+      "expected": "testing",
+      "expected_retest_confirmed": false
+    },
+    {
+      "id": "closing-clearance-only",
+      "zone": {
+        "low": 150,
+        "high": 152
+      },
+      "bars": [
+        {
+          "session": "synthetic-1",
+          "high": 154,
+          "low": 151,
+          "close": 153,
+          "completed": true
+        }
+      ],
+      "expected": "close_above",
+      "expected_retest_confirmed": false
+    },
+    {
+      "id": "later-retest-defense",
+      "zone": {
+        "low": 150,
+        "high": 152
+      },
+      "bars": [
+        {
+          "session": "synthetic-1",
+          "high": 154,
+          "low": 151,
+          "close": 153,
+          "completed": true
+        },
+        {
+          "session": "synthetic-2",
+          "high": 154,
+          "low": 151,
+          "close": 153,
+          "completed": true
+        }
+      ],
+      "expected": "retest_defended",
+      "expected_retest_confirmed": true
+    },
+    {
+      "id": "breakout-rejection",
+      "zone": {
+        "low": 150,
+        "high": 152
+      },
+      "bars": [
+        {
+          "session": "synthetic-1",
+          "high": 154,
+          "low": 151,
+          "close": 153,
+          "completed": true
+        },
+        {
+          "session": "synthetic-2",
+          "high": 152,
+          "low": 148,
+          "close": 149,
+          "completed": true
+        }
+      ],
+      "expected": "failed_breakout",
+      "expected_retest_confirmed": false
+    },
+    {
+      "id": "inside-after-breakout-unresolved",
+      "zone": {
+        "low": 150,
+        "high": 152
+      },
+      "bars": [
+        {
+          "session": "synthetic-1",
+          "high": 154,
+          "low": 151,
+          "close": 153,
+          "completed": true
+        },
+        {
+          "session": "synthetic-2",
+          "high": 153,
+          "low": 150,
+          "close": 151,
+          "completed": true
+        }
+      ],
+      "expected": "testing",
+      "expected_retest_confirmed": false
+    },
+    {
+      "id": "upper-equality-is-not-close-above",
+      "zone": {
+        "low": 150,
+        "high": 152
+      },
+      "bars": [
+        {
+          "session": "synthetic-1",
+          "high": 153,
+          "low": 150,
+          "close": 152,
+          "completed": true
+        }
+      ],
+      "expected": "testing",
+      "expected_retest_confirmed": false
+    }
+  ],
+  "required_invariants": [
+    "Quote updates cannot mutate a level packet.",
+    "Future rows cannot change past indicators or signal selection.",
+    "An intraday wick cannot become a confirmed daily breach.",
+    "Scenario percentages cannot be derived from condition scores.",
+    "Do not turn a deeper damage support into a new constructive floor.",
+    "Unobserved future outcomes are null, not zero.",
+    "No orders or notifications in explain_only mode."
+  ]
+}

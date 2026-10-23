@@ -1,0 +1,11 @@
+CIS handoff verification — 23 October 2026
+
+PASS: 4 frozen reference packets, level order, source/evidence references, raw SHA-256 hashes, dated level anchors, confirmed/provisional states and session-extreme distinctions.
+PASS: 10 synthetic downside cases, including exact equality, skipped gap stages and no level mutation across the ISRG small-price-change regression.
+PASS: 6 synthetic upside cases: wick, initial close, later retest, rejection, unresolved return inside zone and equality at the ceiling edge.
+PASS: 12 PODD historical endpoint-return recalculations, interim excursions, non-overlapping outcome windows, complete sample totals and completed-session boundary.
+PASS: scenario totals, 5-point increments, completed-close anchors and ATR bands; verified PODD event is recorded.
+PASS: schema JSON parses; required/top-level packet keys checked. A full JSON Schema validator was unavailable, so full Draft 2020-12 validation is not claimed.
+PASS: PODD JavaScript syntax and fragment IDs/control targets checked separately.
+
+Limits: These checks use a local reference evaluator to verify specification fixtures, not a production implementation. Browser/mobile visual QA, full repository test suite, automatic level-selection reproduction, out-of-sample strategy validation and deployment were not performed. Synthetic fixtures are not real trades.
