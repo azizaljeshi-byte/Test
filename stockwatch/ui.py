@@ -619,7 +619,8 @@ def row(snap: dict, was: str | None = None) -> str:
             f'<div class="mc-row"><div class="id"><b class="k"></b><span class="mc-tk">{escape(snap["ticker"])}</span>'
             f'<span class="nm">{escape(name)}</span></div></div>'
             f'<div class="px">{num(price_now)}{day_html}</div><div class="why">{why_html}</div>'
-            + (f'<div class="pl"><b>{"IF IT FAILS" if wait else "PLAN"}</b>{escape(plan)}</div>' if plan else "") + '</div></a>')
+            + (f'<div class="pl"><b>{"IF IT FAILS" if wait else "PLAN"}</b>{escape(plan)}</div>' if plan else "")
+            + (f'<div class="pl"><b>LEVELS</b>{escape(levels_line(snap))}</div>' if levels_line(snap) else "") + '</div></a>')
 
 
 STATUS_STYLE = {"record_high": (OPP, "★"), "strong_uptrend": (OPP, "↗"), "pullback": (INFO, "↘"),
@@ -642,6 +643,32 @@ def status_chip(snap: dict) -> str:
     return f'<span class="mc-chip" style="--c:{color}"><b>{glyph}</b> {escape(ps.get("label") or ps["code"])}</span>'
 
 
+def levels_line(snap: dict) -> str:
+    """The numbers behind the status, short enough for a phone row: 'S 98.00 · deeper 90.00 · R 101.50'.
+    Empty when the support levels couldn't be placed (Details says why)."""
+    ps = price_status(snap)
+    lv = (ps or {}).get("levels") or {}
+    if not ps or not ps.get("floor_known") or "support_low" not in lv:
+        return ""
+    bits = [f'S {lv["support_low"]:.2f}', f'deeper {lv["deep_below"]:.2f}']
+    if "resist_low" in lv:
+        bits.append(f'R {lv["resist_low"]:.2f}')
+    return " · ".join(bits)
+
+
+def second_note(ps: dict | None) -> str:
+    """One line on another source's technical read, or nothing when there is none."""
+    sec = (ps or {}).get("second")
+    if not sec:
+        return ""
+    mix = [f'{sec[k]} {k}' for k in ("sell", "neutral", "buy") if isinstance(sec.get(k), int)]
+    head = f'{sec["source"]}: ' + (f'{sec["signal"].upper()}' + (f' ({", ".join(mix)})' if mix else "") if sec.get("signal") else "no signal")
+    if sec.get("verdict"):
+        head += f' · {sec["verdict"]}'
+    lv = [f'{n} {sec[k]:.2f}' for n, k in (("support", "support"), ("resistance", "resistance")) if sec.get(k)]
+    return head + (" · its " + ", ".join(lv) if lv else "") + ". A second opinion only; it changes no call."
+
+
 def status_note(snap: dict) -> str:
     """The Details page's statement: where the price stands, what to do, and the levels behind it."""
     ps = price_status(snap)
@@ -658,8 +685,13 @@ def status_note(snap: dict) -> str:
     if ps.get("floor_known") and lv:
         parts.append(f'<div style="font-size:.76rem;margin-top:.35rem;color:{MUTED}">'
                      f'Support {lv["support_low"]:.2f} to {lv["support_high"]:.2f} · exit below {lv["exit_below"]:.2f} · '
-                     f'deeper level {lv["deep_below"]:.2f} · high {lv["high"]:.2f} · {lv["years_of_data"]:g}y of data · '
+                     f'deeper level {lv["deep_below"]:.2f} · '
+                     + (f'resistance {lv["resist_low"]:.2f} to {lv["resist_high"]:.2f} · ' if "resist_low" in lv else "")
+                     + f'high {lv["high"]:.2f} · {lv["years_of_data"]:g}y of data · '
                      f'as of {escape(str(lv["as_of"]))} close. Automatic levels, not reviewed.</div>')
+    second = second_note(ps)
+    if second:
+        parts.append(f'<div style="font-size:.78rem;margin-top:.3rem;color:var(--ink)">{escape(second)}</div>')
     return f'<div class="mc-ev" style="--c:{color}">{"".join(parts)}</div>'
 
 

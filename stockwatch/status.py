@@ -78,6 +78,37 @@ def blocks_buy(price_status: dict | None) -> bool:
     return isinstance(price_status, dict) and price_status.get("code") in EXIT_CODES
 
 
+BEARISH = ("weakening", "testing_support", "breakdown", "deep_breakdown")
+
+
+def second_opinion(code: str | None, raw: dict | None, close: float | None = None) -> dict | None:
+    """Compare another source's technical read with our status. Display only: it never changes a status, call or
+    alert. `raw` is finnhub.second_opinion(); None or an empty read gives None (the screen says nothing, not a guess).
+    Only a clear signal agrees or disagrees: a neutral or split read is 'mixed'."""
+    if not isinstance(raw, dict) or code not in ORDER:
+        return None
+    sig = str(raw.get("signal") or "").lower()
+    lv = sorted(float(x) for x in raw.get("levels") or [] if isinstance(x, (int, float)) and np.isfinite(x) and x > 0)
+    out = {"source": raw.get("source") or "Finnhub", "signal": sig or None, "buy": raw.get("buy"), "neutral": raw.get("neutral"),
+           "sell": raw.get("sell"), "trending": raw.get("trending"), "support": None, "resistance": None, "agrees": None}
+    if close is not None and np.isfinite(close):
+        below, above = [x for x in lv if x < close], [x for x in lv if x > close]
+        out["support"] = below[-1] if below else None
+        out["resistance"] = above[0] if above else None
+    if sig not in ("buy", "sell", "neutral"):
+        out["verdict"] = None
+        out["agrees"] = None
+        return out if (out["support"] or out["resistance"]) else None
+    bearish = code in BEARISH
+    if sig == "neutral":
+        out["verdict"] = "mixed"
+    elif (sig == "sell") == bearish:
+        out["verdict"], out["agrees"] = "confirms", True
+    else:
+        out["verdict"], out["agrees"] = "disagrees", False
+    return out
+
+
 def rank(code: str | None) -> int | None:
     """Position in ORDER (higher is worse), or None for unknown."""
     return ORDER.index(code) if code in ORDER else None
@@ -158,6 +189,10 @@ def assess(hist, now: datetime | None = None, quote_price: float | None = None, 
                 "major_damage": dn["major_damage"]}
         levels.update(support_low=dn["zone"]["low"], support_high=dn["zone"]["high"], exit_below=dn["warning"],
                       failure=dn["failure"], deep_below=dn["major_damage"])
+        above = [c["zone"] for c in (pk.get("upside") or {}).get("ceilings") or [] if c["zone"]["low"] > close]
+        if above:       # the nearest automatic ceiling over the close: the number to watch on the way up
+            near = min(above, key=lambda z: z["low"])
+            levels.update(resist_low=near["low"], resist_high=near["high"])
 
     why_floor = "" if floor_known else (f" Support levels unavailable ({diag.get('why', 'unknown reason')}), "
                                         "so a breakdown can't be confirmed.")
