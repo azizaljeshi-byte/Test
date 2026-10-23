@@ -45,8 +45,8 @@ Telegram. The CIS decision switch stays off; there is no active mode. Builds on 
      and **squash-merge #32**: the default branch gets one commit whose tree has no vendor files.
   3. **Close #30 as superseded** by #32.
   Purging the feature branches' history needs a force-push, which is the owner's call.
-- The PR #30 screenshots (rendered charts) remain in `docs/cis-screenshots/`; remove them too if you want no
-  chart renderings of vendor data in the repo.
+- The PR #30 screenshots that rendered the reference stocks' charts are removed too. The two left in
+  `docs/cis-screenshots/` show the offline demo's synthetic data only.
 
 ## Candidate levels (workstream A, items 1–2)
 
