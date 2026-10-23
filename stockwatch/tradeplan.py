@@ -11,7 +11,7 @@ import math
 
 import pandas as pd
 
-from . import deepdive
+from . import deepdive, status
 
 NEW_ENTRY = {"BUY NOW", "BUY ON PULLBACK", "BUY THE BREAKOUT", "WAIT FOR CONFIRMATION", "ADD"}
 MIN_RR = 1.5          # reward-to-risk below this isn't worth a new entry
@@ -175,10 +175,35 @@ def size(plan: dict, portfolio_value: float, risk_pct: float, max_position_pct: 
             "budget": budget, "capped": capped}
 
 
+def exit_on_breakdown(plan: dict | None, price_status: dict | None, watchlist: bool) -> dict | None:
+    """The plan follows the call: when a confirmed breakdown makes a held stock a SELL (`status.forces_exit`, off
+    unless EXIT_ON_BREAKDOWN is set), the plan becomes the exit plan, so the list, the card, Details and Telegram
+    never show a sell call over a hold or trim plan. A plan that already says reduce / exit is left alone."""
+    if not plan or plan.get("stance") == "REDUCE / EXIT" or not status.forces_exit(price_status, watchlist):
+        return plan
+    lv, code = price_status["levels"], price_status["code"]
+    if code == "breakdown":
+        first = f"Exit the trade: closed below support ({lv['support_low']:.2f})."
+        second = f"If you keep part of it, sell the rest on a close below the deeper level, {lv['deep_below']:.2f}."
+        short = f"exit · closed below support {lv['support_low']:.2f}"
+    else:
+        first = f"Exit now: closed below the deeper level ({lv['deep_below']:.2f})."
+        second = f"The deeper level ({lv['deep_below']:.2f}) is already broken, so there is no lower line to wait for."
+        short = f"exit now · below the deeper level {lv['deep_below']:.2f}"
+    return {**plan, "stance": "REDUCE / EXIT", "bias": "bearish", "status_exit": short,
+            "exits": [first, second, f"Rebuild only after a close back above the support zone ({lv['support_high']:.2f}) "
+                                     "with the risk signals clear."],
+            "notes": list(plan.get("notes", [])) + ["Automatic support levels, not reviewed: check the chart."],
+            "outlook": f"Support broke: {price_status['why']} That is a risk-control exit whatever the longer-term "
+                       f"picture says. Rebuild only once price recovers above {lv['support_high']:.2f}."}
+
+
 def summary(plan: dict) -> str:
     """One-line plan for cards and notifications."""
     if not plan:
         return ""
+    if plan.get("status_exit"):
+        return plan["status_exit"]
     t1 = plan["targets"][0]["price"]
     if plan["stance"] in ("BUY NOW", "BUY ON PULLBACK", "BUY THE BREAKOUT", "ADD"):
         return (f"{plan['stance'].lower()} {plan['entry_low']:.2f}-{plan['entry_high']:.2f} · stop {plan['stop']:.2f} · "

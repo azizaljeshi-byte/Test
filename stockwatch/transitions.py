@@ -19,6 +19,8 @@ import math
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from . import status
+
 CONFIRM_RUNS = 2
 NY = ZoneInfo("America/New_York")
 
@@ -37,8 +39,13 @@ RISK_VERDICTS = {"RISK - REVIEW", "TRIM / REVIEW", "AVOID"}
 ICON = {"BUY": "🟢", "ADD": "🟢", "DIP": "🟢", "WAIT": "⚪", "HOLD": "🔵", "TRIM": "🟠", "SELL": "🔴", "PASS": "⚫"}
 
 
-def effective_stance(verdict: str, plan: dict | None, watchlist: bool) -> str:
-    """The plan's stance, or the verdict's when there's no plan. Nothing to sell on a watchlist name."""
+def effective_stance(verdict: str, plan: dict | None, watchlist: bool, price_status: dict | None = None) -> str:
+    """The plan's stance, or the verdict's when there's no plan. Nothing to sell on a watchlist name.
+
+    A confirmed breakdown (`status.forces_exit`: a completed close below support, on a held stock) turns the call
+    into REDUCE / EXIT whatever the verdict says, so the app never shows 'hold' under a broken support."""
+    if status.forces_exit(price_status, watchlist):
+        return "REDUCE / EXIT"
     stance = (plan or {}).get("stance") or VERDICT_STANCE.get(verdict, "HOLD" if not watchlist else "WAIT FOR CONFIRMATION")
     if watchlist and stance in ("TRIM", "TRIM / PROTECT", "REDUCE / EXIT", "HOLD"):
         stance = "NO TRADE" if stance != "HOLD" else "WAIT FOR CONFIRMATION"
@@ -59,11 +66,14 @@ def reading(e, stale: bool) -> tuple[dict | None, str]:
         return None, "stale prices"
     if not (e.plan or {}).get("stance"):
         return None, "no trade plan"
-    stance = effective_stance(e.verdict, e.plan, e.watchlist)
+    ps = (e.technical or {}).get("price_status")
+    forced = status.forces_exit(ps, e.watchlist)
+    stance = effective_stance(e.verdict, e.plan, e.watchlist, ps)
     cls = STANCE_CLASS.get(stance)
     if cls is None:
         return None, "unknown stance"
-    if (cls in ("BUY", "ADD") and e.verdict not in BUY_VERDICTS) or (cls in ("TRIM", "SELL") and e.verdict not in RISK_VERDICTS):
+    if (cls in ("BUY", "ADD") and e.verdict not in BUY_VERDICTS) or (
+            cls in ("TRIM", "SELL") and e.verdict not in RISK_VERDICTS and not forced):
         return None, "verdict and plan disagree"
     return {"held": not e.watchlist, "state": cls, "stance": stance, "verdict": e.verdict}, ""
 
@@ -191,6 +201,8 @@ def message(t: dict, e, bar_date: str | None, now: datetime) -> str:
     from . import ui                              # labels and the reassess rule, shared with the dashboard
     label = lambda stance: ui.ACTIONS.get(stance, (stance,))[0]
     plan = e.plan or {}
+    ps = (e.technical or {}).get("price_status")
+    forced = status.forces_exit(ps, not t["held"])
     held = "held" if t["held"] else "watchlist"
     head = [f"{ICON.get(t['to'], '•')} {e.ticker} ({held}): {label(t['from_stance'])} → {label(t['to_stance'])}",
             price_line(e, bar_date, now)]
@@ -222,10 +234,14 @@ def message(t: dict, e, bar_date: str | None, now: datetime) -> str:
         lines.append("Trim: take some profit at the current price (the plan has no separate trim zone), keep the rest"
                      + (f" above {stop}." if stop else "; stop unavailable."))
         lines.append(target_text)
+    elif to == "SELL" and forced:
+        lines.append(ps["action"])
     elif to == "SELL":
         lines.append("Reduce or exit." + (f" If you keep part, sell on a close below {stop}." if stop else " Stop unavailable."))
     elif to == "PASS":
         lines.append("No trade" + (f": {trigger}." if trigger else "."))
+    if ps and ps.get("code") in ("testing_support", "breakdown", "deep_breakdown"):
+        lines.append(f"Price status: {ps['label']} (daily close {ps['levels']['close']:.2f}, {ps['levels']['as_of']}).")
     wait = ui.reassess(_snap(e)) if to in ("TRIM", "SELL") else None
     if wait:
         lines.append(f"Don't rush: {wait}")
