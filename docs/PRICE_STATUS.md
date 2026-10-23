@@ -51,6 +51,15 @@ become a call. A forced exit would turn exactly those levels into SELL alerts. T
 that, or after the levels have been reviewed into packets (`level_packet.stage`). The bigger step is to feed the
 status from reviewed packets instead of candidates, which this change does not do.
 
+## A breakdown never sits under "buy more"
+
+Always on, independent of the exit switch. The plan's entry zone and the status's support zone come from different
+level systems, so a stock can be inside the plan's add zone while closed below the automatic support. A confirmed
+breakdown (completed close) under a buy or add call turns the call and plan into HOLD (WAIT FOR CONFIRMATION on a
+watchlist name) with "don't add yet · closed below support X"; the radar says "support broke: don't add yet"
+(`status.blocks_buy`, `tradeplan.hold_off_buying`, `transitions.effective_stance`). It sells nothing. Testing
+support keeps the buy: buying at support is coherent. The engine's verdict label is unchanged.
+
 ## Telegram
 
 A message is sent on every status change among the seven steps, with the same two-run confirmation, silent first baseline and retry as call alerts (`status.ALERT_ON_CHANGE`, `docs/TELEGRAM_ALERTS.md`). With many tickers this can be frequent; limiting it to weakening and worse is a small change in `transitions.status_reading`.

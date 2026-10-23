@@ -43,12 +43,15 @@ def effective_stance(verdict: str, plan: dict | None, watchlist: bool, price_sta
     """The plan's stance, or the verdict's when there's no plan. Nothing to sell on a watchlist name.
 
     A confirmed breakdown (`status.forces_exit`: a completed close below support, on a held stock) turns the call
-    into REDUCE / EXIT whatever the verdict says, so the app never shows 'hold' under a broken support."""
+    into REDUCE / EXIT whatever the verdict says, so the app never shows 'hold' under a broken support. A confirmed breakdown also turns any buy or add into
+    HOLD (WAIT on a watchlist name), so the app never says 'buy more' under a broken support either."""
     if status.forces_exit(price_status, watchlist):
         return "REDUCE / EXIT"
     stance = (plan or {}).get("stance") or VERDICT_STANCE.get(verdict, "HOLD" if not watchlist else "WAIT FOR CONFIRMATION")
     if watchlist and stance in ("TRIM", "TRIM / PROTECT", "REDUCE / EXIT", "HOLD"):
         stance = "NO TRADE" if stance != "HOLD" else "WAIT FOR CONFIRMATION"
+    if stance in status.BUY_STANCES and status.blocks_buy(price_status):     # never 'buy more' over a broken support
+        stance = "WAIT FOR CONFIRMATION" if watchlist else "HOLD"
     return stance
 
 

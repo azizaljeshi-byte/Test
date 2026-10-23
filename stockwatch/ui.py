@@ -431,6 +431,8 @@ def ring(snap: dict) -> tuple[int, str]:
         return 1, "support broke: exit the trade"
     if side == "risk" and stance == "REDUCE / EXIT":
         return 1, "the plan says reduce or exit"
+    if side == "opp" and status.blocks_buy(price_status(snap)):
+        return 2, "support broke: don't add yet"
     buying = side == "opp" and stance in ("BUY NOW", "BUY ON PULLBACK", "BUY THE BREAKOUT", "ADD")
     lo, hi = plan.get("entry_low"), plan.get("entry_high")
     in_reach = not (nan(price) or nan(lo) or nan(hi)) and lo > 0
