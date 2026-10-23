@@ -51,6 +51,10 @@ become a call. A forced exit would turn exactly those levels into SELL alerts. T
 that, or after the levels have been reviewed into packets (`level_packet.stage`). The bigger step is to feed the
 status from reviewed packets instead of candidates, which this change does not do.
 
+## Telegram
+
+A message is sent on every status change among the seven steps, with the same two-run confirmation, silent first baseline and retry as call alerts (`status.ALERT_ON_CHANGE`, `docs/TELEGRAM_ALERTS.md`). With many tickers this can be frequent; limiting it to weakening and worse is a small change in `transitions.status_reading`.
+
 ## Known limits
 
 - "Record high" is the highest close in the history we load (5 years by default), not an all-time high.
