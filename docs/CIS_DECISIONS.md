@@ -12,6 +12,25 @@ and the owner's explicit approval.
   PODD (analyst proposed, not yet separately accepted), all as of the 22 Oct 2026 close. Every other stock is
   **CIS UNSUPPORTED** and keeps its existing call, labelled legacy. Levels are never generated for other
   tickers; automatic level selection is unvalidated and out of scope.
+- **Reviewed is not approved.** A reviewed packet can be evaluated in shadow. Only an owner-accepted packet
+  (`Packet.approved`) that isn't stale can be `activation_eligible`; PODD is shown as "proposed (not
+  owner-accepted)" and is never eligible until accepted.
+
+## Gates before any call (in order)
+
+1. **No reviewed packet, or no floor** → CIS UNSUPPORTED (legacy call shown, labelled).
+2. **Unusable data** (no completed close, bars that fail the quality checks, nothing cached) → **DATA REVIEW**,
+   no CIS call. Never a HOLD or exit review from data known to be bad.
+3. **Stale levels** → **STALE LEVELS — REVIEW REQUIRED** (a REVIEW, never a buy or sell). A packet is stale
+   when more than 20 completed sessions have passed since its as-of session (provisional limit, matching the
+   20-session horizon), or when today's history no longer has the as-of close the packet recorded (within
+   0.5%): a split, another corporate action or an adjustment change re-bases prices, so the levels need
+   re-review. The states are still shown for information, with the call they would have produced.
+4. Otherwise the mapping below.
+
+**What's not available live.** The app has no intraday low/high for the session, so on the Details card
+intraday crossings are "not available" and nothing is claimed about them. Completed closes only: without an
+exchange calendar, today's bar counts as a close from the next New York day, even after the 16:00 close.
 
 ## State names (owner-approved, Issue #29 comment 6370570304)
 
@@ -54,11 +73,13 @@ TACTICAL) exists in the adapter for a future contract model (#27) and is unused 
 
 **Entry check (watchlist, SUPPORT HOLD, first ceiling not reached).** Reward/risk at the **worst permitted
 entry** (the floor's top edge) to the **first ceiling's lower edge**, against the fixed failure level, gross and
-net of an illustrative 0.2% round trip. `RR_MIN = 1.5` is a provisional, configurable, **unvalidated
-screening filter**, not a buy rule or evidence of positive expectancy. A conditional **BUY ON DIP** proposal
-also needs: a dated defense of the floor in the last 10 completed sessions (traded into the zone, closed at or
-above its top), no verified event (earnings) inside the 20-session horizon, the first ceiling still NOT
-REACHED, and usable data. Passing the filter without the rest = SETUP CANDIDATE; failing it = WAIT. **No order
+net of an illustrative 0.2% round trip. The minimum is 1.5 by default and can be set with
+`STOCKWATCH_CIS_RR_MIN` (1.0–5.0; an invalid value is ignored and reported); every check reports the value and
+where it came from. It is an **unvalidated screening filter**, not a buy rule or evidence of positive
+expectancy. A conditional **BUY ON DIP** proposal also needs: a dated buyer defense **after the levels were
+set** (a completed session that traded into the floor zone and closed at or above its top, followed by at
+least one more completed session, all closing at or above the top; defense before the packet doesn't count),
+no verified event (earnings) inside the 20-session horizon and the first ceiling still NOT REACHED. Passing the filter without the rest = SETUP CANDIDATE; failing it = WAIT. **No order
 is placed**, ever. There is no BUY NOW in v1.
 
 **Existing labels.** Each action maps to an existing plan stance where one fits (BUY ON DIP → BUY ON PULLBACK,
@@ -147,6 +168,15 @@ risks, and anything marked urgent (severity 3). The shadow table lists which of 
   need a new `REVIEW` class (never shown as SELL). The first CIS run must **re-baseline** every supported stock
   silently (as an ownership change does today), so the switch itself can't send a burst of "changes".
 - Unsupported stocks keep their legacy calls and alerts until they have reviewed packets.
+
+## Open items for the owner
+
+- **Data licensing.** `stockwatch/cis/fixtures/` holds Yahoo-derived adjusted daily prices for the reference
+  stocks and benchmarks, in a public repo. Yahoo's terms may not allow redistributing them. Before merging,
+  decide: keep them, or move them out (tests and the Research view would then need a private copy, or a
+  download-and-verify-hash step, and would skip without it).
+- **Second price source.** Still an open validation item: nothing was corroborated (`docs/CIS_PROVIDER_CHECK.md`).
+- **PODD's levels** need the owner's acceptance before they could ever be eligible.
 
 ## Limits
 

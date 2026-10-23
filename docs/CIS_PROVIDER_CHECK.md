@@ -4,6 +4,8 @@ Research only, 23 Oct 2026. No subscription, secret, integration or provider cal
 
 ## Bottom line
 
+**Status: OPEN validation item.** No second source has corroborated anything yet; this is a desk review.
+
 - **Side-by-side ISRG sample: NOT VERIFIED for every provider.** This build environment can't reach any
   market-data host (Yahoo, Alpaca, Massive/Polygon, Finnhub, Twelve Data, Stooq all fail to connect, and their
   documentation sites don't resolve), and no provider credentials exist here. Nothing below was measured.

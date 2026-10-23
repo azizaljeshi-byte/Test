@@ -154,7 +154,13 @@ class Packet:
 
     @property
     def reviewed(self) -> bool:
+        """Analyst-reviewed (proposed or accepted): usable for shadow evaluation. Not the same as approved."""
         return self.data["review_status"] != "code_candidate_unreviewed"
+
+    @property
+    def approved(self) -> bool:
+        """Accepted by the owner. Only an approved packet could ever be eligible for an active decision."""
+        return self.data["review_status"] == "user_accepted_in_chat"
 
 
 def new_version(old: Packet, changes: dict, reason: str, packet_id: str) -> Packet:

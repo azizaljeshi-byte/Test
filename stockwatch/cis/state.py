@@ -31,16 +31,19 @@ def downside_state(price: float | None, downside) -> str:
     return "above_floor"
 
 
-def evaluate(packet, completed_close: float | None = None, quote: float | None = None,
-             session_low: float | None = None) -> dict:
-    """Confirmed, provisional and intraday facts for one packet. Missing inputs stay unknown (None).
+SNAPSHOT = object()     # "use the packet's own snapshot value"; None always means unknown
 
-    The defaults come from the packet's own snapshot; passing a different quote re-evaluates the same fixed
+
+def evaluate(packet, completed_close=SNAPSHOT, quote=SNAPSHOT, session_low=SNAPSHOT) -> dict:
+    """Confirmed, provisional and intraday facts for one packet.
+
+    An argument left out uses the packet's own snapshot. Passing None means unknown: the state is undetermined
+    and intraday crossings are None, never "not crossed". A different quote re-evaluates the same fixed
     levels and can't change them."""
     dn = packet["downside"]
-    close = packet["completed_close"] if completed_close is None else completed_close
-    px = packet["quote"]["price"] if quote is None else quote
-    low = packet["session_range"]["low"] if session_low is None else session_low
+    close = packet["completed_close"] if completed_close is SNAPSHOT else completed_close
+    px = packet["quote"]["price"] if quote is SNAPSHOT else quote
+    low = packet["session_range"]["low"] if session_low is SNAPSHOT else session_low
     breaches = []
     if dn is not None:
         for name in THRESHOLDS:

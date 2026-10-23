@@ -39,6 +39,9 @@ from . import features, level_packet, state
 
 FLAG = "STOCKWATCH_CIS_DECISIONS"
 RR_MIN = 1.5                 # UNVALIDATED provisional screening minimum; sensitivity to be assessed
+RR_ENV = "STOCKWATCH_CIS_RR_MIN"   # optional override, 1.0-5.0; its source is reported with every check
+MAX_PACKET_SESSIONS = 20     # provisional: a packet is stale once this many completed sessions have passed
+ANCHOR_TOLERANCE = 0.005     # the packet's as-of close must still match today's history within 0.5%
 COST_ROUND_TRIP = 0.002      # illustrative costs/slippage for the net reward/risk; gross is shown too
 DEFENSE_LOOKBACK = 10        # completed sessions searched for a dated defense of the floor
 HORIZON = 20                 # trading sessions, the packets' scenario horizon
@@ -62,6 +65,8 @@ ACTIONS = {
     "REVIEW REQUIRED": ("REVIEW", None),
     "EXIT TACTICAL": ("EXIT", "REDUCE / EXIT"),
     "NO TRADE": ("PASS", "NO TRADE"),
+    "STALE LEVELS — REVIEW REQUIRED": ("REVIEW", None),
+    "DATA REVIEW": (None, None),
     "CIS UNSUPPORTED": (None, None),
 }
 SEVERITY = ("above_floor", "testing_floor", "warning", "failure", "major_damage")
@@ -73,8 +78,23 @@ def mode() -> str:
 
 
 def reviewed_packets() -> dict:
-    """The reviewed level packets by symbol. Only these four exist; nothing selects levels for other tickers."""
+    """Analyst-reviewed level packets by symbol, for SHADOW evaluation. Only these four exist; nothing selects
+    levels for other tickers. Reviewed is not approved: see `Packet.approved` and `activation_eligible`."""
     return {s: p for s, p in level_packet.load_acceptance()["packets"].items() if p.reviewed}
+
+
+def rr_min() -> tuple[float, str]:
+    """The screening minimum and where it came from. An invalid override is ignored and reported."""
+    raw = (os.getenv(RR_ENV) or "").strip()
+    if not raw:
+        return RR_MIN, f"default {RR_MIN} (unvalidated)"
+    try:
+        v = float(raw)
+    except ValueError:
+        v = None
+    if v is None or not 1.0 <= v <= 5.0:
+        return RR_MIN, f"default {RR_MIN} (unvalidated; ignored invalid {RR_ENV}={raw!r})"
+    return v, f"{RR_ENV}={v:g} (unvalidated)"
 
 
 @dataclass
@@ -92,6 +112,7 @@ class Inputs:
     data_note: str | None = None
     event: dict | None = None                  # a verified scheduled event, e.g. earnings
     sessions_to_event: int | None = None
+    as_of_close_now: float | None = None       # today's history's close on the packet's as-of session
 
 
 def inputs_from_packet(packet, recent_bars: list | None = None) -> Inputs:
@@ -100,7 +121,7 @@ def inputs_from_packet(packet, recent_bars: list | None = None) -> Inputs:
     event = packet["verified_event"] if "verified_event" in packet.data else None
     return Inputs(packet["completed_close"], packet["as_of_completed_session"], q["price"], q["observed_at_utc"],
                   r["low"], r["high"], [], recent_bars or [], True, None, level_packet.thaw(event) if event else None,
-                  None)
+                  None, packet["completed_close"])
 
 
 def live_inputs(packet, hist, quote: dict | None, now: datetime) -> Inputs:
@@ -117,13 +138,31 @@ def live_inputs(packet, hist, quote: dict | None, now: datetime) -> Inputs:
     rows = [{"session": str(i.date()), "high": float(r.High), "low": float(r.Low), "close": float(r.Close),
              "completed": True} for i, r in done.iterrows()]
     later = [b for b in rows if b["session"] > packet["as_of_completed_session"]]
+    anchor = next((b["close"] for b in rows if b["session"] == packet["as_of_completed_session"]), None)
     cur = transitions.current_quote(quote, now)
     event = level_packet.thaw(packet["verified_event"]) if "verified_event" in packet.data else None
     if event and event["date"] < str(now.astimezone(features.NY).date()):
         event = None                                # already happened
+    # the app has no intraday low/high for the session: those stay None ("not available"), never "no breach"
     return Inputs(rows[-1]["close"], rows[-1]["session"], None if cur is None else cur[0],
                   None if cur is None else cur[2].isoformat(), None, None, later, rows[-DEFENSE_LOOKBACK:],
-                  True, None, event, None)
+                  True, None, event, None, anchor)
+
+
+def staleness(packet, inp: Inputs) -> str | None:
+    """Why the packet's levels can't be relied on today, or None. A stale packet stays useful for shadow
+    analysis, but its states are no longer a basis for a call until a new version is reviewed."""
+    if len(inp.later_bars) > MAX_PACKET_SESSIONS:
+        return (f"the levels are {len(inp.later_bars)} completed sessions old (as of "
+                f"{packet['as_of_completed_session']}; limit {MAX_PACKET_SESSIONS}, provisional)")
+    if inp.as_of_close_now is None:
+        return f"today's history has no {packet['as_of_completed_session']} session to check the packet against"
+    drift = inp.as_of_close_now / packet["completed_close"] - 1
+    if abs(drift) > ANCHOR_TOLERANCE:
+        return (f"the {packet['as_of_completed_session']} close is now {inp.as_of_close_now:,.2f} vs "
+                f"{packet['completed_close']:,.2f} in the packet ({drift:+.1%}): a corporate action or an adjustment "
+                "change; the levels need re-review")
+    return None
 
 
 def _mandate(held: bool, tier: int | None, tactical_contract: bool) -> str:
@@ -145,7 +184,8 @@ def entry_check(packet, inp: Inputs, ceilings: list[dict]) -> dict:
     first = next((c for c in ceilings if c["low"] > entry), None)
     out = {"entry_zone": (dn["zone"]["low"], entry), "worst_entry": entry, "invalidation": stop,
            "first_ceiling": None if first is None else (first["low"], first["high"]),
-           "rr_gross": None, "rr_net": None, "rr_min": RR_MIN, "rr_validated": False, "cost_round_trip": COST_ROUND_TRIP,
+           "rr_gross": None, "rr_net": None, "rr_min": rr_min()[0], "rr_min_source": rr_min()[1], "rr_validated": False,
+           "cost_round_trip": COST_ROUND_TRIP,
            "passes_filter": False, "defense": None, "event_inside_horizon": None, "blocks": []}
     if first is None:
         out["blocks"].append("no ceiling above the floor in the packet")
@@ -154,14 +194,13 @@ def entry_check(packet, inp: Inputs, ceilings: list[dict]) -> dict:
     out["rr_gross"] = (target - entry) / (entry - stop)
     half = COST_ROUND_TRIP / 2
     out["rr_net"] = (target * (1 - half) - entry * (1 + half)) / (entry * (1 + half) - stop * (1 - half))
-    out["passes_filter"] = out["rr_net"] >= RR_MIN
+    out["passes_filter"] = out["rr_net"] >= out["rr_min"]
     if not out["passes_filter"]:
-        out["blocks"].append(f"reward/risk {out['rr_net']:.2f} (net) is below the {RR_MIN} screening minimum")
-    defended = [b for b in inp.recent_bars[-DEFENSE_LOOKBACK:]
-                if b["low"] <= dn["zone"]["high"] and b["close"] >= dn["zone"]["high"]]
-    out["defense"] = defended[-1]["session"] if defended else None
-    if not defended:
-        out["blocks"].append(f"no dated defense of the floor in the last {DEFENSE_LOOKBACK} completed sessions")
+        out["blocks"].append(f"reward/risk {out['rr_net']:.2f} (net) is below the {out['rr_min']:g} screening minimum")
+    out["defense"] = defense(packet, inp)
+    if out["defense"] is None:
+        out["blocks"].append("no dated defense of the floor since the levels were set (a session that traded into "
+                             "the zone and closed above it, followed only by closes above it)")
     if first["state"] != "pending":
         out["blocks"].append(f"the first ceiling is already at {UP_LABEL[first['state']]}")
     if inp.event:
@@ -170,9 +209,20 @@ def entry_check(packet, inp: Inputs, ceilings: list[dict]) -> dict:
         if inside:
             out["blocks"].append(f"verified {inp.event.get('type', 'event')} on {inp.event.get('date')} inside the "
                                  f"{HORIZON}-session horizon")
-    if not inp.data_ok:
-        out["blocks"].append(inp.data_note or "data quality not confirmed")
     return out
+
+
+def defense(packet, inp: Inputs) -> str | None:
+    """The latest dated buyer defense AFTER the packet's as-of session: a completed session that traded into the
+    floor zone and closed at or above its top, followed by at least one more completed session, all closing at
+    or above the top. Defense before the levels were set doesn't count."""
+    top = packet["downside"]["zone"]["high"]
+    after = [b for b in inp.recent_bars[-DEFENSE_LOOKBACK:] if b["session"] > packet["as_of_completed_session"]]
+    found = None
+    for i, b in enumerate(after[:-1]):
+        if b["low"] <= top <= b["close"] and all(x["close"] >= top for x in after[i + 1:]):
+            found = b["session"]
+    return found
 
 
 def decide(packet, inp: Inputs, held: bool, tier: int | None = None, tactical_contract: bool = False) -> dict:
@@ -184,9 +234,11 @@ def decide(packet, inp: Inputs, held: bool, tier: int | None = None, tactical_co
                else "the packet has no defensible constructive floor")
         return {**base, "supported": False, "action": "CIS UNSUPPORTED", "category": None, "stance": None,
                 "reasons": [why + "; the existing call is shown, labelled legacy"]}
-    if inp.completed_close is None:
-        return {**base, "supported": False, "action": "CIS UNSUPPORTED", "category": None, "stance": None,
-                "packet_id": packet.id, "reasons": ["no completed close to evaluate (data unavailable)"]}
+    if inp is None or inp.completed_close is None or not inp.data_ok:
+        note = (inp.data_note if inp is not None and inp.data_note else "no completed close to evaluate")
+        return {**base, "supported": False, "action": "DATA REVIEW", "category": None, "stance": None,
+                "packet_id": packet.id, "reasons": [f"Data can't be used ({note}); no CIS call. The existing call is "
+                                                    "shown, labelled legacy."]}
     ev = state.evaluate(packet, inp.completed_close, inp.quote, inp.session_low)
     conf, prov = ev["confirmed_state"], ev["quote_state"]
     ceilings = []
@@ -206,6 +258,8 @@ def decide(packet, inp: Inputs, held: bool, tier: int | None = None, tactical_co
         worse = SEVERITY.index(prov) > SEVERITY.index(conf)
         reasons.append(f"Provisional: the quote {inp.quote:,.2f} reads {DOWN_LABEL[prov]}"
                        + (" — confirmed only if a session closes there." if worse else "; not a close."))
+    if inp.session_low is None:
+        reasons.append("Intraday low/high: not available, so nothing is claimed about intraday breaches.")
     for b in ev["session_extreme_breaches"]:
         if b["crossed_below"] and SEVERITY.index(b["threshold"]) > SEVERITY.index(conf):
             reasons.append(f"Intraday: today's low went below {b['level']:g}"
@@ -257,11 +311,23 @@ def decide(packet, inp: Inputs, held: bool, tier: int | None = None, tactical_co
             for c in testing[:1]:
                 reasons.append(f"RESISTANCE TEST at {c['low']:g}–{c['high']:g}.")
             reasons.append("Above the floor; adding needs a separate entry check.")
+    stale = staleness(packet, inp)
+    if stale:
+        reasons.insert(0, f"Stale levels: {stale}. The states are shown for information only; no call until a new "
+                          f"packet version is reviewed (would have been: {action}).")
+        action, check = "STALE LEVELS — REVIEW REQUIRED", None
+    if not packet.approved:
+        reasons.append("These levels are proposed by the analyst, not accepted by the owner: shadow evaluation only, "
+                       "not eligible for an active decision.")
     category, stance = ACTIONS[action]
     return {**base, "supported": True, "packet_id": packet.id, "review_status": packet["review_status"],
+            "approval": "owner-accepted" if packet.approved else "proposed (not owner-accepted)",
+            "activation_eligible": packet.approved and stale is None, "stale": stale,
+            "intraday_available": inp.session_low is not None,
             "action": action, "category": category, "stance": stance,
             "downside": {"confirmed": DOWN_LABEL[conf], "confirmed_state": conf,
-                         "provisional": DOWN_LABEL[prov], "provisional_state": prov,
+                         "provisional": DOWN_LABEL[prov] if inp.quote is not None else "NO CURRENT QUOTE",
+                         "provisional_state": prov if inp.quote is not None else None,
                          "intraday": ev["session_extreme_breaches"]},
             "upside": ceilings, "entry_check": check,
             "levels": {"floor": (packet["downside"]["zone"]["low"], packet["downside"]["zone"]["high"]),

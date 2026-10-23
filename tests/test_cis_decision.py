@@ -32,12 +32,17 @@ def roomy_packet(**edit):
     return L.Packet(d)
 
 
-DEFENDED = [{"session": "2026-10-20", "high": 146, "low": 141.5, "close": 143, "completed": True}]
-NOT_DEFENDED = [{"session": "2026-10-20", "high": 150, "low": 145, "close": 148, "completed": True}]
+PODD_CLOSE = PACKETS["PODD"]["completed_close"]
+# defended after the levels were set (22 Oct): into the zone and back above 142, then held above it
+DEFENDED = [{"session": "2026-10-23", "high": 146, "low": 141.5, "close": 143, "completed": True},
+            {"session": "2026-10-26", "high": 149, "low": 143, "close": 148, "completed": True}]
+NOT_DEFENDED = [{"session": "2026-10-23", "high": 150, "low": 145, "close": 148, "completed": True},
+                {"session": "2026-10-26", "high": 150, "low": 146, "close": 148, "completed": True}]
 
 
 def inputs(close, quote=None, recent=DEFENDED, **kw):
-    return D.Inputs(close, "2026-10-22", quote, None, kw.pop("low", None), kw.pop("high", None),
+    kw.setdefault("as_of_close_now", PODD_CLOSE)
+    return D.Inputs(close, "2026-10-26", quote, None, kw.pop("low", None), kw.pop("high", None),
                     kw.pop("later", []), recent, **kw)
 
 
@@ -118,7 +123,7 @@ def test_a_wick_or_quote_never_changes_the_confirmed_action():
     p = PACKETS["PODD"]
     wick = D.decide(p, inputs(148.0, quote=147.0, low=125.0), True, 1)
     assert wick["action"] == "HOLD" and wick["downside"]["confirmed"] == "SUPPORT HOLD"
-    assert any("Intraday" in r and "125" not in r and "below 126" in r for r in wick["reasons"])
+    assert any(r.startswith("Intraday:") and "below 126" in r for r in wick["reasons"])
     crash = D.decide(p, inputs(148.0, quote=120.0), True, 1)
     assert crash["action"] == "HOLD" and crash["downside"]["provisional"] == "TREND BREAKDOWN"
 
@@ -165,7 +170,7 @@ def test_a_buy_proposal_needs_every_check_and_never_places_an_order():
     evented = D.decide(p, inputs(148.0, event={"type": "earnings", "date": "2026-11-04"}), False)
     assert evented["action"] == "SETUP CANDIDATE"
     bad_data = D.decide(p, inputs(148.0, data_ok=False, data_note="stale bars"), False)
-    assert bad_data["action"] == "SETUP CANDIDATE"
+    assert bad_data["action"] == "DATA REVIEW" and not bad_data["supported"]
     assert D.decide(p, inputs(148.0), True, 1)["action"] == "HOLD"                # held: no buy from the adapter
     near = roomy_packet(upside={"ceilings": [{"id": "c1", "zone": {"low": 150, "high": 152},
                                               "current_quote_location": "below", "confirmation": "pending"}]})
@@ -174,9 +179,14 @@ def test_a_buy_proposal_needs_every_check_and_never_places_an_order():
 
 def test_the_threshold_is_a_configurable_unvalidated_filter(monkeypatch):
     p = roomy_packet()
-    monkeypatch.setattr(D, "RR_MIN", 5.0)
+    assert D.rr_min() == (1.5, "default 1.5 (unvalidated)")
+    monkeypatch.setenv(D.RR_ENV, "5")
     d = D.decide(p, inputs(148.0), False)
     assert d["action"] == "WAIT" and d["entry_check"]["rr_min"] == 5.0
+    assert d["entry_check"]["rr_min_source"] == "STOCKWATCH_CIS_RR_MIN=5 (unvalidated)"
+    for bad in ("abc", "0.5", "9"):
+        monkeypatch.setenv(D.RR_ENV, bad)
+        assert D.rr_min()[0] == 1.5 and "ignored invalid" in D.rr_min()[1]
 
 
 # ---- unsupported, legacy, flag
@@ -189,7 +199,7 @@ def test_no_reviewed_packet_is_unsupported_and_never_relabelled():
     cand.update(level_selection="code_candidate_unreviewed", review_status="code_candidate_unreviewed")
     assert D.decide(L.Packet(cand), inputs(148.0), False)["action"] == "CIS UNSUPPORTED"
     assert set(D.reviewed_packets()) == {"ISRG", "FICO", "CRDO", "PODD"}
-    assert D.decide(PACKETS["PODD"], inputs(None), False)["action"] == "CIS UNSUPPORTED"
+    assert D.decide(PACKETS["PODD"], inputs(None), False)["action"] == "DATA REVIEW"
 
 
 @pytest.mark.parametrize("value,expected", [(None, "off"), ("", "off"), ("on", "off"), ("active", "off"),
@@ -218,6 +228,7 @@ def test_live_inputs_use_completed_bars_and_a_validated_quote():
     p = PACKETS["PODD"]
     idx = pd.date_range("2026-10-01", "2026-10-30", freq="B", tz="America/New_York")
     hist = pd.DataFrame({"Open": 145.0, "High": 149.0, "Low": 144.0, "Close": 148.0, "Volume": 1e6}, index=idx)
+    hist.loc[idx[idx.strftime("%Y-%m-%d") == "2026-10-22"], "Close"] = PODD_CLOSE
     now = datetime(2026, 10, 30, 15, 0, tzinfo=timezone.utc)                   # Friday 11:00 New York
     fresh = {"market_state": "REGULAR", "live_price": 147.5, "live_time": "2026-10-30T14:55:00+00:00"}
     inp = D.live_inputs(p, hist, fresh, now)
@@ -226,7 +237,7 @@ def test_live_inputs_use_completed_bars_and_a_validated_quote():
     stale = {"market_state": "REGULAR", "live_price": 100.0, "live_time": "2026-10-23T14:55:00+00:00"}
     assert D.live_inputs(p, hist, stale, now).quote is None                        # a week-old quote is refused
     assert D.live_inputs(p, None, fresh, now).data_ok is False
-    assert D.decide(p, D.live_inputs(p, None, fresh, now), True, 1)["action"] == "CIS UNSUPPORTED"
+    assert D.decide(p, D.live_inputs(p, None, fresh, now), True, 1)["action"] == "DATA REVIEW"
 
 
 # ---- shadow comparison
@@ -263,3 +274,51 @@ def test_source_check_separates_adjustment_coverage_and_missing_sessions():
     broken = yahoo.copy()
     broken.iloc[3, broken.columns.get_loc("Close")] = -1
     assert C.compare(yahoo, broken, ("a", "b"))["status"] == "NOT COMPARABLE"
+
+
+# ---- second-round review fixes (ChatGPT, PR #30)
+
+def test_proposed_levels_are_shadow_only_and_never_activation_eligible():
+    podd, isrg = ref("PODD", True, 1), ref("ISRG", True, 1)
+    assert PACKETS["PODD"].reviewed and not PACKETS["PODD"].approved and PACKETS["ISRG"].approved
+    assert podd["approval"] == "proposed (not owner-accepted)" and podd["activation_eligible"] is False
+    assert any("not accepted by the owner" in r for r in podd["reasons"])
+    assert isrg["approval"] == "owner-accepted" and isrg["activation_eligible"] is True
+
+
+def test_stale_levels_stop_being_a_basis_for_a_call():
+    p = PACKETS["PODD"]
+    later = [{"session": f"2026-11-{d:02d}", "high": 150, "low": 146, "close": 148, "completed": True}
+             for d in range(1, D.MAX_PACKET_SESSIONS + 2)]
+    old = D.decide(p, inputs(148.0, later=later), True, 1)
+    assert old["action"] == "STALE LEVELS — REVIEW REQUIRED" and old["category"] == "REVIEW"
+    assert old["downside"]["confirmed"] == "SUPPORT HOLD" and "would have been: HOLD" in old["reasons"][0]
+    assert old["activation_eligible"] is False
+    split = D.decide(p, inputs(148.0, as_of_close_now=PODD_CLOSE / 2), True, 1)      # a 2-for-1 split re-based history
+    assert split["action"] == "STALE LEVELS — REVIEW REQUIRED" and "corporate action" in split["reasons"][0]
+    missing = D.decide(p, inputs(148.0, as_of_close_now=None), False)
+    assert missing["action"] == "STALE LEVELS — REVIEW REQUIRED"
+    assert D.decide(p, inputs(148.0), True, 1)["action"] == "HOLD"                  # fresh and matching
+
+
+def test_defense_must_come_after_the_levels_and_hold():
+    p = roomy_packet()
+    before = [{"session": "2026-10-20", "high": 146, "low": 141.5, "close": 143, "completed": True},
+              {"session": "2026-10-21", "high": 149, "low": 143, "close": 148, "completed": True}]
+    assert D.decide(p, inputs(148.0, recent=before), False)["action"] == "SETUP CANDIDATE"
+    one_day = DEFENDED[:1]                                                              # no follow-through yet
+    assert D.decide(p, inputs(143.0, recent=one_day), False)["action"] == "SETUP CANDIDATE"
+    lost = DEFENDED + [{"session": "2026-10-27", "high": 143, "low": 139, "close": 141, "completed": True}]
+    assert D.decide(p, inputs(148.0, recent=lost), False)["entry_check"]["defense"] is None
+    assert D.decide(p, inputs(148.0), False)["entry_check"]["defense"] == "2026-10-23"
+
+
+def test_missing_intraday_data_is_said_not_assumed():
+    p = PACKETS["PODD"]
+    d = D.decide(p, inputs(148.0, quote=147.0), True, 1)
+    assert d["intraday_available"] is False
+    assert all(b["crossed_below"] is None for b in d["downside"]["intraday"])
+    assert any("not available" in r for r in d["reasons"])
+    assert ref("CRDO", True, 1)["intraday_available"] is True
+    no_quote = D.decide(p, inputs(148.0), True, 1)
+    assert no_quote["downside"]["provisional"] == "NO CURRENT QUOTE" and no_quote["action"] == "HOLD"

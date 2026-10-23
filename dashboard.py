@@ -278,18 +278,23 @@ def _cis_shadow_card(ticker: str, snap: dict):
                                                              datetime.now(NY)) if packet else None,
                             held, snap["tier"])
     st.markdown('<div class="mc-section">CIS chart decision · shadow</div>', unsafe_allow_html=True)
-    if not d["supported"]:
+    if not d["supported"] and d["action"] == "CIS UNSUPPORTED":
         st.markdown(ui.flag("CIS UNSUPPORTED", escape(d["reasons"][0].split(";")[0].capitalize()) + ". The call "
                             "above is the legacy StockWatch call.", ui.MUTED), unsafe_allow_html=True)
         return
+    if not d["supported"] and d["action"] == "DATA REVIEW":
+        st.markdown(ui.flag("DATA REVIEW", escape(d["reasons"][0]), ui.MUTED), unsafe_allow_html=True)
+        return
     st.markdown(ui.flag(d["action"], f"{escape(d['downside']['confirmed'])} · shadow only: not active, no order "
-                        "placed, no alert", ui.INFO), unsafe_allow_html=True)
+                        "placed, no alert", ui.WARN if d["stale"] else ui.INFO), unsafe_allow_html=True)
     lv = d["levels"]
     st.markdown("<ul class='cis-why'>" + "".join(f"<li>{escape(r)}</li>" for r in d["reasons"]) + "</ul>",
                 unsafe_allow_html=True)
     st.caption(f"Floor {lv['floor'][0]:g}–{lv['floor'][1]:g} · support break below {lv['warning']:g} · trade invalidated "
                f"below {lv['failure']:g} · trend breakdown below {lv['major_damage']:g} · ceilings: "
                + ", ".join(f"{c['low']:g}–{c['high']:g} {c['label'].lower()}" for c in d["upside"]))
+    st.caption(f"Levels {d['packet_id']}: {d['approval']}. Closes are completed sessions only: today's bar counts "
+               "from the next day (no exchange calendar). Intraday low/high aren't available here.")
 
 
 # ---------------------------------------------------------------- target detail
