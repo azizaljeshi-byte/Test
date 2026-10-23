@@ -7,7 +7,9 @@ current quote, and which thresholds today's session low crossed (and whether the
 Upside: a ceiling is `pending` (not reached), `testing` (traded into it, or a close back inside after a
 breakout), `close_above` (a completed close above its upper edge), `retest_defended` (a later completed
 session traded back into the zone and closed above it) or `failed_breakout` (after a close above, a
-completed close below the zone's lower edge). Partial bars can flag a test but never confirm anything.
+completed close below the zone's lower edge). A failed breakout stands until a completed close back above
+the zone; wicks into it or closes inside it are reported only as a test from below. Partial bars can flag a
+test but never confirm anything.
 """
 from __future__ import annotations
 
@@ -69,7 +71,7 @@ def ceiling_state(zone, bars, start: str = "pending") -> dict:
     Returns the state, whether a retest has been confirmed, the dated events behind it, and whether the
     latest partial bar is attempting the zone."""
     lo, hi = zone["low"], zone["high"]
-    state, events, attempt = start, [], False
+    state, events, attempt, touched = start, [], False, False
     broke = start in ("close_above", "retest_defended")
     for b in bars:
         if not b.get("completed"):
@@ -80,9 +82,13 @@ def ceiling_state(zone, bars, start: str = "pending") -> dict:
         attempt = False
         c = b["close"]
         if not broke:
-            if c > hi:
-                state, broke = "close_above", True
+            if c > hi:                                 # a completed close above the zone: a (new) clearance
+                state, broke, touched = "close_above", True, False
                 events.append((b["session"], "close_above"))
+            elif state == "failed_breakout":
+                # a failed breakout stands until a completed close back above the zone; a wick into it, or a
+                # close inside it, is only a provisional test from below
+                touched = touched or b["high"] >= lo
             elif b["high"] >= lo:
                 state = "testing"
             elif state == "testing":
@@ -100,7 +106,8 @@ def ceiling_state(zone, bars, start: str = "pending") -> dict:
             state = "close_above"
             events.append((b["session"], "close_above"))
     return {"state": state, "retest_confirmed": broke and (state == "retest_defended" or any(e == "retest_defended" for _, e in events)),
-            "events": events, "partial_attempt": attempt}
+            "events": events, "partial_attempt": attempt,
+            "tested_after_failure": state == "failed_breakout" and (touched or attempt)}
 
 
 def ladder(packet, quote: float | None = None) -> list[dict]:

@@ -283,14 +283,16 @@ def test_proposed_levels_are_shadow_only_and_never_activation_eligible():
     assert PACKETS["PODD"].reviewed and not PACKETS["PODD"].approved and PACKETS["ISRG"].approved
     assert podd["approval"] == "proposed (not owner-accepted)" and podd["activation_eligible"] is False
     assert any("not accepted by the owner" in r for r in podd["reasons"])
-    assert isrg["approval"] == "owner-accepted" and isrg["activation_eligible"] is True
+    assert isrg["approval"] == "owner-accepted" and isrg["evaluation"] == "historical snapshot"
+    assert isrg["activation_eligible"] is False                      # a frozen snapshot is never a current call
+    assert any("Historical snapshot" in r for r in isrg["reasons"])
 
 
 def test_stale_levels_stop_being_a_basis_for_a_call():
     p = PACKETS["PODD"]
     later = [{"session": f"2026-11-{d:02d}", "high": 150, "low": 146, "close": 148, "completed": True}
              for d in range(1, D.MAX_PACKET_SESSIONS + 2)]
-    old = D.decide(p, inputs(148.0, later=later), True, 1)
+    old = D.decide(p, inputs(148.0, later=later, evaluated_on="2026-11-24"), True, 1)
     assert old["action"] == "STALE LEVELS — REVIEW REQUIRED" and old["category"] == "REVIEW"
     assert old["downside"]["confirmed"] == "SUPPORT HOLD" and "would have been: HOLD" in old["reasons"][0]
     assert old["activation_eligible"] is False
@@ -322,3 +324,99 @@ def test_missing_intraday_data_is_said_not_assumed():
     assert ref("CRDO", True, 1)["intraday_available"] is True
     no_quote = D.decide(p, inputs(148.0), True, 1)
     assert no_quote["downside"]["provisional"] == "NO CURRENT QUOTE" and no_quote["action"] == "HOLD"
+
+
+# ---- Codex review of bac4f1f: reproductions
+
+def daily(start, end, close=148.0, skip=()):
+    idx = pd.date_range(start, end, freq="B", tz="America/New_York")
+    idx = idx[[d.strftime("%Y-%m-%d") not in skip for d in idx]]
+    h = pd.DataFrame({"Open": close, "High": close + 1, "Low": close - 1, "Close": close, "Volume": 1e6}, index=idx)
+    return h
+
+
+def test_old_cached_history_is_data_review_not_a_current_hold():
+    p = PACKETS["ISRG"]
+    hist = daily("2026-06-01", "2026-10-22", close=p["completed_close"])            # ends on the packet day
+    june = datetime(2027, 6, 1, 15, 0, tzinfo=timezone.utc)
+    inp = D.live_inputs(p, hist, None, june)
+    d = D.decide(p, inp, True, 1)
+    assert inp.data_ok is False and "behind the expected 2027-05-31" in inp.data_note
+    assert d["action"] == "DATA REVIEW" and not d.get("activation_eligible")
+    # the next trading month with no new rows: still refused, the clock doesn't stop
+    nov = datetime(2026, 11, 30, 15, 0, tzinfo=timezone.utc)
+    assert D.decide(p, D.live_inputs(p, hist, None, nov), True, 1)["action"] == "DATA REVIEW"
+
+
+def test_packet_age_runs_on_the_calendar_not_on_rows():
+    p = PACKETS["ISRG"]
+    hist = daily("2026-06-01", "2027-05-28", close=p["completed_close"])            # fresh data, old packet
+    d = D.decide(p, D.live_inputs(p, hist, None, datetime(2027, 6, 1, 15, 0, tzinfo=timezone.utc)), True, 1)
+    assert d["action"] == "STALE LEVELS — REVIEW REQUIRED" and d["activation_eligible"] is False
+    fresh = daily("2026-06-01", "2026-10-28", close=p["completed_close"])
+    ok = D.decide(p, D.live_inputs(p, fresh, None, datetime(2026, 10, 29, 15, 0, tzinfo=timezone.utc)), True, 1)
+    assert ok["action"] == "HOLD" and ok["evaluation"] == "live" and ok["activation_eligible"] is True
+    assert D.weekdays_between("2026-10-22", "2026-10-23") == 0 and D.weekdays_between("2026-10-22", "2026-10-27") == 2
+
+
+def test_missing_sessions_are_refused_but_one_holiday_is_allowed():
+    p = PACKETS["ISRG"]
+    now = datetime(2026, 10, 29, 15, 0, tzinfo=timezone.utc)
+    holiday = daily("2026-06-01", "2026-10-28", close=p["completed_close"], skip=("2026-10-26",))
+    assert D.live_inputs(p, holiday, None, now).data_ok is True
+    gappy = daily("2026-06-01", "2026-10-28", close=p["completed_close"], skip=("2026-10-20", "2026-10-23", "2026-10-26"))
+    inp = D.live_inputs(p, gappy, None, now)
+    assert inp.data_ok is False and "missing" in inp.data_note
+    assert D.decide(p, inp, True, 1)["action"] == "DATA REVIEW"
+
+
+def test_a_revision_never_inherits_the_owner_acceptance():
+    isrg = PACKETS["ISRG"]
+    v2 = L.new_version(isrg, {"downside": {**L.thaw(isrg.downside), "failure": 425}}, "tighter after a higher low",
+                       "ISRG-2026-10-22-v2")
+    assert isrg.approved and not v2.approved and v2["review_status"] == "analyst_proposed"
+    assert v2["revision"]["supersedes"] == isrg.id
+    same = L.new_version(isrg, {}, "re-issued unchanged", "ISRG-2026-10-22-v2b")
+    assert not same.approved                                          # a new version always needs its own acceptance
+    accepted = L.accept(v2, "owner accepted v2 in chat")
+    assert accepted.approved and accepted["acceptance"]["packet_id"] == "ISRG-2026-10-22-v2"
+    tampered = L.thaw(accepted.data)
+    tampered["upside"]["ceilings"][0]["zone"] = {"low": 470, "high": 471}      # changed after acceptance
+    assert not L.Packet(tampered).approved
+    copied = L.thaw(L.new_version(accepted, {}, "next", "ISRG-v3").data)
+    copied["review_status"], copied["acceptance"] = "user_accepted_in_chat", accepted["acceptance"]
+    assert not L.Packet(copied).approved                               # v2's acceptance doesn't approve v3
+    with pytest.raises(L.PacketError, match="can't be lowered"):
+        L.new_version(isrg, {"downside": {**L.thaw(isrg.downside), "failure": 420}}, "price fell", "ISRG-v4")
+    with pytest.raises(L.PacketError, match="new packet ID"):
+        L.new_version(isrg, {}, "same id", isrg.id)
+    fresh = daily("2026-06-01", "2026-10-28", close=isrg["completed_close"])
+    live = D.live_inputs(v2, fresh, None, datetime(2026, 10, 29, 15, 0, tzinfo=timezone.utc))
+    assert D.decide(v2, live, True, 1)["activation_eligible"] is False
+    assert D.decide(accepted, live, True, 1)["activation_eligible"] is True
+
+
+def test_failed_breakout_stands_until_a_completed_close_back_above():
+    from stockwatch.cis import state as S
+    zone = {"low": 170, "high": 175}
+    bar = lambda s, h, lo, c, done=True: {"session": s, "high": h, "low": lo, "close": c, "completed": done}  # noqa: E731
+    base = [bar("d1", 177, 171, 176), bar("d2", 172, 165, 168)]
+    assert S.ceiling_state(zone, base)["state"] == "failed_breakout"
+    wick = S.ceiling_state(zone, base + [bar("d3", 171, 166, 169)])                 # Codex's sequence
+    assert wick["state"] == "failed_breakout" and wick["tested_after_failure"]
+    lower = S.ceiling_state(zone, base + [bar("d3", 167, 160, 162)])
+    assert lower["state"] == "failed_breakout" and not lower["tested_after_failure"]
+    inside = S.ceiling_state(zone, base + [bar("d3", 174, 168, 172)])               # back inside: unresolved
+    assert inside["state"] == "failed_breakout" and inside["tested_after_failure"]
+    forming = S.ceiling_state(zone, base + [bar("d3", 176, 168, 174, done=False)])
+    assert forming["state"] == "failed_breakout" and forming["partial_attempt"]
+    again = S.ceiling_state(zone, base + [bar("d3", 174, 168, 172), bar("d4", 178, 173, 177)])
+    assert again["state"] == "close_above" and [e for _, e in again["events"]] == ["close_above", "failed_breakout", "close_above"]
+    retest = S.ceiling_state(zone, base + [bar("d3", 178, 173, 177), bar("d4", 178, 174, 176)])
+    assert retest["state"] == "retest_defended"
+    p = roomy_packet()
+    held = D.decide(p, inputs(169.0, later=base + [bar("d3", 171, 166, 169)]), True, 1)
+    assert held["action"] == "REDUCE/EXIT REVIEW" and held["upside"][0]["label"] == "FAILED BREAKOUT"
+    assert D.decide(p, inputs(169.0, later=base + [bar("d3", 171, 166, 169)]), False)["action"] == "NO TRADE"
+    back = D.decide(p, inputs(177.0, later=base + [bar("d3", 178, 173, 177)]), False)
+    assert back["action"] == "SETUP CANDIDATE" and back["upside"][0]["label"] == "BREAKOUT CONFIRMED"

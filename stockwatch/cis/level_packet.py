@@ -3,7 +3,8 @@
 A packet's levels were chosen by an analyst from dated chart evidence; nothing here selects them. A code
 proposal would carry level_selection/review_status `code_candidate_unreviewed` and is never treated as
 reviewed. Quotes are evaluated against a packet (see `state`); they can't change it. A new analysis is a new
-packet version with a reason, and the old version stays as it was.
+packet version with a reason, and the old version stays as it was. A new version starts unapproved: the
+owner's acceptance is bound to one packet ID and content hash and never carries over to a revision.
 """
 from __future__ import annotations
 
@@ -51,6 +52,11 @@ def thaw(v):
 
 def fingerprint(d) -> str:
     return hashlib.sha256(json.dumps(thaw(d), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def content_hash(d) -> str:
+    """The hash an owner acceptance is bound to: everything except the review status and the acceptance itself."""
+    return fingerprint({k: v for k, v in thaw(d).items() if k not in ("review_status", "acceptance")})
 
 
 def _pos(v) -> bool:
@@ -124,10 +130,11 @@ class Packet:
     """A validated, read-only level packet. Attribute access is to frozen mappings and tuples."""
 
     def __init__(self, d: dict):
+        d = thaw(d)                                   # a private deep copy, whether given plain or frozen parts
         bad = problems(d)
         if bad:
             raise PacketError(f"{d.get('packet_id', 'packet')}: " + "; ".join(bad))
-        object.__setattr__(self, "data", _freeze(copy.deepcopy(d)))
+        object.__setattr__(self, "data", _freeze(d))
         object.__setattr__(self, "fingerprint", fingerprint(d))
 
     def __setattr__(self, *_):
@@ -159,22 +166,54 @@ class Packet:
 
     @property
     def approved(self) -> bool:
-        """Accepted by the owner. Only an approved packet could ever be eligible for an active decision."""
-        return self.data["review_status"] == "user_accepted_in_chat"
+        """Accepted by the owner for exactly this version. Only an approved packet could ever be eligible for an
+        active decision.
+
+        The four reference packets carry the acceptance recorded in the hash-checked handoff. Any revision must
+        carry its own acceptance bound to its packet ID and content hash (`accept`); acceptance of an earlier
+        version never carries over."""
+        d = self.data
+        if d["review_status"] != "user_accepted_in_chat":
+            return False
+        if "revision" not in d:
+            return True
+        a = d.get("acceptance") or {}
+        return a.get("packet_id") == d["packet_id"] and a.get("content_sha256") == content_hash(d)
 
 
 def new_version(old: Packet, changes: dict, reason: str, packet_id: str) -> Packet:
     """An explicit revision: a new packet with its own ID, a link to the version it replaces and why.
-    The old packet is untouched. Loosening an existing failure level is refused."""
+
+    The old packet is untouched. Loosening an existing failure level is refused. The revision starts as
+    analyst-proposed: it needs its own owner acceptance (`accept`), whatever the old version's status was."""
     if not reason.strip():
         raise PacketError("a new level version needs a reason")
+    if packet_id == old.id:
+        raise PacketError("a new level version needs a new packet ID")
     d = thaw(old.data)
     d.update(copy.deepcopy(changes))
     if old.downside and d.get("downside") and d["downside"]["failure"] < old.downside["failure"]:
         raise PacketError("the failure level can't be lowered because price fell; start a new analysis instead")
     d["packet_id"] = packet_id
+    if d["review_status"] != "code_candidate_unreviewed":
+        d["review_status"] = "analyst_proposed"
+    d.pop("acceptance", None)
+    d["revision"] = {"supersedes": old.id, "supersedes_content_sha256": content_hash(old.data), "reason": reason}
     d.setdefault("provenance", {})
     d["provenance"] = {**d["provenance"], "level_rationale": f"{reason} (replaces {old.id})"}
+    return Packet(d)
+
+
+def accept(packet: Packet, note: str) -> Packet:
+    """Record the owner's acceptance of exactly this packet version (ID and content hash). A code candidate
+    can't be accepted directly; it has to be reviewed into an analyst packet first."""
+    if not packet.reviewed:
+        raise PacketError("a code candidate can't be accepted; review it into an analyst packet first")
+    if not note.strip():
+        raise PacketError("an acceptance needs a note saying who accepted it and where")
+    d = thaw(packet.data)
+    d["review_status"] = "user_accepted_in_chat"
+    d["acceptance"] = {"packet_id": d["packet_id"], "content_sha256": content_hash(d), "note": note}
     return Packet(d)
 
 

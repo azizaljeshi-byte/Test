@@ -13,19 +13,29 @@ and the owner's explicit approval.
   **CIS UNSUPPORTED** and keeps its existing call, labelled legacy. Levels are never generated for other
   tickers; automatic level selection is unvalidated and out of scope.
 - **Reviewed is not approved.** A reviewed packet can be evaluated in shadow. Only an owner-accepted packet
-  (`Packet.approved`) that isn't stale can be `activation_eligible`; PODD is shown as "proposed (not
-  owner-accepted)" and is never eligible until accepted.
+  (`Packet.approved`) that isn't stale, evaluated live (not a frozen snapshot), can be `activation_eligible`.
+  PODD is shown as "proposed (not owner-accepted)" and is never eligible until accepted.
+- **Acceptance belongs to one version.** The four reference packets carry the acceptance recorded in the
+  hash-checked handoff. Any revision (`level_packet.new_version`) starts as analyst-proposed, whatever the old
+  version's status, and needs its own acceptance (`level_packet.accept`), bound to its packet ID and content
+  hash. Changing anything after acceptance, or copying an acceptance onto another version, un-approves it.
+- **Historical vs live.** The reference rows are **historical snapshots** (a record of 22/23 Oct 2026), never a
+  current call and never activation-eligible. Live evaluation uses the app's cached bars and quote.
 
 ## Gates before any call (in order)
 
 1. **No reviewed packet, or no floor** → CIS UNSUPPORTED (legacy call shown, labelled).
-2. **Unusable data** (no completed close, bars that fail the quality checks, nothing cached) → **DATA REVIEW**,
-   no CIS call. Never a HOLD or exit review from data known to be bad.
+2. **Unusable data** → **DATA REVIEW**, no CIS call. Never a HOLD or exit review from data known to be bad:
+   no completed close, bars that fail the quality checks, nothing cached, a latest completed bar more than one
+   weekday behind the last expected session (an old cache, or no new rows), or more than one weekday missing
+   among the ten before the latest bar. One weekday of slack covers a holiday (there's no exchange calendar).
 3. **Stale levels** → **STALE LEVELS — REVIEW REQUIRED** (a REVIEW, never a buy or sell). A packet is stale
-   when more than 20 completed sessions have passed since its as-of session (provisional limit, matching the
-   20-session horizon), or when today's history no longer has the as-of close the packet recorded (within
-   0.5%): a split, another corporate action or an adjustment change re-bases prices, so the levels need
-   re-review. The states are still shown for information, with the call they would have produced.
+   when more than 20 weekdays have passed between its as-of session and the evaluation date (provisional
+   limit, matching the 20-session horizon; counted on the calendar, so it runs even when no new rows arrive,
+   and holidays make it expire slightly early), or when today's history no longer has the as-of close the
+   packet recorded (within 0.5%): a split, another corporate action or an adjustment change re-bases prices, so
+   the levels need re-review. The states are still shown for information, with the call they would have
+   produced.
 4. Otherwise the mapping below.
 
 **What's not available live.** The app has no intraday low/high for the session, so on the Details card
@@ -47,7 +57,7 @@ machines are unchanged.
 | ceiling `testing` | RESISTANCE TEST | a quote/wick in the band, or a close back inside it after a breakout (unresolved) |
 | ceiling `close_above` | BREAKOUT CONFIRMED | a completed close above the band's upper edge |
 | ceiling `retest_defended` | BREAKOUT RETEST HELD | a later session traded into the band and closed above it |
-| ceiling `failed_breakout` | FAILED BREAKOUT | after a breakout, a completed close below the band's lower edge |
+| ceiling `failed_breakout` | FAILED BREAKOUT | after a breakout, a completed close below the band's lower edge; it stands until a completed close back above the band (wicks into it or closes inside it are only a test from below) |
 
 "Below" is strict: a close exactly at a threshold is not below it. The live quote and the session's low are
 shown as **provisional** and **intraday** facts; only a completed close changes the state behind an action.
@@ -181,7 +191,7 @@ risks, and anything marked urgent (severity 3). The shadow table lists which of 
 ## Limits
 
 - The four level sets were selected by an analyst; nothing here selects levels or proves they generalise.
-- The 465+ passing tests check the code against the fixtures and the agreed rules. They are **not** evidence of a
+- The 475 passing tests check the code against the fixtures and the agreed rules. They are **not** evidence of a
   profitable strategy, calibrated odds or the right 1.5 threshold; Codex should assess sensitivity (1.5, 2.0, …)
   once real historical samples exist.
 - No exchange calendar: completed sessions are bars dated before today's New York date; holidays and early

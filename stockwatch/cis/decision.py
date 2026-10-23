@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from . import features, level_packet, state
 
@@ -42,6 +42,8 @@ RR_MIN = 1.5                 # UNVALIDATED provisional screening minimum; sensit
 RR_ENV = "STOCKWATCH_CIS_RR_MIN"   # optional override, 1.0-5.0; its source is reported with every check
 MAX_PACKET_SESSIONS = 20     # provisional: a packet is stale once this many completed sessions have passed
 ANCHOR_TOLERANCE = 0.005     # the packet's as-of close must still match today's history within 0.5%
+MAX_BAR_LAG = 1              # live bars may trail the expected last session by one weekday (a holiday)
+MAX_MISSING = 1              # weekdays missing among the last 10 before the latest bar (a holiday)
 COST_ROUND_TRIP = 0.002      # illustrative costs/slippage for the net reward/risk; gross is shown too
 DEFENSE_LOOKBACK = 10        # completed sessions searched for a dated defense of the floor
 HORIZON = 20                 # trading sessions, the packets' scenario horizon
@@ -113,28 +115,58 @@ class Inputs:
     event: dict | None = None                  # a verified scheduled event, e.g. earnings
     sessions_to_event: int | None = None
     as_of_close_now: float | None = None       # today's history's close on the packet's as-of session
+    evaluated_on: str | None = None            # the New York date the evaluation is for
+    historical: bool = False                   # True for a frozen snapshot: never eligible for activation
+
+
+def weekdays_between(a: str | date, b: str | date) -> int:
+    """Weekdays strictly after a and strictly before b. No exchange calendar: holidays count as sessions, so
+    ages run slightly fast (the safe side for expiry) and the bar-lag check allows one holiday."""
+    a, b = (date.fromisoformat(x) if isinstance(x, str) else x for x in (a, b))
+    n, d = 0, a + timedelta(days=1)
+    while d < b:
+        n += d.weekday() < 5
+        d += timedelta(days=1)
+    return n
 
 
 def inputs_from_packet(packet, recent_bars: list | None = None) -> Inputs:
     """The packet's own frozen snapshot as inputs (the reference shadow run)."""
     q, r = packet["quote"], packet["session_range"]
     event = packet["verified_event"] if "verified_event" in packet.data else None
+    snap_day = str(datetime.fromisoformat(q["observed_at_utc"].replace("Z", "+00:00")).astimezone(features.NY).date())
     return Inputs(packet["completed_close"], packet["as_of_completed_session"], q["price"], q["observed_at_utc"],
                   r["low"], r["high"], [], recent_bars or [], True, None, level_packet.thaw(event) if event else None,
-                  None, packet["completed_close"])
+                  None, packet["completed_close"], snap_day, True)
 
 
 def live_inputs(packet, hist, quote: dict | None, now: datetime) -> Inputs:
     """Inputs from the app's cached daily bars and quote. Only completed sessions count as closes; the quote
     is used only if it passes the same 'current trade' check as Telegram (`transitions.current_quote`)."""
     from .. import transitions                      # shared quote validation; imported late to keep this light
+    today = now.astimezone(features.NY).date()
     if hist is None or len(hist) == 0:
-        return Inputs(None, None, data_ok=False, data_note="no daily bars cached yet")
+        return Inputs(None, None, data_ok=False, data_note="no daily bars cached yet", evaluated_on=str(today))
     q = features.check(hist, packet.symbol)
     boundary = features.default_boundary(hist.index, now)
     done = features.completed(hist, boundary) if boundary else hist.iloc[:0]
     if not q.usable or done.empty:
-        return Inputs(None, None, data_ok=False, data_note="; ".join(q.problems) or "no completed session")
+        return Inputs(None, None, data_ok=False, data_note="; ".join(q.problems) or "no completed session",
+                      evaluated_on=str(today))
+    last = done.index[-1].date()
+    expected = today - timedelta(days=1)
+    while expected.weekday() >= 5:
+        expected -= timedelta(days=1)
+    lag = weekdays_between(last, expected) + (last < expected)
+    if lag > MAX_BAR_LAG:
+        return Inputs(None, str(last), data_ok=False, evaluated_on=str(today),
+                      data_note=f"the latest completed bar is {last}, {lag} weekdays behind the expected {expected}")
+    have = {d.date() for d in done.index[-15:]}
+    checked = [d for d in (last - timedelta(days=i) for i in range(1, 15)) if d.weekday() < 5][:10]
+    gaps = [d for d in checked if d not in have and d > done.index[0].date()]
+    if len(gaps) > MAX_MISSING:
+        return Inputs(None, str(last), data_ok=False, evaluated_on=str(today),
+                      data_note=f"{len(gaps)} weekday sessions missing before {last} ({', '.join(map(str, sorted(gaps)))})")
     rows = [{"session": str(i.date()), "high": float(r.High), "low": float(r.Low), "close": float(r.Close),
              "completed": True} for i, r in done.iterrows()]
     later = [b for b in rows if b["session"] > packet["as_of_completed_session"]]
@@ -146,15 +178,19 @@ def live_inputs(packet, hist, quote: dict | None, now: datetime) -> Inputs:
     # the app has no intraday low/high for the session: those stay None ("not available"), never "no breach"
     return Inputs(rows[-1]["close"], rows[-1]["session"], None if cur is None else cur[0],
                   None if cur is None else cur[2].isoformat(), None, None, later, rows[-DEFENSE_LOOKBACK:],
-                  True, None, event, None, anchor)
+                  True, None, event, None, anchor, str(today), False)
 
 
 def staleness(packet, inp: Inputs) -> str | None:
     """Why the packet's levels can't be relied on today, or None. A stale packet stays useful for shadow
     analysis, but its states are no longer a basis for a call until a new version is reviewed."""
-    if len(inp.later_bars) > MAX_PACKET_SESSIONS:
-        return (f"the levels are {len(inp.later_bars)} completed sessions old (as of "
-                f"{packet['as_of_completed_session']}; limit {MAX_PACKET_SESSIONS}, provisional)")
+    on = inp.evaluated_on or inp.completed_session
+    age = weekdays_between(packet["as_of_completed_session"], on) if on else None
+    if age is None:
+        return "the evaluation date is unknown, so the levels' age can't be checked"
+    if age > MAX_PACKET_SESSIONS:                 # elapsed time, not how many rows the provider returned
+        return (f"the levels are about {age} sessions old on {on} (as of {packet['as_of_completed_session']}; "
+                f"limit {MAX_PACKET_SESSIONS}, provisional)")
     if inp.as_of_close_now is None:
         return f"today's history has no {packet['as_of_completed_session']} session to check the packet against"
     drift = inp.as_of_close_now / packet["completed_close"] - 1
@@ -319,10 +355,13 @@ def decide(packet, inp: Inputs, held: bool, tier: int | None = None, tactical_co
     if not packet.approved:
         reasons.append("These levels are proposed by the analyst, not accepted by the owner: shadow evaluation only, "
                        "not eligible for an active decision.")
+    if inp.historical:
+        reasons.append(f"Historical snapshot as of {inp.completed_session}: a record of that day, not a current call.")
     category, stance = ACTIONS[action]
     return {**base, "supported": True, "packet_id": packet.id, "review_status": packet["review_status"],
             "approval": "owner-accepted" if packet.approved else "proposed (not owner-accepted)",
-            "activation_eligible": packet.approved and stale is None, "stale": stale,
+            "evaluation": "historical snapshot" if inp.historical else "live",
+            "activation_eligible": packet.approved and stale is None and not inp.historical, "stale": stale,
             "intraday_available": inp.session_low is not None,
             "action": action, "category": category, "stance": stance,
             "downside": {"confirmed": DOWN_LABEL[conf], "confirmed_state": conf,
