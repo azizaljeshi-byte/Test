@@ -5,6 +5,7 @@ import math
 import re
 from html import escape
 
+from . import status
 from .transitions import effective_stance
 
 OPP, RISK, WARN, INFO, MUTED, INK = "#3dffa8", "#ff4d7a", "#ffb020", "#36c5f0", "#5f8796", "#c9f5e4"
@@ -426,6 +427,8 @@ def ring(snap: dict) -> tuple[int, str]:
     urgent = next((s for s in sigs if s["kind"] == "risk" and s["severity"] >= 3), None)
     if urgent:
         return 1, urgent["message"]
+    if status.forces_exit(price_status(snap), p["watchlist"]):
+        return 1, "support broke: exit the trade"
     if side == "risk" and stance == "REDUCE / EXIT":
         return 1, "the plan says reduce or exit"
     buying = side == "opp" and stance in ("BUY NOW", "BUY ON PULLBACK", "BUY THE BREAKOUT", "ADD")
@@ -581,7 +584,7 @@ def _action(snap: dict) -> tuple[str, str, str]:
     if p.get("error") or snap["verdict"] == "ERROR":
         return "NO SIGNAL", "?", MUTED
     # the same reconciliation the Telegram decision-change alerts use
-    stance = effective_stance(snap["verdict"], p.get("plan"), p["watchlist"])
+    stance = effective_stance(snap["verdict"], p.get("plan"), p["watchlist"], price_status(snap))
     return ACTIONS.get(stance, (stance, "●", INFO))
 
 
@@ -610,11 +613,52 @@ def row(snap: dict, was: str | None = None) -> str:
     plan = summary(p.get("plan"))
     return (f'<a class="mc-a" href="?view=target&t={escape(snap["ticker"])}" target="_self">'
             f'<div class="mc-li{" own" if not p["watchlist"] else ""}" style="--c:{color};--a:{acolor}">'
-            f'<div class="call"><span class="act">{glyph} {escape(call)}</span>{new}{tag}</div>'
+            f'<div class="call"><span class="act">{glyph} {escape(call)}</span>{new}{status_chip(snap)}{tag}</div>'
             f'<div class="mc-row"><div class="id"><b class="k"></b><span class="mc-tk">{escape(snap["ticker"])}</span>'
             f'<span class="nm">{escape(name)}</span></div></div>'
             f'<div class="px">{num(price_now)}{day_html}</div><div class="why">{why_html}</div>'
             + (f'<div class="pl"><b>{"IF IT FAILS" if wait else "PLAN"}</b>{escape(plan)}</div>' if plan else "") + '</div></a>')
+
+
+STATUS_STYLE = {"record_high": (OPP, "★"), "strong_uptrend": (OPP, "↗"), "pullback": (INFO, "↘"),
+                "weakening": (WARN, "▾"), "testing_support": (WARN, "◎"), "breakdown": (RISK, "✕"),
+                "deep_breakdown": (RISK, "✕✕"), "unknown": (MUTED, "?")}
+
+
+def price_status(snap: dict) -> dict | None:
+    """The stored price status (see status.py), or None for a snapshot saved before it existed."""
+    ps = ((snap.get("payload") or {}).get("technical") or {}).get("price_status")
+    return ps if isinstance(ps, dict) and ps.get("code") else None
+
+
+def status_chip(snap: dict) -> str:
+    """A small chip with the status for the list. An unknown status stays off the list (Details says why)."""
+    ps = price_status(snap)
+    if not ps or ps["code"] == "unknown":
+        return ""
+    color, glyph = STATUS_STYLE.get(ps["code"], (MUTED, "●"))
+    return f'<span class="mc-chip" style="--c:{color}"><b>{glyph}</b> {escape(ps.get("label") or ps["code"])}</span>'
+
+
+def status_note(snap: dict) -> str:
+    """The Details page's statement: where the price stands, what to do, and the levels behind it."""
+    ps = price_status(snap)
+    if not ps:
+        return ""
+    color, glyph = STATUS_STYLE.get(ps["code"], (MUTED, "●"))
+    lv = ps.get("levels") or {}
+    parts = [f'<div class="t">{glyph} {escape(ps.get("label") or ps["code"])}</div>',
+             f'<div style="font-size:.86rem;line-height:1.5;margin-top:.2rem;color:var(--ink)">{escape(ps.get("why") or "")}'
+             + ("" if ps["code"] == "unknown" else f' <b>{escape(ps.get("action") or "")}</b>') + "</div>"]
+    prov = ps.get("provisional")
+    if prov:
+        parts.append(f'<div style="font-size:.8rem;margin-top:.3rem;color:{WARN}">{escape(prov["note"])}</div>')
+    if ps.get("floor_known") and lv:
+        parts.append(f'<div style="font-size:.76rem;margin-top:.35rem;color:{MUTED}">'
+                     f'Support {lv["support_low"]:.2f} to {lv["support_high"]:.2f} · exit below {lv["exit_below"]:.2f} · '
+                     f'deeper level {lv["deep_below"]:.2f} · high {lv["high"]:.2f} · {lv["years_of_data"]:g}y of data · '
+                     f'as of {escape(str(lv["as_of"]))} close. Automatic levels, not reviewed.</div>')
+    return f'<div class="mc-ev" style="--c:{color}">{"".join(parts)}</div>'
 
 
 def reassess_note(snap: dict) -> str:

@@ -32,6 +32,8 @@ message is sent only when a stock moves between them:
 | SELL | SELL (reduce / exit) | held |
 | PASS | PASS (no trade) | watchlist |
 
+**Price status.** A message about a stock whose status is testing support, breakdown or deep breakdown (`docs/PRICE_STATUS.md`) adds one line with the status and the daily close it is based on. By default this changes no call. If `status.EXIT_ON_BREAKDOWN` is set, a completed close below the support zone on a held stock makes the call SELL whatever the verdict says, sent after the usual two-run confirmation with an exit line; it is off because the automatic support levels carry no information beyond volatility (`docs/CIS_PHASE2.md`).
+
 Moving within a class (e.g. BUY NOW → BUY ON BREAKOUT) or a verdict change that doesn't change the call (STRONG
 HOLD → HOLD) sends nothing. Individual signals (a golden cross, an RSI reading) no longer send messages from
 the scheduled job. A watchlist stock is never told to "sell": the dashboard's rule turns that into PASS.

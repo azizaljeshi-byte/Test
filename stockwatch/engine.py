@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from . import analogs, catalysts, deepdive, fundamental, relative, sec, street, technical, tradeplan
+from . import analogs, catalysts, deepdive, fundamental, relative, sec, status, street, technical, tradeplan, transitions
 from .config import Holding, Portfolio
 from .data import SECTOR_ETFS, DataProvider
 from .signals import OPPORTUNITY, RISK, Signal
@@ -215,6 +215,11 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
     quote = _optional(provider.quote, h.ticker) or {}
     ext_sig = _extended_hours(quote, h.is_watchlist)
 
+    # one plain status from record high to deep breakdown; display and exit-call only, it never moves a score
+    now = datetime.now(timezone.utc)
+    live = transitions.current_quote(quote, now)
+    tech["price_status"] = _optional(status.assess, hist, now, live[0] if live else None, not h.is_watchlist)
+
     raw_sec = None if light else _optional(provider.filings, h.ticker)
     raw_events = _optional(provider.events, h.ticker) or {}
     if not raw_events.get("earnings_date") and raw_sec:
@@ -285,6 +290,7 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
             plan = tradeplan.refine(plan, history, research.get("street"), events, h.tier, not h.is_watchlist,
                                     tech, plan_fs)
             plan = tradeplan.reconcile(plan, signals)
+            plan = tradeplan.exit_on_breakdown(plan, tech.get("price_status"), h.is_watchlist)
         ev.plan = plan
     except Exception as e:
         log.warning("trade plan failed for %s: %s", h.ticker, e)

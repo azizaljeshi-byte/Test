@@ -127,6 +127,8 @@ against each other. On top of that, every stock gets a plain-English briefing an
     - **Chart patterns:** the pinned AMZN 2013-2018 example (INSUFFICIENT EVIDENCE: 4 matches a window, 0 out-of-sample checks) with each match's chart and outcomes, and a button to run the lab on a ticker. Its source label comes from the provider the app actually runs on, so demo bars are never labelled as market data.
     - **On-demand only:** both buttons run on a background thread, one check at a time per app process; results are kept 12 hours, failures can be retried at once. A chart run on decades of history takes up to a minute or two of CPU.
 
+21. **Price status** (`status.py`, `docs/PRICE_STATUS.md`). One label per stock from record high to deep breakdown, from the last completed close, the 50/200-day averages and the automatic CIS support levels. A chip on each list row and a statement on Details. Display only by default. `status.EXIT_ON_BREAKDOWN` (off) would make a confirmed breakdown on a held stock a SELL call in the plan, dashboard and Telegram; it is off because `docs/CIS_PHASE2.md` found the automatic levels carry no information beyond volatility. Verdicts and scores are never changed.
+
 ## 3. Code map
 
 | File | Role |
