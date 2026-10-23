@@ -370,30 +370,87 @@ def test_missing_sessions_are_refused_but_one_holiday_is_allowed():
     assert D.decide(p, inp, True, 1)["action"] == "DATA REVIEW"
 
 
-def test_a_revision_never_inherits_the_owner_acceptance():
+def _with_ledger(monkeypatch, tmp_path, *extra):
+    """Simulate a reviewed ledger change that records more owner acceptances."""
+    import json
+    raw = json.loads(L.LEDGER.read_text())
+    raw["acceptances"] += list(extra)
+    path = tmp_path / "acceptances.json"
+    path.write_text(json.dumps(raw))
+    monkeypatch.setattr(L, "LEDGER", path)
+
+
+def _live(packet, close=None):
+    fresh = daily("2026-06-01", "2026-10-28", close=close or PACKETS["ISRG"]["completed_close"])
+    return D.live_inputs(packet, fresh, None, datetime(2026, 10, 29, 15, 0, tzinfo=timezone.utc))
+
+
+def test_a_revision_never_inherits_the_owner_acceptance(monkeypatch, tmp_path):
     isrg = PACKETS["ISRG"]
     v2 = L.new_version(isrg, {"downside": {**L.thaw(isrg.downside), "failure": 425}}, "tighter after a higher low",
                        "ISRG-2026-10-22-v2")
     assert isrg.approved and not v2.approved and v2["review_status"] == "analyst_proposed"
     assert v2["revision"]["supersedes"] == isrg.id
-    same = L.new_version(isrg, {}, "re-issued unchanged", "ISRG-2026-10-22-v2b")
-    assert not same.approved                                          # a new version always needs its own acceptance
-    accepted = L.accept(v2, "owner accepted v2 in chat")
-    assert accepted.approved and accepted["acceptance"]["packet_id"] == "ISRG-2026-10-22-v2"
-    tampered = L.thaw(accepted.data)
-    tampered["upside"]["ceilings"][0]["zone"] = {"low": 470, "high": 471}      # changed after acceptance
-    assert not L.Packet(tampered).approved
-    copied = L.thaw(L.new_version(accepted, {}, "next", "ISRG-v3").data)
-    copied["review_status"], copied["acceptance"] = "user_accepted_in_chat", accepted["acceptance"]
-    assert not L.Packet(copied).approved                               # v2's acceptance doesn't approve v3
+    assert not L.new_version(isrg, {}, "re-issued unchanged", "ISRG-2026-10-22-v2b").approved
     with pytest.raises(L.PacketError, match="can't be lowered"):
         L.new_version(isrg, {"downside": {**L.thaw(isrg.downside), "failure": 420}}, "price fell", "ISRG-v4")
     with pytest.raises(L.PacketError, match="new packet ID"):
         L.new_version(isrg, {}, "same id", isrg.id)
-    fresh = daily("2026-06-01", "2026-10-28", close=isrg["completed_close"])
-    live = D.live_inputs(v2, fresh, None, datetime(2026, 10, 29, 15, 0, tzinfo=timezone.utc))
-    assert D.decide(v2, live, True, 1)["activation_eligible"] is False
-    assert D.decide(accepted, live, True, 1)["activation_eligible"] is True
+    # the owner accepts v2: a ledger entry is recorded (in a reviewed PR), and only then is it approved
+    entry = L.acceptance_entry(v2, "owner accepted v2 in chat", "2026-10-24")
+    v2_accepted = L.thaw(v2.data)
+    v2_accepted["review_status"] = "user_accepted_in_chat"
+    assert not L.Packet(v2_accepted).approved                          # status alone: still not approved
+    _with_ledger(monkeypatch, tmp_path, entry)
+    assert L.Packet(v2_accepted).approved
+    assert D.decide(L.Packet(v2_accepted), _live(L.Packet(v2_accepted)), True, 1)["activation_eligible"] is True
+    assert D.decide(v2, _live(v2), True, 1)["activation_eligible"] is False
+
+
+def _edited(**edit):
+    d = L.thaw(PACKETS["ISRG"].data)
+    for path, value in edit.items():
+        node = d
+        *keys, last = path.split("__")
+        for k in keys:
+            node = node[int(k)] if isinstance(node, list) else node[k]
+        node[last] = value
+    return L.Packet(d)
+
+
+@pytest.mark.parametrize("case,packet", [
+    ("new ID, failure 424->425 (Codex)", lambda: _edited(packet_id="SYNTH-unaccepted-new-version", downside__failure=425)),
+    ("new ID only", lambda: _edited(packet_id="ISRG-2026-10-22-copy")),
+    ("same ID, changed failure", lambda: _edited(downside__failure=425)),
+    ("same ID, changed ceiling", lambda: _edited(upside__ceilings__0__zone={"low": 465, "high": 466})),
+    ("same ID, changed rationale", lambda: _edited(provenance__level_rationale="edited")),
+    ("embedded acceptance copied from the original",
+     lambda: _edited(downside__failure=425, acceptance={"packet_id": "ISRG-2026-10-22-v1",
+                                                         "content_sha256": L.content_hash(PACKETS["ISRG"].data)})),
+    ("revision metadata removed from a helper version", lambda: L.Packet({
+        **{k: v for k, v in L.thaw(L.new_version(PACKETS["ISRG"], {"downside": {**L.thaw(PACKETS["ISRG"].downside),
+                                                                                 "failure": 425}}, "r", "ISRG-v2").data).items()
+           if k != "revision"}, "review_status": "user_accepted_in_chat"})),
+])
+def test_approval_fails_closed_for_any_unrecorded_content(case, packet):
+    p = packet()
+    assert p["review_status"] == "user_accepted_in_chat", case                  # every case claims acceptance
+    assert not p.approved, case
+    d = D.decide(p, _live(p), True, 1)
+    assert d["approval"] == "proposed (not owner-accepted)" and d["activation_eligible"] is False, case
+
+
+def test_the_pinned_originals_stay_approved_and_the_ledger_matches_the_handoff():
+    for symbol in ("ISRG", "FICO", "CRDO"):
+        p = PACKETS[symbol]
+        assert p.approved and L.ledger()[p.id] == L.content_hash(p.data)
+        assert D.decide(p, _live(p, p["completed_close"]), True, 1)["activation_eligible"] is True
+    assert "PODD-2026-10-22-v1" not in L.ledger() and not PACKETS["PODD"].approved
+    assert set(L.ledger()) == {"ISRG-2026-10-22-v1", "FICO-2026-10-22-v1", "CRDO-2026-10-22-v1"}
+    with pytest.raises(L.PacketError, match="code candidate"):
+        cand = L.thaw(PACKETS["PODD"].data)
+        cand.update(level_selection="code_candidate_unreviewed", review_status="code_candidate_unreviewed")
+        L.acceptance_entry(L.Packet(cand), "x", "2026-10-24")
 
 
 def test_failed_breakout_stands_until_a_completed_close_back_above():

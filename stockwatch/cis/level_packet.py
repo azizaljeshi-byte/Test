@@ -3,8 +3,9 @@
 A packet's levels were chosen by an analyst from dated chart evidence; nothing here selects them. A code
 proposal would carry level_selection/review_status `code_candidate_unreviewed` and is never treated as
 reviewed. Quotes are evaluated against a packet (see `state`); they can't change it. A new analysis is a new
-packet version with a reason, and the old version stays as it was. A new version starts unapproved: the
-owner's acceptance is bound to one packet ID and content hash and never carries over to a revision.
+packet version with a reason, and the old version stays as it was. A new version starts unapproved. Owner
+approval lives only in the acceptance ledger, one entry per packet ID and content hash, so it never carries
+over to a revision or to edited content.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from types import MappingProxyType
 
 FIXTURES = Path(__file__).with_name("fixtures")
 ACCEPTANCE = FIXTURES / "CIS-chart-framework-v1-acceptance.json"
+LEDGER = FIXTURES / "acceptances.json"      # the only source of owner approval (see `Packet.approved`)
 SELECTIONS = ("analyst_selected", "code_candidate_unreviewed")
 REVIEWS = ("analyst_proposed", "user_accepted_in_chat", "code_candidate_unreviewed")
 REVIEW_LABEL = {"analyst_proposed": "analyst proposed, not yet accepted",
@@ -166,26 +168,21 @@ class Packet:
 
     @property
     def approved(self) -> bool:
-        """Accepted by the owner for exactly this version. Only an approved packet could ever be eligible for an
-        active decision.
+        """Accepted by the owner for exactly this version. Fails closed.
 
-        The four reference packets carry the acceptance recorded in the hash-checked handoff. Any revision must
-        carry its own acceptance bound to its packet ID and content hash (`accept`); acceptance of an earlier
-        version never carries over."""
-        d = self.data
-        if d["review_status"] != "user_accepted_in_chat":
-            return False
-        if "revision" not in d:
-            return True
-        a = d.get("acceptance") or {}
-        return a.get("packet_id") == d["packet_id"] and a.get("content_sha256") == content_hash(d)
+        Approval comes only from the acceptance ledger (`fixtures/acceptances.json`, changed only in reviewed pull
+        requests): an entry approves one packet ID with one content hash. Nothing inside the packet (its
+        review_status, an embedded acceptance, a missing revision) can grant approval, so a changed ID, level,
+        ceiling or any other content is unapproved until its own entry is recorded."""
+        return (self.data["review_status"] == "user_accepted_in_chat"
+                and ledger().get(self.data["packet_id"]) == content_hash(self.data))
 
 
 def new_version(old: Packet, changes: dict, reason: str, packet_id: str) -> Packet:
     """An explicit revision: a new packet with its own ID, a link to the version it replaces and why.
 
     The old packet is untouched. Loosening an existing failure level is refused. The revision starts as
-    analyst-proposed: it needs its own owner acceptance (`accept`), whatever the old version's status was."""
+    analyst-proposed: it needs its own ledger entry (`acceptance_entry`), whatever the old version's status was."""
     if not reason.strip():
         raise PacketError("a new level version needs a reason")
     if packet_id == old.id:
@@ -204,17 +201,21 @@ def new_version(old: Packet, changes: dict, reason: str, packet_id: str) -> Pack
     return Packet(d)
 
 
-def accept(packet: Packet, note: str) -> Packet:
-    """Record the owner's acceptance of exactly this packet version (ID and content hash). A code candidate
-    can't be accepted directly; it has to be reviewed into an analyst packet first."""
+def ledger(path: Path | None = None) -> dict[str, str]:
+    """packet ID -> accepted content hash, read from the acceptance ledger."""
+    raw = json.loads(Path(path or LEDGER).read_text())
+    return {e["packet_id"]: e["content_sha256"] for e in raw["acceptances"]}
+
+
+def acceptance_entry(packet: Packet, note: str, recorded: str) -> dict:
+    """The ledger entry that would record the owner's acceptance of exactly this version. It approves nothing
+    by itself: it has to be added to `fixtures/acceptances.json` in a reviewed pull request that links the
+    owner's acceptance. A code candidate can't be accepted; it has to be reviewed into an analyst packet first."""
     if not packet.reviewed:
         raise PacketError("a code candidate can't be accepted; review it into an analyst packet first")
     if not note.strip():
         raise PacketError("an acceptance needs a note saying who accepted it and where")
-    d = thaw(packet.data)
-    d["review_status"] = "user_accepted_in_chat"
-    d["acceptance"] = {"packet_id": d["packet_id"], "content_sha256": content_hash(d), "note": note}
-    return Packet(d)
+    return {"packet_id": packet.id, "content_sha256": content_hash(packet.data), "note": note, "recorded": recorded}
 
 
 def load_acceptance(path: Path = ACCEPTANCE) -> dict:

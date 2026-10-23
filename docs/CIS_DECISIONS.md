@@ -15,10 +15,13 @@ and the owner's explicit approval.
 - **Reviewed is not approved.** A reviewed packet can be evaluated in shadow. Only an owner-accepted packet
   (`Packet.approved`) that isn't stale, evaluated live (not a frozen snapshot), can be `activation_eligible`.
   PODD is shown as "proposed (not owner-accepted)" and is never eligible until accepted.
-- **Acceptance belongs to one version.** The four reference packets carry the acceptance recorded in the
-  hash-checked handoff. Any revision (`level_packet.new_version`) starts as analyst-proposed, whatever the old
-  version's status, and needs its own acceptance (`level_packet.accept`), bound to its packet ID and content
-  hash. Changing anything after acceptance, or copying an acceptance onto another version, un-approves it.
+- **Acceptance belongs to one version, and lives only in the ledger.** Owner approval comes only from
+  `stockwatch/cis/fixtures/acceptances.json`: each entry approves one packet ID with one content hash (all of
+  the packet except its review status). It holds ISRG, FICO and CRDO v1, as recorded in the hash-checked
+  handoff; PODD isn't in it. Nothing inside a packet (its review status, an embedded acceptance, a missing
+  revision) grants approval, so a changed ID, level, ceiling or any other content is unapproved. A revision
+  (`level_packet.new_version`) starts as analyst-proposed; `level_packet.acceptance_entry` produces the ledger
+  entry for an owner acceptance, which takes effect only once added in a reviewed pull request.
 - **Historical vs live.** The reference rows are **historical snapshots** (a record of 22/23 Oct 2026), never a
   current call and never activation-eligible. Live evaluation uses the app's cached bars and quote.
 
@@ -191,7 +194,7 @@ risks, and anything marked urgent (severity 3). The shadow table lists which of 
 ## Limits
 
 - The four level sets were selected by an analyst; nothing here selects levels or proves they generalise.
-- The 475 passing tests check the code against the fixtures and the agreed rules. They are **not** evidence of a
+- The 483 passing tests check the code against the fixtures and the agreed rules. They are **not** evidence of a
   profitable strategy, calibrated odds or the right 1.5 threshold; Codex should assess sensitivity (1.5, 2.0, …)
   once real historical samples exist.
 - No exchange calendar: completed sessions are bars dated before today's New York date; holidays and early
