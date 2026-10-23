@@ -12,7 +12,10 @@ statuses only**: no tickers, share counts, costs, bot token or chat ID. Message 
 
 **The tracked fleet** is your holdings list: every row of the `STOCKWATCH_PORTFOLIO` secret (or the
 Google Sheet), both held stocks (shares > 0) and watchlist stocks (shares 0). Add a row to start tracking a
-stock; delete it to stop. The S&P 500 discovery scan isn't part of it.
+stock; delete it to stop. The S&P 500 discovery scan isn't part of it and **never messages Telegram** unless
+you set the repository variable `STOCKWATCH_SP500_PUSH` to `true` (**Settings → Secrets and variables → Actions
+→ Variables**); then its daily 12:50 UTC run sends up to five S&P buy setups. Without it, that daily run is
+skipped.
 
 **What counts as a call** is the one the dashboard shows: the verdict reconciled with the trade plan
 (`transitions.effective_stance`, which the dashboard's list now also uses). Calls fall into classes, and a
@@ -52,13 +55,20 @@ the scheduled job. A watchlist stock is never told to "sell": the dashboard's ru
 
 **Each message** shows:
 - the ticker, held or watchlist, and the previous → new call
-- the price with its time and source (Yahoo live quote, or the last daily bar)
+- the price with when it **traded**: a regular-session or pre-market / after-hours trade time in New York
+  time, or "last daily bar" with its date. Last night's after-hours price seen before today's open, or a
+  quote without a valid trade time, falls back to the daily bar; the time a quote was fetched is never
+  shown as its trade time.
 - why: the verdict change and the top two reasons
 - the levels from the existing trade plan: entry zone and trigger for BUY / ADD / DIP (DIP says it's a conditional limit order, not a buy at the current price); the watch zone, marked
   "not an active buy", for WAIT; stop and target for HOLD; for TRIM, trim at the current price (the plan has no separate trim zone) with the stop; reduce /
   exit with the stop for SELL. A level the plan doesn't have reads "unavailable"; nothing is made up.
 - "Don't rush" when the dashboard would say REASSESS (a sell call on a stock that's bouncing)
 - "Model levels from StockWatch's rules, not orders or predictions."
+
+The call, price, levels, warnings and disclaimer are always sent whole. Only the "why" is shortened (each
+reason to 200 characters, marked …) to fit Telegram's 4,096-character limit. A message that wouldn't fit
+even then isn't sent at all; it stays pending and the run goes red. Nothing is ever cut off silently.
 
 ## The alert memory, and why it's encrypted
 
@@ -118,7 +128,7 @@ After that, the schedule runs `holdings-scan` on its own. Its first run records 
 | `holdings-dry-run` | no | no | **default for "Run workflow"**; demo data allowed (labelled synthetic) |
 | `telegram-check` | no (no network call) | no | after adding or changing the secrets |
 | `telegram-test-send` | one fixed test message, only with `SEND` | no | to prove delivery works |
-| `market-scan` | the S&P 500 setups | no | the daily 12:50 UTC job; manual runs no longer start it alongside the holdings scan |
+| `market-scan` | no, unless `STOCKWATCH_SP500_PUSH` is `true` | no | prints the S&P 500 setups to the log; manual runs no longer start it alongside the holdings scan |
 
 ## What a run's colour means
 
@@ -151,7 +161,7 @@ and Riyadh is UTC+3, so Riyadh is 7 hours ahead of New York.
 |---|---|---|---|
 | Scan, every 15 min | Fri 08:00 – Sat 01:45 | Fri 04:00 – 21:45 | Fri 11:00 – Sat 04:45 |
 | US regular session | 13:30 – 20:00 | 09:30 – 16:00 | 16:30 – 23:00 |
-| S&P 500 scan | 12:50 | 08:50 | 15:50 |
+| S&P 500 scan (only with `STOCKWATCH_SP500_PUSH`) | 12:50 | 08:50 | 15:50 |
 
 From 1 November (EST, UTC−5), the same UTC times are an hour earlier in New York, so the scans run
 3:00am – 8:45pm New York (11:00 – 04:45 Riyadh, unchanged). With the two-run confirmation, a change is

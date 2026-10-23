@@ -208,6 +208,11 @@ def holdings(mode: str, now: datetime, state_path: Path | None = None) -> Report
     report.add("Live quotes", f"{quotes} of {len(ok)}" + (" (synthetic)" if synthetic else ""))
 
     readings = {e.ticker: transitions.reading(e, e.ticker in stale)[0] for e in evals}
+    bar_dates = {}
+    for e in ok:
+        hist = provider.peek_history(e.ticker) if hasattr(provider, "peek_history") else None
+        if hist is not None and not hist.empty:
+            bar_dates[e.ticker] = str(hist.index[-1].date())
     if alert_state.key_status() != "configured":
         report.add("Decision changes", "not checked (no alert state key)")
         return report
@@ -240,10 +245,10 @@ def holdings(mode: str, now: datetime, state_path: Path | None = None) -> Report
             if i:
                 time.sleep(1.1)        # Telegram allows about one message a second per chat
             try:
-                notify.telegram_send(transitions.message(t, by_ticker[t["ticker"]]))
+                notify.telegram_send(transitions.message(t, by_ticker[t["ticker"]], bar_dates.get(t["ticker"])))
                 transitions.delivered(entries, t, stamp)
                 sent += 1
-            except notify.DeliveryError as e:
+            except (notify.DeliveryError, ValueError) as e:
                 failed += 1
                 last_error = str(e)
         if failed:

@@ -73,7 +73,9 @@ def ev(ticker, call, held=True, price=100.0, plan="same", error=None, verdict=No
     plan = PLANS[call] if plan == "same" else plan
     e = Evaluation(ticker, 1 if held else 2, not held, price, 60, 60, 60, verdict or VERDICT[call],
                    [Signal("risk" if call == "TRIM" else "opportunity", "t", "x", f"synthetic reason for {call}", 2)],
-                   {}, {}, plan=plan, quote={"live_price": price, "fetched_at": "2026-10-23T14:55:00+00:00"},
+                   {}, {}, plan=plan, quote={"market_state": "REGULAR", "live_price": price,
+                                             "live_time": datetime(2026, 10, 23, 14, 55, tzinfo=timezone.utc),
+                                             "fetched_at": "2026-10-23T14:58:00+00:00"},
                    error=error)
     return e
 
@@ -271,7 +273,8 @@ def test_messages_carry_the_plans_levels_and_never_invent_them():
     assert trim.startswith("🟠 A (held): HOLD → SELL SOME") and "HOLD → TRIM / REVIEW" in trim
     assert ("Trim: take some profit at the current price (the plan has no separate trim zone), keep the rest above 92.00."
             in trim) and "Target: 110.00 (52-week high)" in trim
-    assert "Price 100.00 (Yahoo, 2026-10-23 14:55 UTC)" in trim and "not orders or predictions" in trim
+    assert "Price 100.00 (Yahoo, regular session, last trade Fri 10:55 New York)" in trim
+    assert "not orders or predictions" in trim
     buy = text("WAIT", "BUY", held=False)
     assert "WAIT → BUY ON DIP" in buy and "Entry zone: 96.50–98.00" in buy and "Trigger: limit order" in buy
     assert "Conditional entry: a limit order inside the zone, not a buy at the current price." in buy
@@ -283,6 +286,50 @@ def test_messages_carry_the_plans_levels_and_never_invent_them():
     assert "Watch zone: 99.00–100.00 (not an active buy)" in wait
     bare = text("WAIT", "NOW", held=False, plan={"stance": "BUY NOW", "targets": []})
     assert "Entry zone: unavailable" in bare and "Stop: unavailable" in bare and "Target: unavailable" in bare
+
+
+def test_price_shows_when_it_traded_not_when_it_was_fetched():
+    e = ev("A", "HOLD")
+    utc = timezone.utc
+    pre = {"market_state": "PRE", "ext_session": "pre", "ext_price": 101.5,
+           "ext_time": datetime(2026, 10, 23, 12, 30, tzinfo=utc), "fetched_at": "2026-10-23T12:31:00+00:00"}
+    last_night = {"market_state": "PRE", "ext_session": "post", "ext_price": 99.0, "ext_stale": True,
+                  "ext_time": datetime(2026, 10, 22, 23, 50, tzinfo=utc), "fetched_at": "2026-10-23T12:31:00+00:00"}
+    no_time = {"market_state": "REGULAR", "live_price": 102.0, "fetched_at": "2026-10-23T15:00:00+00:00"}
+    naive = {"market_state": "REGULAR", "live_price": 102.0, "live_time": "2026-10-23T14:55:00"}
+    e.quote = pre
+    assert transitions.price_line(e, "2026-10-22") == "Price 101.50 (Yahoo, pre-market, last trade Fri 08:30 New York)"
+    for q in (last_night, no_time, naive):         # never dressed up as a current price
+        e.quote = q
+        assert transitions.price_line(e, "2026-10-22") == "Price 100.00 (Yahoo, last daily bar 2026-10-22)"
+    assert transitions.price_line(e, None).endswith("last daily bar, date unknown)")
+    e.quote = {"market_state": "REGULAR", "live_price": 102.0, "live_time": "2026-10-23T14:55:00+00:00"}
+    assert "regular session, last trade Fri 10:55" in transitions.price_line(e, None)
+
+
+def test_long_reasons_are_shortened_but_levels_and_disclaimer_always_arrive_whole():
+    e = ev("A", "BUY", held=False)
+    e.signals = [Signal("opportunity", "t", "x", "very long reason " * 400, 2) for _ in range(2)]
+    e.plan = dict(PLANS["BUY"], trigger="limit order in the zone " + "x" * 3000)
+    t = {"ticker": "A", "held": False, "from": "WAIT", "from_stance": "WAIT FOR CONFIRMATION", "from_verdict": "WATCH",
+         "to": "DIP", "to_stance": "BUY ON PULLBACK", "to_verdict": "WATCH"}
+    msg = transitions.message(t, e, "2026-10-22")
+    assert len(msg) <= notify.TELEGRAM_LIMIT and "…" in msg
+    for required in ("Entry zone: 96.50–98.00", "Trigger: limit order in the zone " + "x" * 3000,
+                     "Stop: 93.00 (below support at 94.00)", "Target: 108.00 (resistance)",
+                     "not a buy at the current price", "not orders or predictions"):
+        assert required in msg
+    e.plan = dict(PLANS["BUY"], trigger="x" * 5000)                      # essentials alone too long: refused
+    with pytest.raises(ValueError, match="exceed Telegram's limit"):
+        transitions.message(t, e, None)
+
+
+def test_telegram_refuses_to_clip_an_oversized_message(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", CHAT)
+    monkeypatch.setattr(notify.urllib.request, "urlopen", lambda *a, **k: pytest.fail("sent a clipped message"))
+    with pytest.raises(notify.DeliveryError, match="over Telegram's 4096; not sent"):
+        notify.telegram_send("x" * 5000)
 
 
 # ---- the encrypted alert memory
@@ -542,3 +589,13 @@ def test_workflow_always_scans_caches_only_the_encrypted_memory_and_is_dry_by_de
     assert cached == ["data/alert_state.bin", "data/alert_state.bin"] and "stockwatch.db" not in text
     save = next(s for s in scan["steps"] if str(s.get("uses", "")).startswith("actions/cache/save"))
     assert "always()" in save["if"] and "holdings-scan" in save["if"]
+
+
+def test_sp500_discovery_never_pushes_to_telegram_unless_the_owner_opts_in():
+    wf = yaml.safe_load((ROOT / ".github/workflows/scan.yml").read_text())
+    market = wf["jobs"]["market"]
+    runs = [str(s.get("run", "")) for s in market["steps"]]
+    assert not any(r.strip().endswith("--notify") for r in runs)          # no unconditional push
+    assert any("vars.STOCKWATCH_SP500_PUSH == 'true' && '--notify'" in r for r in runs)
+    assert "vars.STOCKWATCH_SP500_PUSH == 'true'" in market["if"]           # the daily schedule needs the opt-in
+    assert "TELEGRAM_BOT_TOKEN" not in market["env"] or "STOCKWATCH_SP500_PUSH" in str(market)

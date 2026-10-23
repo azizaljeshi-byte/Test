@@ -16,8 +16,11 @@ Rules:
 from __future__ import annotations
 
 import math
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 CONFIRM_RUNS = 2
+NY = ZoneInfo("America/New_York")
 
 # plan stance -> decision class; a move between classes is what's worth a message
 STANCE_CLASS = {
@@ -120,22 +123,56 @@ def _snap(e) -> dict:
                         "error": e.error, "signals": [{"code": s.code, "kind": s.kind} for s in e.signals]}}
 
 
-def message(t: dict, e) -> str:
-    """The Telegram text for one transition. Levels come from the existing plan; missing ones say so."""
+LIMIT = 4096          # Telegram's maximum message length
+REASON_CHARS = 200    # each "why" reason is shortened to this; the levels never are
+
+
+def _when(v):
+    """A trade timestamp as an aware datetime, or None (never assume 'now' for a missing or naive time)."""
+    if isinstance(v, str):
+        try:
+            v = datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return v if isinstance(v, datetime) and v.tzinfo is not None else None
+
+
+def price_line(e, bar_date: str | None) -> str:
+    """The price with when it actually traded. A live or extended-hours quote needs its own trade time;
+    last night's after-hours price seen before today's open, or any quote without a valid time, falls back
+    to the last completed daily bar."""
+    q = e.quote or {}
+    ny = lambda t: t.astimezone(NY).strftime("%a %H:%M")
+    live, t = q.get("live_price"), _when(q.get("live_time"))
+    if q.get("market_state") == "REGULAR" and _ok(live) and t:
+        return f"Price {live:.2f} (Yahoo, regular session, last trade {ny(t)} New York)"
+    ext, t = q.get("ext_price"), _when(q.get("ext_time"))
+    if _ok(ext) and t and not q.get("ext_stale") and q.get("ext_session") in ("pre", "post"):
+        return f"Price {ext:.2f} (Yahoo, {'pre-market' if q['ext_session'] == 'pre' else 'after hours'}, last trade {ny(t)} New York)"
+    return f"Price {e.price:.2f} (Yahoo, last daily bar{f' {bar_date}' if bar_date else ', date unknown'})"
+
+
+def _short(text: str, n: int) -> str:
+    return text if len(text) <= n else text[:n - 1].rstrip() + "…"
+
+
+def message(t: dict, e, bar_date: str | None = None) -> str:
+    """The Telegram text for one transition. Levels come from the existing plan; missing ones say so.
+
+    The call, price, levels, warnings and disclaimer are always sent in full; only the "why" is shortened
+    to fit Telegram's limit (marked with …). A message whose essentials alone don't fit raises ValueError
+    rather than being cut."""
     from . import ui                              # labels and the reassess rule, shared with the dashboard
     label = lambda stance: ui.ACTIONS.get(stance, (stance,))[0]
-    plan, q = e.plan or {}, e.quote or {}
+    plan = e.plan or {}
     held = "held" if t["held"] else "watchlist"
-    lines = [f"{ICON.get(t['to'], '•')} {e.ticker} ({held}): {label(t['from_stance'])} → {label(t['to_stance'])}"]
-    live = q.get("live_price") if _ok(q.get("live_price")) else q.get("ext_price") if _ok(q.get("ext_price")) else None
-    if live is not None and q.get("fetched_at"):
-        lines.append(f"Price {live:.2f} (Yahoo, {q['fetched_at'][:16].replace('T', ' ')} UTC)")
-    else:
-        lines.append(f"Price {e.price:.2f} (Yahoo, last daily bar)")
-    why = [s.message for s in e.signals[:2]]
+    head = [f"{ICON.get(t['to'], '•')} {e.ticker} ({held}): {label(t['from_stance'])} → {label(t['to_stance'])}",
+            price_line(e, bar_date)]
+    reasons = [_short(s.message, REASON_CHARS) for s in e.signals[:2]]
     verdicts = f"{t['from_verdict']} → {t['to_verdict']}" if t["from_verdict"] != t["to_verdict"] else t["to_verdict"]
-    lines.append(f"Why: {verdicts}" + (f". {'; '.join(why)}" if why else ""))
+    why = f"Why: {verdicts}" + (f". {'; '.join(reasons)}" if reasons else "")
 
+    lines = []
     lo, hi, stop, trigger = _px(plan.get("entry_low")), _px(plan.get("entry_high")), _px(plan.get("stop")), plan.get("trigger")
     target = next((x for x in plan.get("targets") or [] if _ok(x.get("price"))), None)
     stop_text = f"Stop: {stop} ({plan.get('stop_basis', 'plan stop')})" if stop else "Stop: unavailable"
@@ -167,4 +204,8 @@ def message(t: dict, e) -> str:
     if wait:
         lines.append(f"Don't rush: {wait}")
     lines.append("Model levels from StockWatch's rules, not orders or predictions.")
-    return "\n".join(lines)
+
+    essentials = len("\n".join(head + lines)) + 1          # +1: the newline before "why"
+    if essentials > LIMIT:
+        raise ValueError("the call, levels and warnings alone exceed Telegram's limit; not sent")
+    return "\n".join(head + [_short(why, LIMIT - essentials)] + lines)

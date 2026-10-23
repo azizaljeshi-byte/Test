@@ -73,10 +73,12 @@ def telegram_config() -> str:
 
 
 def _telegram_post(text: str) -> None:
+    if len(text) > TELEGRAM_LIMIT:   # refuse rather than cut: a clipped message could lose its stop or warning
+        raise DeliveryError(f"message is {len(text)} characters, over Telegram's {TELEGRAM_LIMIT}; not sent")
     token, chat = os.environ["TELEGRAM_BOT_TOKEN"].strip(), os.environ["TELEGRAM_CHAT_ID"].strip()
     req = urllib.request.Request(
         f"https://api.telegram.org/bot{token}/sendMessage",
-        data=json.dumps({"chat_id": chat, "text": text[:TELEGRAM_LIMIT], "disable_web_page_preview": True}).encode(),
+        data=json.dumps({"chat_id": chat, "text": text, "disable_web_page_preview": True}).encode(),
         headers={"Content-Type": "application/json"})
     for attempt in range(2):
         try:
