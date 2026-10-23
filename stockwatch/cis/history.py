@@ -161,4 +161,3 @@ def summary(rows: list[dict]) -> dict:
         vals = [r[k] for r in rows if r[k] is not None]
         out[f"median_{k}"] = float(np.median(vals)) if vals else None
     return out
-

@@ -1,0 +1,4 @@
+# CIS handoff files are pinned byte-for-byte by the SHA-256 in CIS-handoff-manifest.json (some use CRLF):
+# never convert their line endings or flag their whitespace.
+stockwatch/cis/fixtures/CIS-*.json -text -whitespace
+stockwatch/cis/fixtures/CIS-*.txt -text -whitespace
