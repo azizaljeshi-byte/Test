@@ -179,8 +179,11 @@ Gated rollout, each step a separate owner decision:
 ## Second source protocol (item 10)
 
 - **Finnhub (key configured by the owner, not visible to this build environment):** `/quote` gives the price,
-  today's high/low and the trade time. Used only in the shadow; accepted only if it's from today's New York
-  session, not in the future, and consistent (low ≤ price ≤ high). Daily candles on the free plan may be refused
+  today's high/low and the trade time. Used only in the shadow; accepted only if its timestamp is valid, from
+  today's New York session and not in the future, and its numbers are finite and consistent (low ≤ price ≤
+  high). It stands in for a missing Yahoo quote only under the Yahoo rule (a regular-session trade at most 60
+  minutes old); its high/low are used as intraday facts only when it agrees with a current Yahoo quote.
+  A stock that can't be compared at all still gets a full row, so one gap never stops the list. Daily candles on the free plan may be refused
   ("no access"); they're not used.
 - **Daily bars:** for a side-by-side check, download a second source's adjusted daily bars privately and run
   `stockwatch/cis/source_check.compare` (see `docs/CIS_PROVIDER_CHECK.md`). Still **NOT VERIFIED**: no market-data

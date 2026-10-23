@@ -237,3 +237,64 @@ def test_phase2_modules_stay_out_of_production_paths():
                  "data.py", "finnhub.py"):
         mods = [n.module or "" for n in ast.walk(ast.parse((root / name).read_text())) if isinstance(n, ast.ImportFrom)]
         assert not any("cis" in m for m in mods), name
+
+
+# ---- ChatGPT pre-review of PR #32: incomplete rows and bad Finnhub data never break the comparison
+
+ROW_KEYS = {"ticker", "held", "tier", "legacy", "second_source", "reasons", "data", "candidate", "discrepancy",
+            "alert_preview", "coverage", "action", "cis_class", "packet_id"}
+
+
+@pytest.mark.parametrize("hist", [None, pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])])
+def test_missing_or_empty_history_still_gives_a_full_row_that_renders(hist):
+    for snap, packets in ((_snap("SYN"), {}), (_snap("ISRG", tier=1), None)):
+        r = W.row(snap, hist, None, None, NOW, packets=packets)
+        assert ROW_KEYS <= set(r) and r["alert_preview"] and r["data"] == "no daily bars available"
+        assert W.table_rows([r])[0][3] == "data problem"
+        facts, why = W.details(r)
+        assert "alerts:" in facts and why
+    approved = W.row(_snap("ISRG", tier=1), hist, None, None, NOW)
+    assert approved["action"] == "DATA REVIEW" and "no CIS call" in approved["alert_preview"]
+
+
+@pytest.mark.parametrize("t", ["abc", float("nan"), 1e30, -1e30, None, [], True])
+def test_malformed_finnhub_timestamps_are_ignored_not_raised(t):
+    assert W.finnhub_session({"price": 100.0, "high": 101.0, "low": 99.0, "time": t}, NOW) is None
+
+
+def test_bad_finnhub_numbers_are_ignored():
+    for bad in ({"price": float("nan")}, {"high": float("inf")}, {"low": True}, {"price": "100"}):
+        assert W.finnhub_session({**_fq(), **bad}, NOW) is None
+
+
+def test_an_old_finnhub_quote_never_becomes_the_current_price():
+    isrg = D.reviewed_packets()["ISRG"]
+    c = isrg["completed_close"]
+    hist = pd.DataFrame({"Open": c, "High": c + 1, "Low": c - 1, "Close": c, "Volume": 1e6},
+                        index=pd.bdate_range("2026-06-01", "2026-10-28", tz="America/New_York"))
+    early = datetime(2026, 10, 29, 13, 40, tzinfo=timezone.utc)                  # 09:40 New York: in session
+    old = W.row(_snap("ISRG", tier=1), hist, None, _fq(445.0, low=440, high=446, when=early),
+                datetime(2026, 10, 29, 15, 0, tzinfo=timezone.utc))              # 80 minutes later
+    assert old["second_source"]["finnhub_current"] is False
+    assert not any("Quote from Finnhub" in x for x in old["reasons"])
+    pre = W.finnhub_session(_fq(when=datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)),
+                            datetime(2026, 10, 29, 12, 5, tzinfo=timezone.utc))   # 08:00 New York, pre-market
+    assert pre is not None and pre["current"] is False
+
+
+def test_one_failing_stock_never_stops_the_comparison(monkeypatch):
+    class Prov:
+        def history(self, t):
+            return synthetic(500, start="2024-11-20")
+
+        def quote(self, t):
+            return {}
+    real = W.row
+    monkeypatch.setattr(W, "row", lambda s, *a, **k: (_ for _ in ()).throw(ValueError("boom")) if s["ticker"] == "BAD"
+                        else real(s, *a, **k))
+    rows = W.run([_snap("AAA"), _snap("BAD"), _snap("CCC")], Prov(), NOW)
+    assert [r["ticker"] for r in rows] == ["AAA", "BAD", "CCC"]
+    bad = rows[1]
+    assert ROW_KEYS <= set(bad) and bad["action"] == "CIS UNSUPPORTED" and "boom" in bad["reasons"][0]
+    assert len(W.table_rows(rows)) == 3 and all(W.details(r)[0] for r in rows)
+    assert W.coverage(rows)["data problems"] == 1

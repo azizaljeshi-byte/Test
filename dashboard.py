@@ -966,26 +966,12 @@ def _cis_watchlist(snaps: list[dict]):
     rows = job["result"]
     cov = cis_watchlist.coverage(rows)
     st.caption(f"Checked {job['when']} UTC · " + " · ".join(f"{k}: {v}" for k, v in cov.items() if v))
-    st.markdown(ui.table(["Stock", "CIS", "Legacy", "Candidate"], [
-        [r["ticker"] + (" (held)" if r["held"] else ""), r["action"], r["legacy"]["stance"],
-         (r.get("candidate") or {}).get("state") or ("data problem" if r.get("data") != "ok" else "none")]
-        for r in rows], wrap_all=True), unsafe_allow_html=True)
+    st.markdown(ui.table(["Stock", "CIS", "Legacy", "Candidate"], cis_watchlist.table_rows(rows), wrap_all=True),
+                unsafe_allow_html=True)
     with st.expander("Why, per stock", expanded=False):
         for r in rows:
-            d, c = r.get("discrepancy") or {}, r.get("candidate") or {}
-            bits = [f"alerts: {r['alert_preview']}", f"price check: {r['second_source']['status']}"]
-            if r.get("data") != "ok":
-                bits.append(f"data: {r.get('data')}")
-            elif c.get("why"):
-                bits.append(f"no candidate: {c['why']}")
-            if c.get("floor"):
-                bits.append(f"candidate floor {c['floor'][0]:g}–{c['floor'][1]:g}, failure {c['failure']:g}")
-            if d.get("stop_vs_candidate_failure") is not None:
-                bits.append(f"legacy stop {d['stop_vs_candidate_failure']:+.1%} vs candidate failure")
-            if d.get("legacy_target_is_measured_move"):
-                bits.append("legacy target is a measured move (no chart level)")
-            st.markdown(f"**{escape(r['ticker'])}** · " + escape(" · ".join(bits)) + "<br>"
-                        + escape(" ".join(r["reasons"][:3])), unsafe_allow_html=True)
+            facts, why = cis_watchlist.details(r)
+            st.markdown(f"**{escape(r['ticker'])}** · {escape(facts)}<br>{escape(why)}", unsafe_allow_html=True)
 
 
 def _cis_levels_only(symbol: str, why: str):
