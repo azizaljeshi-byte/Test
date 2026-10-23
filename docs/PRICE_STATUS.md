@@ -60,6 +60,16 @@ watchlist name) with "don't add yet · closed below support X"; the radar says "
 (`status.blocks_buy`, `tradeplan.hold_off_buying`, `transitions.effective_stance`). It sells nothing. Testing
 support keeps the buy: buying at support is coherent. The engine's verdict label is unchanged.
 
+## Numbers and a second opinion
+
+Every row shows the numbers behind the status: `LEVELS S 98.00 · deeper 90.00 · R 101.50` (support zone low, the deeper
+level, nearest automatic resistance above the close). Details adds the full zones. For a weak or broken stock
+(weakening, testing support, breakdown, deep breakdown) the app also asks Finnhub for its own technical read (the
+buy / neutral / sell count of its daily indicators, plus its support and resistance levels, `finnhub.second_opinion`,
+cached 6 hours in `data.second_opinion`) and shows `confirms`, `disagrees` or `mixed` on Details. Display only: it
+changes no status, call or alert. Healthy stocks and screening runs make no request. Finnhub may keep these endpoints
+on a paid plan; whatever it refuses is simply left off (not verified against the live API from the build environment).
+
 ## Telegram
 
 A message is sent on every status change among the seven steps, with the same two-run confirmation, silent first baseline and retry as call alerts (`status.ALERT_ON_CHANGE`, `docs/TELEGRAM_ALERTS.md`). With many tickers this can be frequent; limiting it to weakening and worse is a small change in `transitions.status_reading`.

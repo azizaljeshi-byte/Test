@@ -131,3 +131,18 @@ def quote(ticker: str) -> dict:
     q = _get("/quote", symbol=ticker) or {}
     return {"price": q.get("c"), "high": q.get("h"), "low": q.get("l"), "open": q.get("o"),
             "prev_close": q.get("pc"), "time": q.get("t"), "source": "Finnhub"}
+
+
+def second_opinion(ticker: str) -> dict | None:
+    """Finnhub's own technical read: the buy / neutral / sell count of its daily indicators and its support and
+    resistance levels. Either endpoint may be premium-only on some plans; whichever answers is used, and None means
+    neither did. Display only: nothing in scoring, status or alerts reads it."""
+    ta = _try("technical-indicator", lambda: _get("/scan/technical-indicator", symbol=ticker, resolution="D"), {}) or {}
+    sr = _try("support-resistance", lambda: _get("/scan/support-resistance", symbol=ticker, resolution="D"), {}) or {}
+    analysis = ta.get("technicalAnalysis") or {}
+    count = analysis.get("count") or {}
+    levels = [x for x in (sr.get("levels") or []) if isinstance(x, (int, float)) and not isinstance(x, bool)]
+    if not analysis.get("signal") and not levels:
+        return None
+    return {"source": "Finnhub", "signal": analysis.get("signal"), "buy": count.get("buy"), "neutral": count.get("neutral"),
+            "sell": count.get("sell"), "trending": (ta.get("trend") or {}).get("trending"), "levels": levels}
