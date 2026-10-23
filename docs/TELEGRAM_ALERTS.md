@@ -20,7 +20,8 @@ message is sent only when a stock moves between them:
 
 | Class | Calls | Applies to |
 |---|---|---|
-| BUY | BUY NOW, BUY ON DIP, BUY ON BREAKOUT | watchlist |
+| BUY | BUY NOW, BUY ON BREAKOUT (need the BUY SETUP verdict) | watchlist |
+| DIP | BUY ON DIP: a conditional limit order in the zone below the price, which the plan can give without BUY SETUP | watchlist |
 | ADD | BUY MORE | held |
 | WAIT | WAIT (not a buy yet) | both |
 | HOLD | HOLD | held |
@@ -28,15 +29,17 @@ message is sent only when a stock moves between them:
 | SELL | SELL (reduce / exit) | held |
 | PASS | PASS (no trade) | watchlist |
 
-Moving within a class (e.g. BUY NOW → BUY ON DIP) or a verdict change that doesn't change the call (STRONG
+Moving within a class (e.g. BUY NOW → BUY ON BREAKOUT) or a verdict change that doesn't change the call (STRONG
 HOLD → HOLD) sends nothing. Individual signals (a golden cross, an RSI reading) no longer send messages from
 the scheduled job. A watchlist stock is never told to "sell": the dashboard's rule turns that into PASS.
 
 **Rules:**
 - **First sight is a baseline.** The first time a stock is read (or after the memory expires) its current
   call is recorded and nothing is sent, so you don't get a burst of "BUY" messages.
-- **Confirmed on two runs in a row.** A new call has to be seen on two consecutive valid runs (about 15
-  to 30 minutes) before it's sent. A one-run flip, or a flip back, sends nothing.
+- **Confirmed on two valid readings in a row.** A new call has to be seen on two valid readings in a row
+  (usually two consecutive runs, about 15 to 30 minutes) before it's sent. A one-run flip, or a flip back,
+  sends nothing. A run without a valid reading for that stock (outage, stale prices) in between neither
+  confirms nor cancels the pending change.
 - **No data, no change.** When a stock can't be read properly (analysis error, no trade plan, prices
   older than the last session, or verdict and plan disagreeing) its recorded call stays as it was. An
   outage is never read as HOLD or SELL.
@@ -51,8 +54,8 @@ the scheduled job. A watchlist stock is never told to "sell": the dashboard's ru
 - the ticker, held or watchlist, and the previous → new call
 - the price with its time and source (Yahoo live quote, or the last daily bar)
 - why: the verdict change and the top two reasons
-- the levels from the existing trade plan: entry zone and trigger for BUY / ADD; the watch zone, marked
-  "not an active buy", for WAIT; stop and target for HOLD; the trim instruction and stop for TRIM; reduce /
+- the levels from the existing trade plan: entry zone and trigger for BUY / ADD / DIP (DIP says it's a conditional limit order, not a buy at the current price); the watch zone, marked
+  "not an active buy", for WAIT; stop and target for HOLD; for TRIM, trim at the current price (the plan has no separate trim zone) with the stop; reduce /
   exit with the stop for SELL. A level the plan doesn't have reads "unavailable"; nothing is made up.
 - "Don't rush" when the dashboard would say REASSESS (a sell call on a stock that's bouncing)
 - "Model levels from StockWatch's rules, not orders or predictions."

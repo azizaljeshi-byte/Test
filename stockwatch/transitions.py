@@ -6,8 +6,8 @@ message never says BUY while the app says WAIT. Individual signal codes don't tr
 
 Rules:
 - A stock's first valid reading records a baseline and sends nothing.
-- A new call must be seen on CONFIRM_RUNS consecutive valid runs before it's sent, so a one-run flip doesn't
-  alert. Flipping back cancels it.
+- A new call must be seen on CONFIRM_RUNS valid readings in a row before it's sent, so a one-run flip doesn't
+  alert. Flipping back cancels it; a run with no valid reading in between neither confirms nor cancels.
 - A run with no valid reading for a stock (error, no plan, stale prices, a verdict/plan conflict) changes
   nothing: an outage is never read as HOLD or SELL.
 - Buying or selling the whole position (watchlist <-> held) re-baselines silently.
@@ -21,7 +21,9 @@ CONFIRM_RUNS = 2
 
 # plan stance -> decision class; a move between classes is what's worth a message
 STANCE_CLASS = {
-    "BUY NOW": "BUY", "BUY ON PULLBACK": "BUY", "BUY THE BREAKOUT": "BUY", "ADD": "ADD",
+    # BUY ON PULLBACK is a conditional entry (a limit order in the zone, below the price). The plan gives it
+    # without the BUY SETUP verdict and the dashboard shows it as BUY ON DIP, so it's its own class.
+    "BUY NOW": "BUY", "BUY THE BREAKOUT": "BUY", "BUY ON PULLBACK": "DIP", "ADD": "ADD",
     "WAIT FOR CONFIRMATION": "WAIT", "HOLD": "HOLD", "TRIM": "TRIM", "TRIM / PROTECT": "TRIM",
     "REDUCE / EXIT": "SELL", "NO TRADE": "PASS",
 }
@@ -29,7 +31,7 @@ VERDICT_STANCE = {"OPPORTUNITY - ADD": "ADD", "BUY SETUP": "BUY NOW", "TRIM / RE
                   "RISK - REVIEW": "REDUCE / EXIT", "AVOID": "NO TRADE"}
 BUY_VERDICTS = {"OPPORTUNITY - ADD", "BUY SETUP"}
 RISK_VERDICTS = {"RISK - REVIEW", "TRIM / REVIEW", "AVOID"}
-ICON = {"BUY": "🟢", "ADD": "🟢", "WAIT": "⚪", "HOLD": "🔵", "TRIM": "🟠", "SELL": "🔴", "PASS": "⚫"}
+ICON = {"BUY": "🟢", "ADD": "🟢", "DIP": "🟢", "WAIT": "⚪", "HOLD": "🔵", "TRIM": "🟠", "SELL": "🔴", "PASS": "⚫"}
 
 
 def effective_stance(verdict: str, plan: dict | None, watchlist: bool) -> str:
@@ -140,7 +142,9 @@ def message(t: dict, e) -> str:
     target_text = f"Target: {target['price']:.2f} ({target['label']})" if target else "Target: unavailable"
     zone = f"{lo}–{hi}" if lo and hi else None
     to = t["to"]
-    if to in ("BUY", "ADD"):
+    if to == "DIP":
+        lines.append("Conditional entry: a limit order inside the zone, not a buy at the current price.")
+    if to in ("BUY", "ADD", "DIP"):
         lines += [f"Entry zone: {zone}" if zone else "Entry zone: unavailable"]
         if trigger:
             lines.append(f"Trigger: {trigger}")
@@ -152,7 +156,8 @@ def message(t: dict, e) -> str:
     elif to == "HOLD":
         lines += [stop_text, target_text]
     elif to == "TRIM":
-        lines.append("Trim: take some profit, keep the rest" + (f" above {stop}." if stop else "; stop unavailable."))
+        lines.append("Trim: take some profit at the current price (the plan has no separate trim zone), keep the rest"
+                     + (f" above {stop}." if stop else "; stop unavailable."))
         lines.append(target_text)
     elif to == "SELL":
         lines.append("Reduce or exit." + (f" If you keep part, sell on a close below {stop}." if stop else " Stop unavailable."))

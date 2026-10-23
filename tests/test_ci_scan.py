@@ -61,10 +61,12 @@ PLANS = {   # synthetic plans in the trade-plan shape
              "targets": [{"price": 110.0, "label": "52-week high"}], "trigger": None},
     "BUY": {"stance": "BUY ON PULLBACK", "entry_low": 96.5, "entry_high": 98.0, "stop": 93.0, "stop_basis": "below support at 94.00",
             "targets": [{"price": 108.0, "label": "resistance"}], "trigger": "limit order in the zone, -2.0% below the current price"},
+    "NOW": {"stance": "BUY NOW", "entry_low": 99.0, "entry_high": 100.0, "stop": 95.0, "stop_basis": "below support at 96.00",
+            "targets": [{"price": 108.0, "label": "resistance"}], "trigger": None},
     "WAIT": {"stance": "WAIT FOR CONFIRMATION", "entry_low": 99.0, "entry_high": 100.0, "stop": 95.0, "stop_basis": "2x ATR below entry",
              "targets": [{"price": 108.0, "label": "resistance"}], "trigger": "a daily close back above 100.50 (+0.5%)"},
 }
-VERDICT = {"HOLD": "HOLD", "TRIM": "TRIM / REVIEW", "BUY": "BUY SETUP", "WAIT": "WATCH"}
+VERDICT = {"HOLD": "HOLD", "TRIM": "TRIM / REVIEW", "BUY": "WATCH", "NOW": "BUY SETUP", "WAIT": "WATCH"}
 
 
 def ev(ticker, call, held=True, price=100.0, plan="same", error=None, verdict=None):
@@ -187,11 +189,35 @@ def test_effective_stance_is_the_dashboards_call():
     (ev("A", "HOLD", price=float("nan")), False, "no price"),
     (ev("A", "HOLD"), True, "stale prices"),
     (ev("A", "HOLD", plan=None), False, "no trade plan"),
-    (ev("A", "BUY", held=False, verdict="WATCH"), False, "verdict and plan disagree"),   # never BUY while WATCH
+    (ev("A", "NOW", held=False, verdict="WATCH"), False, "verdict and plan disagree"),   # never BUY NOW while WATCH
     (ev("A", "TRIM", verdict="STRONG HOLD"), False, "verdict and plan disagree"),
 ])
 def test_no_valid_reading_means_no_call(e, stale, why):
     assert transitions.reading(e, stale) == (None, why)
+
+
+def test_engine_plan_buy_on_dip_for_a_watch_verdict_is_tracked_like_the_dashboard_shows_it():
+    """tradeplan.build gives a watchlist uptrend above its pullback zone BUY ON PULLBACK even with a WATCH
+    verdict; the dashboard says BUY ON DIP, so the tracker must accept it, as a conditional entry."""
+    from stockwatch import tradeplan
+    close = pd.Series([100 + i * 0.05 for i in range(240)] + [104.0] * 20)
+    hist = pd.DataFrame({"Close": close})
+    tech = {"price": 110.0, "atr": 2.0, "sma50": 104.0, "sma200": 100.0, "trend": "up", "high_52w": 130.0}
+    plan = tradeplan.build(hist, tech, {}, 60.0, "WATCH", 2, True, levels={"support": 100.0, "resistance": 120.0})
+    assert plan["stance"] == "BUY ON PULLBACK" and plan["entry_high"] < 110.0      # the zone sits below the price
+    e = ev("W", "WAIT", held=False, price=110.0, plan=plan, verdict="WATCH")
+    snap = {"verdict": "WATCH", "payload": {"plan": plan, "watchlist": True}}
+    assert ui._action(snap)[0] == "BUY ON DIP"
+    state, why = transitions.reading(e, False)
+    assert why == "" and state["state"] == "DIP"
+    entries, ready, c = transitions.step({}, {"W": state}, "t1")
+    assert c["baseline"] == 1 and not ready                                   # a baseline, not a BUY alert
+    entries, _, _ = step({}, ev("W", "WAIT", held=False))
+    for _ in range(2):
+        entries, ready, _ = transitions.step(entries, {"W": state}, "t")
+    msg = transitions.message(ready[0], e)
+    assert "WAIT → BUY ON DIP" in msg and "not a buy at the current price" in msg
+    assert f"Entry zone: {plan['entry_low']:.2f}–{plan['entry_high']:.2f}" in msg and "BUY NOW" not in msg
 
 
 def step(entries, *evals, now="t"):
@@ -229,7 +255,7 @@ def test_undelivered_transition_is_offered_again_once_delivered_never_repeats():
     assert len(ready) == 1 and ready[0]["first_seen"] == "t"
     transitions.delivered(entries, ready[0], "t2")
     entries, ready, c = step(entries, ev("W", "BUY", held=False))
-    assert not ready and c["unchanged"] == 1 and entries["W"]["state"] == "BUY"
+    assert not ready and c["unchanged"] == 1 and entries["W"]["state"] == "DIP"
 
 
 def text(call_from, call_to, held=True, **kw):
@@ -243,15 +269,19 @@ def text(call_from, call_to, held=True, **kw):
 def test_messages_carry_the_plans_levels_and_never_invent_them():
     trim = text("HOLD", "TRIM")
     assert trim.startswith("🟠 A (held): HOLD → SELL SOME") and "HOLD → TRIM / REVIEW" in trim
-    assert "Trim: take some profit, keep the rest above 92.00." in trim and "Target: 110.00 (52-week high)" in trim
+    assert ("Trim: take some profit at the current price (the plan has no separate trim zone), keep the rest above 92.00."
+            in trim) and "Target: 110.00 (52-week high)" in trim
     assert "Price 100.00 (Yahoo, 2026-10-23 14:55 UTC)" in trim and "not orders or predictions" in trim
     buy = text("WAIT", "BUY", held=False)
     assert "WAIT → BUY ON DIP" in buy and "Entry zone: 96.50–98.00" in buy and "Trigger: limit order" in buy
+    assert "Conditional entry: a limit order inside the zone, not a buy at the current price." in buy
+    now = text("BUY", "NOW", held=False)
+    assert "BUY ON DIP → BUY NOW" in now and "Conditional entry" not in now and "Entry zone: 99.00–100.00" in now
     assert "Stop: 93.00 (below support at 94.00)" in buy and "Target: 108.00 (resistance)" in buy
     wait = text("BUY", "WAIT", held=False)
     assert "Not a buy yet. Wait for a daily close back above 100.50" in wait and "Entry zone" not in wait
     assert "Watch zone: 99.00–100.00 (not an active buy)" in wait
-    bare = text("WAIT", "BUY", held=False, plan={"stance": "BUY NOW", "targets": []})
+    bare = text("WAIT", "NOW", held=False, plan={"stance": "BUY NOW", "targets": []})
     assert "Entry zone: unavailable" in bare and "Stop: unavailable" in bare and "Target: unavailable" in bare
 
 
