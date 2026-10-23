@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from . import analogs, catalysts, deepdive, fundamental, momentum, relative, sec, status, street, technical, tradeplan, transitions
 from .config import Holding, Portfolio
-from . import data
+from . import data, finnhub
 from .data import SECTOR_ETFS, DataProvider
 from .signals import OPPORTUNITY, RISK, Signal
 
@@ -225,7 +225,7 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
     if not light and isinstance(ps, dict) and ps.get("code") in status.BEARISH:
         # a second source's technical read, only where it matters (a weak or broken stock), to keep the requests few
         ps["second"] = status.second_opinion(ps["code"], _optional(data.second_opinion, h.ticker),
-                                             (ps.get("levels") or {}).get("close"))
+                                             (ps.get("levels") or {}).get("close")) or status.second_unavailable(finnhub.enabled())
 
     raw_sec = None if light else _optional(provider.filings, h.ticker)
     raw_events = _optional(provider.events, h.ticker) or {}

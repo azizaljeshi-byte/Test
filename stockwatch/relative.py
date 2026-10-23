@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from . import momentum
 from .signals import OPPORTUNITY, RISK, Signal
 
 
@@ -52,8 +53,11 @@ def analyze(stock: pd.DataFrame, market: pd.DataFrame | None, sector: pd.DataFra
     return adj, m, out
 
 
-def market_regime(market: pd.DataFrame) -> dict:
-    """Simple risk-on / risk-off read from the benchmark's trend."""
+def market_regime(market: pd.DataFrame, now=None) -> dict:
+    """Risk-on / risk-off / caution from the benchmark. The trend rule is slow (the 200-day), so a market that is
+    clearly deteriorating can still read risk-on for weeks. A short-term check closes that gap: a trend-based
+    RISK-ON becomes CAUTION, with the reason, when SPY is below its 50-day average or its momentum is weak or falling
+    or sustained selling is showing (momentum.py). Display only; no score reads it."""
     c = market["Close"]
     sma200 = c.rolling(200).mean().iloc[-1]
     sma50 = c.rolling(50).mean().iloc[-1]
@@ -64,5 +68,20 @@ def market_regime(market: pd.DataFrame) -> dict:
         state = "RISK-OFF"
     else:
         state = "CAUTION"
-    return {"state": state, "price": price, "vs_200d": price / sma200 - 1,
-            "day_change": price / float(c.iloc[-2]) - 1}
+    trend_state, reasons = state, []
+    if state == "RISK-ON":
+        if price < sma50:
+            reasons.append("below its 50-day average")
+        try:
+            mo = momentum.assess(market, None, None, now)
+        except Exception:      # a failed momentum read never blocks the tile: it just adds no reason
+            mo = None
+        if mo and mo.get("known"):
+            if mo["momentum"] in ("falling", "weak"):
+                reasons.append(f"momentum {mo['momentum']} ({mo['facts']['ret20']:+.1%} in 20 sessions)")
+            if mo["cause"] == "distribution" or "distribution" in mo.get("also", []):
+                reasons.append("sustained selling")
+        if reasons:
+            state = "CAUTION"
+    return {"state": state, "trend_state": trend_state, "reason": ", ".join(reasons) or None, "price": price,
+            "vs_200d": price / sma200 - 1, "day_change": price / float(c.iloc[-2]) - 1}

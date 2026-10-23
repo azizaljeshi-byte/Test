@@ -621,7 +621,8 @@ def row(snap: dict, was: str | None = None) -> str:
             f'<div class="px">{num(price_now)}{day_html}</div><div class="why">{why_html}</div>'
             + (f'<div class="pl"><b>{"IF IT FAILS" if wait else "PLAN"}</b>{escape(plan)}</div>' if plan else "")
             + (f'<div class="pl"><b>LEVELS</b>{escape(levels_line(snap))}</div>' if levels_line(snap) else "")
-            + (f'<div class="pl"><b>FLOW</b>{escape(flow_line(snap))}</div>' if flow_line(snap) else "") + '</div></a>')
+            + (f'<div class="pl"><b>FLOW</b>{escape(flow_line(snap))}</div>' if flow_line(snap) else "")
+            + (f'<div class="pl"><b>FINNHUB</b>{escape(second_tag(snap))}</div>' if second_tag(snap) else "") + '</div></a>')
 
 
 STATUS_STYLE = {"record_high": (OPP, "★"), "strong_uptrend": (OPP, "↗"), "pullback": (INFO, "↘"),
@@ -695,11 +696,26 @@ def flow_note(snap: dict) -> str:
             f'<div style="font-size:.76rem;margin-top:.35rem;color:{MUTED}">{escape(" · ".join(bits))} · as of {escape(str(f["as_of"]))} close.</div></div>')
 
 
+def second_tag(snap: dict) -> str:
+    """The short Finnhub line for a row: 'confirms · SELL', 'disagrees · BUY', 'mixed', or 'no read'. Only weak or
+    broken stocks are asked, so healthy rows show nothing."""
+    sec = ((price_status(snap) or {}).get("second"))
+    if not sec:
+        return ""
+    if sec.get("unavailable"):
+        return "no read"
+    if not sec.get("verdict"):
+        return "levels only" if sec.get("support") or sec.get("resistance") else "no read"
+    return f'{sec["verdict"]}' + (f' · {sec["signal"].upper()}' if sec.get("signal") else "")
+
+
 def second_note(ps: dict | None) -> str:
     """One line on another source's technical read, or nothing when there is none."""
     sec = (ps or {}).get("second")
     if not sec:
         return ""
+    if sec.get("unavailable"):
+        return f'{sec["source"]}: no read. {sec["unavailable"][0].upper()}{sec["unavailable"][1:]}.'
     mix = [f'{sec[k]} {k}' for k in ("sell", "neutral", "buy") if isinstance(sec.get(k), int)]
     head = f'{sec["source"]}: ' + (f'{sec["signal"].upper()}' + (f' ({", ".join(mix)})' if mix else "") if sec.get("signal") else "no signal")
     if sec.get("verdict"):
