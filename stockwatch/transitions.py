@@ -122,6 +122,104 @@ def delivered(entries: dict, t: dict, now: str) -> None:
     entries[t["ticker"]].update(state=t["to"], stance=t["to_stance"], verdict=t["to_verdict"], since=now, pending=None)
 
 
+# ---- price status changes: a second, independent alert stream (see status.py and docs/PRICE_STATUS.md)
+
+STATUS_KEY = "__price_status__"       # reserved entry in the alert memory: {ticker: last confirmed status}
+STATUS_ICON = {"record_high": "🟢", "strong_uptrend": "🟢", "pullback": "🔵", "weakening": "🟠",
+               "testing_support": "🟠", "breakdown": "🔴", "deep_breakdown": "🔴"}
+
+
+def split_state(entries: dict) -> tuple[dict, dict]:
+    """(call entries, status entries) from the saved alert memory. A memory saved before status alerts existed has
+    no status entries, so every stock starts with a silent baseline."""
+    calls = {k: v for k, v in entries.items() if k != STATUS_KEY}
+    return calls, dict(entries.get(STATUS_KEY) or {})
+
+
+def join_state(calls: dict, statuses: dict) -> dict:
+    return {**calls, STATUS_KEY: statuses}
+
+
+def status_reading(e, stale: bool) -> dict | None:
+    """{code, held} for a valid status reading, or None. No data, no change: an analysis error, stale prices or a
+    status that couldn't be read ("unknown") never counts as a status and never confirms or cancels a change."""
+    if not status.ALERT_ON_CHANGE or e.error or stale:
+        return None
+    ps = (e.technical or {}).get("price_status")
+    code = ps.get("code") if isinstance(ps, dict) else None
+    return {"code": code, "held": not e.watchlist} if code in status.ORDER else None
+
+
+def step_status(statuses: dict, current: dict[str, dict | None], now: str) -> tuple[dict, list[dict], dict]:
+    """Advance the recorded statuses with this run's readings, like `step` does for calls.
+
+    statuses: {ticker: {code, since, pending}} from the last run (modified in place). A first sight is a baseline
+    (no message); a change is ready after CONFIRM_RUNS valid readings in a row; flipping back cancels it.
+    A ready change isn't recorded until `status_delivered`, so a failed send is offered again next run."""
+    counts = {"baseline": 0, "unchanged": 0, "pending": 0, "skipped": 0, "removed": 0}
+    for gone in set(statuses) - set(current):
+        del statuses[gone]
+        counts["removed"] += 1
+    ready = []
+    for ticker, cur in sorted(current.items()):
+        if cur is None:
+            counts["skipped"] += 1
+            continue
+        prev = statuses.get(ticker)
+        if prev is None:
+            statuses[ticker] = {"code": cur["code"], "since": now, "pending": None}
+            counts["baseline"] += 1
+            continue
+        if cur["code"] == prev["code"]:
+            prev["pending"] = None
+            counts["unchanged"] += 1
+            continue
+        pending = prev.get("pending")
+        if pending and pending["code"] == cur["code"]:
+            pending["count"] += 1
+        else:
+            pending = prev["pending"] = {"code": cur["code"], "count": 1, "first_seen": now}
+        if pending["count"] >= CONFIRM_RUNS:
+            ready.append({"ticker": ticker, "held": cur["held"], "from": prev["code"], "to": pending["code"],
+                          "first_seen": pending["first_seen"]})
+        else:
+            counts["pending"] += 1
+    return statuses, ready, counts
+
+
+def status_delivered(statuses: dict, t: dict, now: str) -> None:
+    """Record a status change as the new status, once its message went out."""
+    statuses[t["ticker"]].update(code=t["to"], since=now, pending=None)
+
+
+def status_message(t: dict, e, bar_date: str | None, now: datetime) -> str:
+    """The Telegram text for one status change: the move, the price and when it traded, why, what it means, the
+    levels. Built from this run's evaluation, so it never states a status the run didn't read."""
+    ps = (e.technical or {}).get("price_status") or {}
+    now_ok = ps.get("code") == t["to"]
+    lv = ps.get("levels") or {}
+    held = "held" if t["held"] else "watchlist"
+    head = [f"{STATUS_ICON.get(t['to'], '•')} {e.ticker} ({held}): {status.LABEL[t['from']]} → {status.LABEL[t['to']]}",
+            price_line(e, bar_date, now)]
+    lines = []
+    if now_ok and ps.get("action"):
+        lines.append(ps["action"])
+    if now_ok and ps.get("floor_known") and lv:
+        lines.append(f"Support {lv['support_low']:.2f} to {lv['support_high']:.2f} · exit below {lv['exit_below']:.2f} · "
+                     f"deeper level {lv['deep_below']:.2f} · high {lv['high']:.2f} (daily close {lv['close']:.2f}, {lv['as_of']}).")
+    elif now_ok and lv:
+        lines.append(f"Daily close {lv['close']:.2f} ({lv['as_of']}); the high is {lv['high']:.2f}.")
+    prov = ps.get("provisional") if now_ok else None
+    if prov:
+        lines.append(prov["note"])
+    lines.append("Automatic levels, not reviewed. Model levels from StockWatch's rules, not orders or predictions.")
+    essentials = len("\n".join(head + lines)) + 1
+    if essentials > LIMIT:
+        raise ValueError("the status, levels and warnings alone exceed Telegram's limit; not sent")
+    why = f"Why: {ps['why']}" if now_ok and ps.get("why") else ""
+    return "\n".join(head + ([_short(why, LIMIT - essentials)] if why else []) + lines)
+
+
 def _px(v) -> str | None:
     return f"{v:.2f}" if _ok(v) else None
 

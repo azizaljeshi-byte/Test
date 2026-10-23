@@ -55,6 +55,10 @@ FROM_FLOOR = {"testing_floor": "testing_support", "warning": "breakdown", "failu
 # on a held stock into a SELL call (plan, dashboard and Telegram together); nothing else needs to change.
 EXIT_ON_BREAKDOWN = False
 EXIT_CODES = ("breakdown", "deep_breakdown")
+# Telegram: message whenever a stock's status changes (record high -> strong uptrend, ... -> breakdown, and back).
+# Same safe rules as the call-change alerts: the first reading is a silent baseline, a change must be seen on two
+# runs in a row, a failed send is retried. Set False to stop status messages without touching call alerts.
+ALERT_ON_CHANGE = True
 
 
 def forces_exit(price_status: dict | None, watchlist: bool) -> bool:

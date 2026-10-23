@@ -31,7 +31,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import alert_state, notify, transitions
+from . import alert_state, notify, status, transitions
 from .config import load_portfolio
 from .data import get_provider, selected_provider
 from .store import Store
@@ -228,40 +228,53 @@ def holdings(mode: str, now: datetime, state_path: Path | None = None) -> Report
                                "this run records each stock's current call as the baseline and alerts nothing.")
     report.add("Alert memory", f"{restored} ({len(entries)} stocks)" if restored == "restored" else restored)
     stamp = now.isoformat(timespec="seconds")
+    entries, status_state = transitions.split_state(entries)            # the price-status memory rides in the same file
     entries, ready, counts = transitions.step(entries, readings, stamp)
     report.add("Decision changes", f"{len(ready)} confirmed · {counts['pending']} awaiting confirmation · "
                                    f"{counts['baseline']} new baselines · {counts['skipped']} without valid data")
+    status_ready = []
+    if status.ALERT_ON_CHANGE:
+        status_readings = {e.ticker: transitions.status_reading(e, e.ticker in stale) for e in evals}
+        status_state, status_ready, sc = transitions.step_status(status_state, status_readings, stamp)
+        report.add("Status changes", f"{len(status_ready)} confirmed · {sc['pending']} awaiting confirmation · "
+                                     f"{sc['baseline']} new baselines · {sc['skipped']} without a status")
+    queue = [("decision", t) for t in ready] + [("status", t) for t in status_ready]
     if dry:
-        report.add("Delivery", f"dry run: {len(ready)} message(s) would be sent; nothing sent or saved")
+        report.add("Delivery", f"dry run: {len(queue)} message(s) would be sent; nothing sent or saved")
         if not can_deliver:
             report.warnings.append("Telegram isn't configured: a live run would have nowhere to send changes.")
         return report
 
     sent = failed = 0
     by_ticker = {e.ticker: e for e in evals}
-    if ready and not can_deliver:
-        report.errors.append(f"{len(ready)} decision change(s) confirmed but Telegram isn't configured. "
+    if queue and not can_deliver:
+        report.errors.append(f"{len(queue)} change(s) confirmed but Telegram isn't configured. "
                              "They stay pending and are sent once it is.")
-    elif ready:
-        for i, t in enumerate(ready):
+    elif queue:
+        for i, (kind, t) in enumerate(queue):
             if i:
                 time.sleep(1.1)        # Telegram allows about one message a second per chat
             try:
-                notify.telegram_send(transitions.message(t, by_ticker[t["ticker"]], bar_dates.get(t["ticker"]), now))
-                transitions.delivered(entries, t, stamp)
+                if kind == "decision":
+                    notify.telegram_send(transitions.message(t, by_ticker[t["ticker"]], bar_dates.get(t["ticker"]), now))
+                    transitions.delivered(entries, t, stamp)
+                else:
+                    notify.telegram_send(transitions.status_message(t, by_ticker[t["ticker"]],
+                                                                    bar_dates.get(t["ticker"]), now))
+                    transitions.status_delivered(status_state, t, stamp)
                 sent += 1
             except (notify.DeliveryError, ValueError) as e:
                 failed += 1
                 last_error = str(e)
         if failed:
-            report.errors.append(f"{failed} of {len(ready)} Telegram message(s) failed ({last_error}). "
+            report.errors.append(f"{failed} of {len(queue)} Telegram message(s) failed ({last_error}). "
                                  "They stay pending and are retried next run.")
     elif not can_deliver:
-        report.warnings.append("Telegram isn't configured, so future decision changes won't reach you. "
+        report.warnings.append("Telegram isn't configured, so future changes won't reach you. "
                                "Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
-    report.add("Delivery", f"telegram: {sent} sent, {failed} failed" if ready else "nothing to send")
+    report.add("Delivery", f"telegram: {sent} sent, {failed} failed" if queue else "nothing to send")
     try:
-        alert_state.save(entries, state_path)
+        alert_state.save(transitions.join_state(entries, status_state), state_path)
     except Exception as e:
         report.errors.append(f"Alert memory couldn't be saved ({type(e).__name__}); confirmed changes may repeat.")
     return report
