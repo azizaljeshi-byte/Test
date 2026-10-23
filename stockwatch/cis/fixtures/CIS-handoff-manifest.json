@@ -1,0 +1,186 @@
+{
+  "recorded_date": "2026-10-23",
+  "status": "Implementation handoff; no production deployment",
+  "files": [
+    {
+      "name": "chart-judgment-framework-v1.md",
+      "bytes": 7658,
+      "sha256": "38bbd4b4c7bac12735186346302a4b13eaf5eaaac392c4bd95f6a2b5fec2792b"
+    },
+    {
+      "name": "CIS-chart-framework-v1-acceptance.json",
+      "bytes": 40067,
+      "sha256": "d968359a6a0256c7f10d5aee9aa90218189afe5f76a10b900ba3885f3112ef41"
+    },
+    {
+      "name": "CIS-chart-framework-v1-implementation-notes.md",
+      "bytes": 23705,
+      "sha256": "a014c490e1c6927db5a021ae6a0eb739d917f8f10356bbd374e87082f387d71b"
+    },
+    {
+      "name": "CIS-chart-framework-v1-packet.schema.json",
+      "bytes": 6258,
+      "sha256": "d09bdada7a6e9681a90f1cdba5db86fdbba7a42ea4ce9e3d628a87be0bce36db"
+    },
+    {
+      "name": "CIS-chart-framework-v1-validation.txt",
+      "bytes": 1374,
+      "sha256": "e0478b3862006c704610872675d217b44f201c5591d9c6dfbee98e6fcf9c8a1a"
+    },
+    {
+      "name": "CIS-handoff-readme.md",
+      "bytes": 1219,
+      "sha256": "85e53ffb0681ea2d9fcaaccfdc0d97137c093e5528bf75cc77ba289303593ed1"
+    },
+    {
+      "name": "CRDO-CRDO-20261023-adjusted.csv",
+      "bytes": 107289,
+      "sha256": "882f2f88a06ad0fa079109519ab5a67b7500a7a595fb5990f1a828313acd49e8"
+    },
+    {
+      "name": "CRDO-CRDO-20261023-source.json",
+      "bytes": 128725,
+      "sha256": "ae988ca15878ce1253883aa9fc6e3646db3528e319b501ca482575f56a03f144"
+    },
+    {
+      "name": "CRDO-independent-evidence.json",
+      "bytes": 42487,
+      "sha256": "337c2d78d90fd3f0ae67c2bcecce588d86e53b8ca7cdc7c96c5ccd493c0c5cad"
+    },
+    {
+      "name": "CRDO-SPY-20261023-adjusted.csv",
+      "bytes": 142227,
+      "sha256": "28995d11224ea214a7d8b35e0b54eb42b845aa55ca9cac63c791203da4c37708"
+    },
+    {
+      "name": "CRDO-SPY-20261023-source.json",
+      "bytes": 166686,
+      "sha256": "d8ea5c7a12746b79f7690dfca601a12f007fa713074312db92477e4d6367278c"
+    },
+    {
+      "name": "CRDO-upside-evidence.json",
+      "bytes": 48317,
+      "sha256": "4467bd4fca20fcb6b2dbc5bd40eab5e043fe950cf00faa16b6c5b5d73f0f22b1"
+    },
+    {
+      "name": "CRDO-XLK-20261023-adjusted.csv",
+      "bytes": 142832,
+      "sha256": "0aed3650ea66095c2beac013fccb9171bd1b29e042f1718c7b005fdab4b9f38c"
+    },
+    {
+      "name": "CRDO-XLK-20261023-source.json",
+      "bytes": 168229,
+      "sha256": "82e64688a7c7a127e4670d0f02c9b4a631f4398f83f1e53a1d020863f21a2f45"
+    },
+    {
+      "name": "FICO-20261023-adjusted.csv",
+      "bytes": 131297,
+      "sha256": "1440b670cdf55cfaa0b7fac541667085d8ab93f91ab956d7f70683b16bfbcfe8"
+    },
+    {
+      "name": "FICO-20261023-source.json",
+      "bytes": 157316,
+      "sha256": "8b3cc2189c8f08d0c0ab3198c1f3cf7855c5e4a6930f883ee680300662c720a8"
+    },
+    {
+      "name": "FICO-independent-evidence.json",
+      "bytes": 45317,
+      "sha256": "1218ceb9853126f6d6dc9e304249562daab772fdb041a47d65a20dcc31135c37"
+    },
+    {
+      "name": "ISRG-adjusted-daily.csv",
+      "bytes": 605924,
+      "sha256": "c46fd4887fdfe9fed88a989d8e8c7fa35ba7ea64bf6aa4282305c0b0ec91bdab"
+    },
+    {
+      "name": "ISRG-independent-evidence.json",
+      "bytes": 17256,
+      "sha256": "6b15501e2b81963f3e1b055aadf9a0452026fc3470ba202510cd18cec8f195e4"
+    },
+    {
+      "name": "ISRG-pattern-research.json",
+      "bytes": 178643,
+      "sha256": "731e66caac626643ab9eaed7976c679ab1f3741c3df5d5e0fb50e4096b292916"
+    },
+    {
+      "name": "ISRG-scanner-audit.json",
+      "bytes": 26047,
+      "sha256": "9c3a0b975c24530747ed7d326357258c019a80395d02dc0787ed1fbcc06876e4"
+    },
+    {
+      "name": "ISRG-StockWatch-audit.md",
+      "bytes": 13069,
+      "sha256": "18792d58ea89798a5f70c2e3716f7b236b11714959ada4a1ea229a81b58e6396"
+    },
+    {
+      "name": "ISRG-vendor-source.json",
+      "bytes": 720417,
+      "sha256": "c801a5649817f4f53084e33825ac71a55513b493f4e9db08c971b83298b99aec"
+    },
+    {
+      "name": "PODD-independent-evidence.json",
+      "bytes": 46663,
+      "sha256": "82e3a3b17969aa14d025594d009121d9d37ced44e05db93c31e2953b8746cf1d"
+    },
+    {
+      "name": "PODD-PODD-20261023-adjusted.csv",
+      "bytes": 135330,
+      "sha256": "a1d0b1d0d6d73c5dff36586c3c6c0996deeb179089a4920a17d1477b2aa81997"
+    },
+    {
+      "name": "PODD-PODD-20261023-source.json",
+      "bytes": 161840,
+      "sha256": "d99c4ba0d651f8735833094fb9678685e2827182330ddac8ce8069dd444fa659"
+    },
+    {
+      "name": "PODD-SPY-20261023-adjusted.csv",
+      "bytes": 142192,
+      "sha256": "2824e4071dc0dab778f830fa8d30d80d23c29bd6bde9929b7fd27445c637dadf"
+    },
+    {
+      "name": "PODD-SPY-20261023-source.json",
+      "bytes": 166683,
+      "sha256": "c54c92e2ef44197f2ffec0eefc67292dd51321d5f247b7788133a2ccf6bef8c6"
+    },
+    {
+      "name": "PODD-XLV-20261023-adjusted.csv",
+      "bytes": 144974,
+      "sha256": "deb025f787d203ec8373f736ec0309950da19af6bfacdc94bb6de82545d174e4"
+    },
+    {
+      "name": "PODD-XLV-20261023-source.json",
+      "bytes": 170960,
+      "sha256": "5a2a561f2008f2bf298bfd2db12f483e2acab9a378d8bc7d3ac4545b51013621"
+    },
+    {
+      "name": "SPY-20261023-adjusted.csv",
+      "bytes": 142229,
+      "sha256": "f1ebdcc14d091285c4fe0054d8da7b4ffd07ce58c2da37985edd3bbe69d606a7"
+    },
+    {
+      "name": "SPY-20261023-source.json",
+      "bytes": 166688,
+      "sha256": "14498d812b27c0c3a4ad88a8c764835722b5723b8c25f3162345feb04660b7c4"
+    },
+    {
+      "name": "SPY-adjusted-daily.csv",
+      "bytes": 796019,
+      "sha256": "7a6e7650d90a4f2ee0d82852ca7b051224513e8a01194fd870fd37860621b642"
+    },
+    {
+      "name": "SPY-vendor-source.json",
+      "bytes": 858825,
+      "sha256": "b10fa4ecc329ef5973464a2894e3c2b0b46008fe48c9c3f849505ef64f7db7bb"
+    },
+    {
+      "name": "XLK-20261023-adjusted.csv",
+      "bytes": 142829,
+      "sha256": "131f5f0dce7f874562bfd2aa29e4edb2d7ef026d13c07ea612e65cb76960e4a7"
+    },
+    {
+      "name": "XLK-20261023-source.json",
+      "bytes": 168225,
+      "sha256": "ce4ff26a663ecaf49b2c8757bc1230aad1cbb80e00f365d5e85d4111710322d7"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "about": "Owner acceptances of level packets. Each entry approves exactly one packet ID with exactly this content hash (everything except review_status and acceptance). Add an entry only in a reviewed pull request that links the owner's acceptance.",
+  "acceptances": [
+    {
+      "packet_id": "ISRG-2026-10-22-v1",
+      "content_sha256": "8a44442772aa6473805bd01a86a8423983372c2e3fe0e7ca761c72490e10c2d6",
+      "note": "accepted by the owner in chat; recorded in the 23 Oct 2026 CIS handoff (CIS-chart-framework-v1-acceptance.json, hash-checked against the handoff manifest)",
+      "recorded": "2026-10-23"
+    },
+    {
+      "packet_id": "FICO-2026-10-22-v1",
+      "content_sha256": "f4f2c0fd74f4adf83c2e0f9a72dd4772309dbae8193884e8b77642eb9d02aca1",
+      "note": "accepted by the owner in chat; recorded in the 23 Oct 2026 CIS handoff (CIS-chart-framework-v1-acceptance.json, hash-checked against the handoff manifest)",
+      "recorded": "2026-10-23"
+    },
+    {
+      "packet_id": "CRDO-2026-10-22-v1",
+      "content_sha256": "fb12a84b729d14d4b062c8642d6799b0da9ef26309704f94febe91650dfa8af5",
+      "note": "accepted by the owner in chat; recorded in the 23 Oct 2026 CIS handoff (CIS-chart-framework-v1-acceptance.json, hash-checked against the handoff manifest)",
+      "recorded": "2026-10-23"
+    }
+  ]
+}

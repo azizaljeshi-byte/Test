@@ -15,6 +15,8 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from stockwatch import briefing, finnhub, live, research_lab, technical, tradeplan, turbo, ui
+from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
+from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
 from stockwatch.data import NY, get_provider, selected_provider, us_session
 from stockwatch.engine import evaluate
@@ -267,6 +269,35 @@ def radar_list(snaps: list[dict], brief: str):
 if view == "radar":
     radar_list(snaps, ui.mission_brief(briefing.portfolio(snaps, prevs, reg), tickers))
 
+# ---------------------------------------------------------------- CIS shadow decision (STOCKWATCH_CIS_DECISIONS=shadow)
+def _cis_shadow_card(ticker: str, snap: dict):
+    """The CIS call beside the existing one, labelled. Shadow only: it feeds no verdict, plan or alert."""
+    packet = cis_decision.reviewed_packets().get(ticker)
+    held = not snap["payload"]["watchlist"]
+    peek = data.peek_history(ticker) if hasattr(data, "peek_history") else None   # never fetch inline
+    d = cis_decision.decide(packet, cis_decision.live_inputs(packet, peek, snap["payload"].get("quote"),
+                                                             datetime.now(NY)) if packet else None,
+                            held, snap["tier"])
+    st.markdown('<div class="mc-section">CIS chart decision · shadow</div>', unsafe_allow_html=True)
+    if not d["supported"] and d["action"] == "CIS UNSUPPORTED":
+        st.markdown(ui.flag("CIS UNSUPPORTED", escape(d["reasons"][0].split(";")[0].capitalize()) + ". The call "
+                            "above is the legacy StockWatch call.", ui.MUTED), unsafe_allow_html=True)
+        return
+    if not d["supported"] and d["action"] == "DATA REVIEW":
+        st.markdown(ui.flag("DATA REVIEW", escape(d["reasons"][0]), ui.MUTED), unsafe_allow_html=True)
+        return
+    st.markdown(ui.flag(d["action"], f"{escape(d['downside']['confirmed'])} · shadow only: not active, no order "
+                        "placed, no alert", ui.WARN if d["stale"] else ui.INFO), unsafe_allow_html=True)
+    lv = d["levels"]
+    st.markdown("<ul class='cis-why'>" + "".join(f"<li>{escape(r)}</li>" for r in d["reasons"]) + "</ul>",
+                unsafe_allow_html=True)
+    st.caption(f"Floor {lv['floor'][0]:g}–{lv['floor'][1]:g} · support break below {lv['warning']:g} · trade invalidated "
+               f"below {lv['failure']:g} · trend breakdown below {lv['major_damage']:g} · ceilings: "
+               + ", ".join(f"{c['low']:g}–{c['high']:g} {c['label'].lower()}" for c in d["upside"]))
+    st.caption(f"Levels {d['packet_id']}: {d['approval']}. Closes are completed sessions only: today's bar counts "
+               "from the next day (no exchange calendar). Intraday low/high aren't available here.")
+
+
 # ---------------------------------------------------------------- target detail
 if view == "target":
     order = [s["ticker"] for s in sorted(snaps, key=ui.urgency)]
@@ -307,6 +338,9 @@ if view == "target":
         st.markdown(ui.trade_plan(plan, sizing, risk_pct, portfolio_value), unsafe_allow_html=True)
         st.select_slider("Risk per trade (% of portfolio lost if the stop is hit)", [0.25, 0.5, 1.0, 1.5, 2.0],
                          value=risk_pct, key="risk_pct")
+
+    if cis_decision.mode() == "shadow":
+        _cis_shadow_card(ticker, snap)
 
     street_m = research.get("street") or {}
     if street_m:
@@ -879,11 +913,190 @@ def _valuation_result(r: dict):
             st.markdown(ui.table(["Lens", "Reading"], research_lab.risk_rows(r), wrap=True), unsafe_allow_html=True)
 
 
+def _cis_why(title: str, why: dict):
+    """One 'Why this read' block: dated evidence -> what it means -> consequence, then the counter-evidence."""
+    def items(obs):
+        return "".join(f"<li><b>{escape(o['evidence'])}</b><br>{escape(o['meaning'])} "
+                       f"<span class='mc-d'>{escape(o['consequence'])}</span></li>" for o in obs)
+    html = f'<div class="mc-section">Why this read · {escape(title)}</div><ul class="cis-why">{items(why["for"])}</ul>'
+    if why["against"]:
+        html += f'<div class="mc-d"><b>Against this read</b></div><ul class="cis-why">{items(why["against"])}</ul>'
+    st.markdown(html, unsafe_allow_html=True)
+
+
+@st.cache_resource
+def cis_jobs(code_version: str) -> research_lab.Jobs:
+    return research_lab.Jobs(ttl=15 * 60)
+
+
+def _cis_watchlist_submit(snaps: list[dict]):
+    # on_click: the comparison runs on its own thread (Yahoo bars, Finnhub at about one call a second)
+    fq = finnhub.quote if finnhub.enabled() else None
+    st.session_state.cis_note = cis_jobs(CODE_VERSION).submit(
+        "cis_watchlist", "ALL", lambda: cis_watchlist.run(snaps, data, datetime.now(NY), fq))
+
+
+@st.fragment(run_every="5s")
+def _cis_watchlist_wait():
+    job = cis_jobs(CODE_VERSION).get("cis_watchlist", "ALL")
+    if job and job["state"] == "running":
+        st.caption(f"⏳ Comparing your list… {int(time.time() - job['started'])}s. You can leave this page.")
+    else:
+        st.rerun()
+
+
+def _cis_watchlist(snaps: list[dict]):
+    """Whole-list shadow comparison: CIS only where levels are reviewed; candidates are diagnostics only."""
+    st.markdown('<div class="mc-section">Your whole list · shadow comparison</div>', unsafe_allow_html=True)
+    st.caption("CIS calls only for stocks with reviewed levels; everything else keeps its legacy call. Automatic "
+               "candidate levels are shown as a diagnostic: they failed validation, so they never make a call. "
+               + ("Finnhub cross-checks each price." if finnhub.enabled() else "Add FINNHUB_API_KEY to cross-check prices."))
+    st.button("Compare my list", key="cis_wl_go", on_click=_cis_watchlist_submit, args=(snaps,))
+    if note := st.session_state.pop("cis_note", None):
+        st.toast(note)
+    job = cis_jobs(CODE_VERSION).get("cis_watchlist", "ALL")
+    if not job:
+        return
+    if job["state"] == "running":
+        _cis_watchlist_wait()
+        return
+    if job["state"] == "error":
+        st.markdown(ui.flag("UNAVAILABLE", escape(job["error"][:200])), unsafe_allow_html=True)
+        return
+    rows = job["result"]
+    cov = cis_watchlist.coverage(rows)
+    st.caption(f"Checked {job['when']} UTC · " + " · ".join(f"{k}: {v}" for k, v in cov.items() if v))
+    st.markdown(ui.table(["Stock", "CIS", "Legacy", "Candidate"], cis_watchlist.table_rows(rows), wrap_all=True),
+                unsafe_allow_html=True)
+    with st.expander("Why, per stock", expanded=False):
+        for r in rows:
+            facts, why = cis_watchlist.details(r)
+            st.markdown(f"**{escape(r['ticker'])}** · {escape(facts)}<br>{escape(why)}", unsafe_allow_html=True)
+
+
+def _cis_levels_only(symbol: str, why: str):
+    """Without the private reference prices: the packet's levels, states and shadow calls, no charts or history."""
+    p = cis_decision.reviewed_packets()[symbol]
+    st.markdown(ui.flag("PRICES NOT INSTALLED", escape(f"Reference price data is private (licensing): {why}. "
+                        "Showing the packet's levels and states only."), ui.MUTED), unsafe_allow_html=True)
+    r = {"packet": p, "evaluation": cis_decision.state.evaluate(p), "ladder": cis_decision.state.ladder(p)}
+    calls = {label: cis_decision.decide(p, cis_decision.inputs_from_packet(p), held, tier)["action"]
+             for label, held, tier in (("held, core", True, 1), ("held, Tier 2", True, 2), ("watchlist", False, 2))}
+    st.markdown(ui.flag("SHADOW CALL", " · ".join(f"{escape(k)}: <b>{escape(v)}</b>" for k, v in calls.items())
+                        + " · historical snapshot, not active", ui.INFO), unsafe_allow_html=True)
+    st.markdown(ui.table(["Level", "Price", "Rule", "Today's low"], cis_view.floor_rows(r)), unsafe_allow_html=True)
+    st.markdown(ui.table(["Zone", "From quote", "Status", "Quote is"], cis_view.ceiling_rows(r)), unsafe_allow_html=True)
+
+
+def _chart_judgment():
+    """Independent chart judgment (CIS v1): frozen reference snapshots, explain-only."""
+    st.markdown(ui.flag("FROZEN SNAPSHOT", "Reference examples captured on 23 Oct 2026; completed bars end 22 Oct. "
+                        "These are not live prices. Explain-only: no orders, alerts or changes to the main verdicts.",
+                        ui.INFO), unsafe_allow_html=True)
+    symbol = st.segmented_control("Stock", list(cis_explain.REFERENCE), default="PODD", key="cis_symbol",
+                                  label_visibility="collapsed") or "PODD"
+    try:
+        r = cis_explain.report(symbol)
+    except cis_refdata.Missing as e:
+        _cis_levels_only(symbol, str(e))
+        return
+    p, ev, q = r["packet"], r["evaluation"], r["packet"]["quote"]
+    st.markdown(ui.flag(cis_explain.STATE_LABEL[ev["confirmed_state"]],
+                        f"{escape(symbol)} · confirmed on the {escape(p['as_of_completed_session'])} close "
+                        f"{cis_explain.money(p['completed_close'])}",
+                        ui.RISK if ev["confirmed_state"] in ("warning", "failure", "major_damage") else ui.OPP),
+                unsafe_allow_html=True)
+    if ev["quote_state"] != ev["confirmed_state"]:
+        st.markdown(ui.flag("PROVISIONAL", f"quote {cis_explain.money(q['price'])} at "
+                            f"{escape(cis_explain.ny_time(q['observed_at_utc']))} reads "
+                            f"{escape(cis_explain.STATE_LABEL[ev['quote_state']])}; not a close", ui.WARN),
+                    unsafe_allow_html=True)
+    st.caption((f"Quote {cis_explain.money(q['price'])} at {cis_explain.ny_time(q['observed_at_utc'])} (partial "
+                "session) · " if ev["quote_state"] == ev["confirmed_state"] else "")
+               + f"levels {p['packet_id']}, {cis_explain.level_packet.REVIEW_LABEL[p['review_status']]} · "
+               f"analyst-selected, not generated by code")
+    if "verified_event" in p.data:
+        e = p["verified_event"]
+        st.markdown(ui.flag("EARNINGS", f"{escape(e['date'])} before the open, inside the 20-session horizon · "
+                            f'announced {escape(e["announced"])} · <a href="{escape(e["source"])}">source</a>', ui.WARN),
+                    unsafe_allow_html=True)
+    tabs = st.tabs(["Overview", "Key levels", "Analysis & numbers", "Scenarios", "Past reactions", "What changes"])
+    with tabs[0]:
+        st.markdown(f"**{escape(r['takeaway'])}**")
+        calls = {label: cis_decision.decide(p, cis_decision.inputs_from_packet(p, cis_view.recent(r)), held, tier)["action"]
+                 for label, held, tier in (("held, core", True, 1), ("held, Tier 2", True, 2), ("watchlist", False, 2))}
+        st.markdown(ui.flag("SHADOW CALL", " · ".join(f"{escape(k)}: <b>{escape(v)}</b>" for k, v in calls.items())
+                            + " · not active, no order placed", ui.INFO), unsafe_allow_html=True)
+        st.caption(r["lesson"])
+        st.plotly_chart(cis_view.candles(r, ["Floor", "Failure & damage", "Ceilings"]), width="stretch",
+                        config={"displayModeBar": False}, key=f"cis_ov_{symbol}")
+        _cis_why("If price falls", r["why_down"])
+        _cis_why("If price rises", r["why_up"])
+    with tabs[1]:
+        show = st.pills("Levels on the chart", ["Floor", "Failure & damage", "Ceilings"], selection_mode="multi",
+                        default=["Floor", "Ceilings"], key=f"cis_lv_{symbol}") or []
+        st.plotly_chart(cis_view.candles(r, show), width="stretch", config={"displayModeBar": False},
+                        key=f"cis_lvc_{symbol}")
+        st.markdown('<div class="mc-section">If price falls · floor ladder</div>', unsafe_allow_html=True)
+        st.markdown(ui.table(["Level", "Price", "Rule", "Today's low"], cis_view.floor_rows(r)), unsafe_allow_html=True)
+        st.markdown('<div class="mc-section">If price rises · ceiling ladder</div>', unsafe_allow_html=True)
+        st.markdown(ui.table(["Zone", "From quote", "Status", "Quote is"], cis_view.ceiling_rows(r)),
+                    unsafe_allow_html=True)
+        st.caption("Distances are from the timestamped quote, not forecast gains. A close above a zone is the first "
+                   "clearance; a later defended retest is the stronger confirmation. A wick is only a test.")
+    with tabs[2]:
+        st.markdown(ui.table(["Measure", "Value"], cis_view.number_rows(r), wrap_all=True), unsafe_allow_html=True)
+        st.markdown('<div class="mc-section">Weekly context · completed weeks</div>', unsafe_allow_html=True)
+        st.plotly_chart(cis_view.weekly(r), width="stretch", config={"displayModeBar": False}, key=f"cis_wk_{symbol}")
+        qd = r["quality"]
+        st.caption(f"Data: {qd.rows} daily rows {qd.first} to {qd.last} (the {qd.last} row is a forming session and is "
+                   f"excluded) · sha256 {qd.sha256[:12]}… · OHLC adjusted by adjusted-close/close, volume as reported · "
+                   "exchange calendar not verified"
+                   + (" · " + "; ".join(qd.limitations) if qd.limitations else ""))
+    with tabs[3]:
+        sc = p["scenarios"]
+        st.markdown(ui.flag("SUBJECTIVE", "Analyst weights, not backtested or calibrated, and not derived from any "
+                            "score.", ui.WARN), unsafe_allow_html=True)
+        st.markdown(ui.table(["Over 20 sessions", "Endpoint close", "Weight"], [
+            ["Up", f"above {sc['upper']:,.2f}", f"{sc['weights_pct']['up']}%"],
+            ["Sideways", f"{sc['lower']:,.2f} to {sc['upper']:,.2f}", f"{sc['weights_pct']['sideways']}%"],
+            ["Down", f"below {sc['lower']:,.2f}", f"{sc['weights_pct']['down']}%"]]), unsafe_allow_html=True)
+        st.caption(f"Anchor: the {p['as_of_completed_session']} close {sc['anchor']:,.2f}; neutral band ± ATR14 "
+                   f"{sc['neutral_band']:,.2f}. Confidence in these weights: {sc['confidence']}. A sideways endpoint "
+                   "doesn't mean a quiet path.")
+    with tabs[4]:
+        h = r["history"]
+        s = h["summary"]
+        st.markdown(ui.flag("PAST, NOT ODDS", f"{s['n']} earlier {escape(symbol)} episodes met this rule. What followed "
+                            "describes the past; it isn't a probability.", ui.INFO), unsafe_allow_html=True)
+        st.caption(f"Rule {h['policy_id']}: {h['rule']}")
+        if s["n"]:
+            st.markdown(ui.table(["Signal", "Distance", "5 days", "10 days", "20 days"], cis_view.history_rows(r)),
+                        unsafe_allow_html=True)
+            st.markdown(ui.table(["Signal", "Best high", "Worst low", "20-day result"], cis_view.excursion_rows(r)),
+                        unsafe_allow_html=True)
+            st.caption(f"Endpoints vs each date's own ATR band: {s['counts']['up']} up, {s['counts']['sideways']} "
+                       f"sideways, {s['counts']['down']} down. Median 20-day return "
+                       f"{cis_explain.pct(s['returns']['20']['median'])} (range {cis_explain.pct(s['returns']['20']['min'])} "
+                       f"to {cis_explain.pct(s['returns']['20']['max'])}).")
+            pick = st.selectbox("Show the path after", [a["date"] for a in h["analogues"]], key=f"cis_an_{symbol}")
+            a = next(x for x in h["analogues"] if x["date"] == pick)
+            st.plotly_chart(cis_view.analogue_path(r, a), width="stretch", config={"displayModeBar": False},
+                            key=f"cis_path_{symbol}_{pick}")
+        st.caption("A same-stock rule declared for this one setup; not a validated rule library. Separate from the "
+                   "Chart patterns lab's shape matching.")
+    with tabs[5]:
+        st.markdown(ui.table(["If", "Then"], [[x["if"], x["then"]] for x in r["what_changes"]], wrap_all=True),
+                    unsafe_allow_html=True)
+        st.caption("Thresholds are fixed by the level packet. A quote can change the provisional read only by crossing "
+                   "one of them; it never moves the levels.")
+
+
 if view == "research":
     st.markdown('<div class="mc-section">Research lab</div>', unsafe_allow_html=True)
     st.markdown(ui.flag("READ-ONLY", escape(research_lab.RESEARCH_ONLY), ui.INFO), unsafe_allow_html=True)
-    area = st.segmented_control("Area", ["Valuation", "Chart patterns"], default="Valuation", key="rl_area",
-                                label_visibility="collapsed") or "Valuation"
+    area = st.segmented_control("Area", ["Valuation", "Chart patterns", "Chart judgment"], default="Valuation",
+                                key="rl_area", label_visibility="collapsed") or "Valuation"
 
     if area == "Valuation":
         st.markdown('<div class="mc-section">Real companies · evidence on file</div>', unsafe_allow_html=True)
@@ -922,6 +1135,10 @@ if view == "research":
             head, grid_rows = research_lab.sensitivity_grid(demo)
             st.caption("Sensitivity only: per-share value if the discount rate and long-run growth were different.")
             st.markdown(ui.table(head, grid_rows), unsafe_allow_html=True)
+
+    elif area == "Chart judgment":
+        _chart_judgment()
+        _cis_watchlist(snaps)
 
     else:
         st.markdown('<div class="mc-section">Pinned example · AMZN 2013-2018</div>', unsafe_allow_html=True)

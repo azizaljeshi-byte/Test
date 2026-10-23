@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cis:independent-chart-packet:1.0",
+  "title": "Independent chart reference packet v1",
+  "description": "Validates one packet in the acceptance fixture. Full evidence and dated anchors are retained in provenance.evidence_file. This contract does not validate automatic level selection or strategy profitability.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "method_id", "packet_id", "symbol", "currency", "timeframe", "level_selection", "review_status", "action_mode", "as_of_completed_session", "completed_close", "quote", "session_range", "downside", "upside", "scenarios", "provenance", "expected"],
+  "properties": {
+    "contract_version": {"const": "1.0"},
+    "method_id": {"const": "independent_chart_judgment_v1"},
+    "packet_id": {"type": "string", "minLength": 1},
+    "symbol": {"type": "string", "minLength": 1},
+    "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+    "timeframe": {"const": "daily"},
+    "level_selection": {"enum": ["analyst_selected", "code_candidate_unreviewed"]},
+    "review_status": {"enum": ["analyst_proposed", "user_accepted_in_chat", "code_candidate_unreviewed"]},
+    "action_mode": {"const": "explain_only"},
+    "as_of_completed_session": {"type": "string", "format": "date"},
+    "completed_close": {"$ref": "#/$defs/positive"},
+    "quote": {
+      "type": "object", "additionalProperties": false,
+      "required": ["price", "observed_at_utc", "session", "is_partial"],
+      "properties": {"price": {"$ref": "#/$defs/positive"}, "observed_at_utc": {"type": "string", "format": "date-time"}, "session": {"enum": ["pre", "regular", "post", "closed", "unknown"]}, "is_partial": {"type": "boolean"}}
+    },
+    "session_range": {
+      "type": "object", "additionalProperties": false,
+      "required": ["low", "high", "is_partial"],
+      "properties": {"low": {"$ref": "#/$defs/positive"}, "high": {"$ref": "#/$defs/positive"}, "is_partial": {"type": "boolean"}}
+    },
+    "downside": {
+      "type": "object", "additionalProperties": false,
+      "required": ["zone", "warning", "failure", "major_damage"],
+      "properties": {"zone": {"$ref": "#/$defs/zone"}, "warning": {"$ref": "#/$defs/positive"}, "failure": {"$ref": "#/$defs/positive"}, "major_damage": {"$ref": "#/$defs/positive"}, "anchor_evidence": {"type": "array", "items": {"$ref": "#/$defs/anchor"}}}
+    },
+    "upside": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ceilings"],
+      "properties": {"ceilings": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["id", "zone", "current_quote_location", "confirmation"], "properties": {"id": {"type": "string"}, "zone": {"$ref": "#/$defs/zone"}, "current_quote_location": {"enum": ["below", "inside", "above"]}, "confirmation": {"enum": ["pending", "testing", "close_above", "retest_defended", "failed_breakout"]}, "anchor_evidence": {"type": "array", "items": {"$ref": "#/$defs/anchor"}}}}}}
+    },
+    "scenarios": {
+      "type": "object", "additionalProperties": false,
+      "required": ["method", "horizon_trading_sessions", "anchor", "neutral_band", "lower", "upper", "weights_pct", "confidence"],
+      "properties": {
+        "method": {"const": "subjective_not_calibrated"},
+        "horizon_trading_sessions": {"type": "integer", "minimum": 1},
+        "anchor": {"$ref": "#/$defs/positive"}, "neutral_band": {"$ref": "#/$defs/positive"}, "lower": {"type": "number"}, "upper": {"$ref": "#/$defs/positive"},
+        "weights_pct": {"type": "object", "additionalProperties": false, "required": ["up", "sideways", "down"], "properties": {"up": {"$ref": "#/$defs/weight"}, "sideways": {"$ref": "#/$defs/weight"}, "down": {"$ref": "#/$defs/weight"}}},
+        "confidence": {"enum": ["low", "medium", "high"]}
+      }
+    },
+    "provenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["raw_source_file", "evidence_file", "level_rationale", "calendar_verified"],
+      "properties": {"raw_source_file": {"type": "string"}, "evidence_file": {"type": "string"}, "level_rationale": {"type": "string"}, "calendar_verified": {"type": "boolean"}, "raw_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}
+    },
+    "expected": {
+      "type": "object", "additionalProperties": false,
+      "required": ["confirmed_state", "quote_state", "session_extreme_breaches"],
+      "properties": {
+        "confirmed_state": {"$ref": "#/$defs/state"}, "quote_state": {"$ref": "#/$defs/state"},
+        "session_extreme_breaches": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["threshold", "level", "crossed_below", "quote_recovered_at_or_above"], "properties": {"threshold": {"enum": ["warning", "failure", "major_damage"]}, "level": {"$ref": "#/$defs/positive"}, "crossed_below": {"type": "boolean"}, "quote_recovered_at_or_above": {"type": "boolean"}}}}
+      }
+    },
+    "verified_event": {"type": "object", "required": ["type", "date", "session", "announced", "source"], "properties": {"type": {"const": "earnings"}, "date": {"type": "string", "format": "date"}, "session": {"const": "before_open"}, "announced": {"type": "string", "format": "date"}, "source": {"type": "string", "format": "uri"}}}
+  },
+  "$defs": {
+    "positive": {"type": "number", "exclusiveMinimum": 0},
+    "anchor": {"type": "object", "additionalProperties": false, "required": ["role", "session_date", "field", "value", "source_file", "reason"], "properties": {"role": {"enum": ["floor", "failure", "major_damage", "ceiling"]}, "session_date": {"type": "string", "format": "date"}, "field": {"enum": ["Open", "High", "Low", "Close", "SMA50", "SMA200"]}, "value": {"$ref": "#/$defs/positive"}, "source_file": {"type": "string"}, "reason": {"type": "string"}}},
+    "weight": {"type": "integer", "minimum": 0, "maximum": 100, "multipleOf": 5},
+    "zone": {"type": "object", "additionalProperties": false, "required": ["low", "high"], "properties": {"low": {"$ref": "#/$defs/positive"}, "high": {"$ref": "#/$defs/positive"}}},
+    "state": {"enum": ["above_floor", "testing_floor", "warning", "failure", "major_damage", "undetermined"]}
+  }
+}
