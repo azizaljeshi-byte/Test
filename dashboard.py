@@ -279,8 +279,8 @@ def _cis_shadow_card(ticker: str, snap: dict):
                             held, snap["tier"])
     st.markdown('<div class="mc-section">CIS chart decision · shadow</div>', unsafe_allow_html=True)
     if not d["supported"]:
-        st.markdown(ui.flag("CIS UNSUPPORTED", escape(d["reasons"][0]) + ". The call above is the legacy StockWatch "
-                            "call.", ui.MUTED), unsafe_allow_html=True)
+        st.markdown(ui.flag("CIS UNSUPPORTED", escape(d["reasons"][0].split(";")[0].capitalize()) + ". The call "
+                            "above is the legacy StockWatch call.", ui.MUTED), unsafe_allow_html=True)
         return
     st.markdown(ui.flag(d["action"], f"{escape(d['downside']['confirmed'])} · shadow only: not active, no order "
                         "placed, no alert", ui.INFO), unsafe_allow_html=True)
