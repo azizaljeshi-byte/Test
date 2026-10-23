@@ -15,7 +15,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from stockwatch import briefing, finnhub, live, research_lab, technical, tradeplan, turbo, ui
-from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view
+from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
 from stockwatch.data import NY, get_provider, selected_provider, us_session
 from stockwatch.engine import evaluate
@@ -923,6 +923,20 @@ def _cis_why(title: str, why: dict):
     st.markdown(html, unsafe_allow_html=True)
 
 
+def _cis_levels_only(symbol: str, why: str):
+    """Without the private reference prices: the packet's levels, states and shadow calls, no charts or history."""
+    p = cis_decision.reviewed_packets()[symbol]
+    st.markdown(ui.flag("PRICES NOT INSTALLED", escape(f"Reference price data is private (licensing): {why}. "
+                        "Showing the packet's levels and states only."), ui.MUTED), unsafe_allow_html=True)
+    r = {"packet": p, "evaluation": cis_decision.state.evaluate(p), "ladder": cis_decision.state.ladder(p)}
+    calls = {label: cis_decision.decide(p, cis_decision.inputs_from_packet(p), held, tier)["action"]
+             for label, held, tier in (("held, core", True, 1), ("held, Tier 2", True, 2), ("watchlist", False, 2))}
+    st.markdown(ui.flag("SHADOW CALL", " · ".join(f"{escape(k)}: <b>{escape(v)}</b>" for k, v in calls.items())
+                        + " · historical snapshot, not active", ui.INFO), unsafe_allow_html=True)
+    st.markdown(ui.table(["Level", "Price", "Rule", "Today's low"], cis_view.floor_rows(r)), unsafe_allow_html=True)
+    st.markdown(ui.table(["Zone", "From quote", "Status", "Quote is"], cis_view.ceiling_rows(r)), unsafe_allow_html=True)
+
+
 def _chart_judgment():
     """Independent chart judgment (CIS v1): frozen reference snapshots, explain-only."""
     st.markdown(ui.flag("FROZEN SNAPSHOT", "Reference examples captured on 23 Oct 2026; completed bars end 22 Oct. "
@@ -930,7 +944,11 @@ def _chart_judgment():
                         ui.INFO), unsafe_allow_html=True)
     symbol = st.segmented_control("Stock", list(cis_explain.REFERENCE), default="PODD", key="cis_symbol",
                                   label_visibility="collapsed") or "PODD"
-    r = cis_explain.report(symbol)
+    try:
+        r = cis_explain.report(symbol)
+    except cis_refdata.Missing as e:
+        _cis_levels_only(symbol, str(e))
+        return
     p, ev, q = r["packet"], r["evaluation"], r["packet"]["quote"]
     st.markdown(ui.flag(cis_explain.STATE_LABEL[ev["confirmed_state"]],
                         f"{escape(symbol)} · confirmed on the {escape(p['as_of_completed_session'])} close "

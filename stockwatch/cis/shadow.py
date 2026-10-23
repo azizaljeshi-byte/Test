@@ -13,13 +13,12 @@ Nothing is sent, saved or activated.
 """
 from __future__ import annotations
 
-import json
 import logging
 
 from .. import config, engine
-from . import decision, explain, features, level_packet, presentation
+from . import decision, explain, features, presentation, refdata
 
-AUDIT = level_packet.FIXTURES / "ISRG-scanner-audit.json"
+AUDIT = "ISRG-scanner-audit.json"            # private reference data (see refdata)
 SECTOR_OF = {"FICO": "XLK", "CRDO": "XLK", "PODD": "XLV"}
 
 
@@ -28,11 +27,10 @@ class FrozenProvider:
 
     def __init__(self, symbol: str):
         ref = explain.REFERENCE[symbol]
-        fx = level_packet.FIXTURES
         bars = {symbol: ref["bars"], "SPY": ref["spy"]}
         if ref["sector"]:
             bars[ref["sector"][0]] = ref["sector"][1]
-        self.bars = {k: features.completed(features.read_csv(fx / f), explain.BOUNDARY) for k, f in bars.items()}
+        self.bars = {k: features.completed(refdata.bars(f), explain.BOUNDARY) for k, f in bars.items()}
 
     def history(self, ticker: str, period: str = "5y"):
         if ticker not in self.bars:
@@ -68,7 +66,7 @@ def legacy(symbol: str, held: bool, tier: int) -> dict:
 
 def isrg_observed() -> dict:
     """The live app's ISRG call captured in the reference round (watchlist, verdict BUY SETUP)."""
-    snap = json.loads(AUDIT.read_text())["snapshots"]["completed"]
+    snap = refdata.load_json(AUDIT)["snapshots"]["completed"]
     return {**_plan_row("BUY SETUP (observed in the app, fundamentals 77)", snap["plan"], "captured live app, 22 Oct close"),
             "risk_controls": []}
 

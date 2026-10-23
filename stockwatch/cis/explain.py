@@ -6,11 +6,10 @@ are shown as the analyst entered them (subjective, not calibrated); they are nev
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from functools import lru_cache
 
-from . import decision, features, history, level_packet, state
+from . import decision, features, history, level_packet, refdata, state
 
 NY = features.NY
 BOUNDARY = "2026-10-22"
@@ -70,19 +69,19 @@ def _anchor(a) -> str:
 
 @lru_cache(maxsize=None)
 def report(symbol: str) -> dict:
-    """Everything the six tabs show for one reference stock, as plain data."""
+    """Everything the six tabs show for one reference stock, as plain data. Needs the private reference data
+    (`refdata`); raises refdata.Missing without it."""
     ref = REFERENCE[symbol]
-    fx = level_packet.FIXTURES
     packet = level_packet.load_acceptance()["packets"][symbol]
-    raw = features.read_csv(fx / ref["bars"])
-    quality = features.check(raw, symbol, features.sha256_file(fx / ref["bars"]))
+    raw = refdata.bars(ref["bars"])
+    quality = features.check(raw, symbol, refdata.manifest()[ref["bars"]])
     bars = features.completed(raw, packet["as_of_completed_session"])
     m = features.metrics(bars)
-    spy = features.completed(features.read_csv(fx / ref["spy"]), BOUNDARY)
+    spy = features.completed(refdata.bars(ref["spy"]), BOUNDARY)
     rel = {"SPY": {n: features.relative_return(bars, spy, n) for n in (21, 63)}}
     if ref["sector"]:
         name, f = ref["sector"]
-        rel[name] = {n: features.relative_return(bars, features.completed(features.read_csv(fx / f), BOUNDARY), n)
+        rel[name] = {n: features.relative_return(bars, features.completed(refdata.bars(f), BOUNDARY), n)
                      for n in (21, 63)}
     wk = features.weekly(bars)
     done_wk = wk[~wk["incomplete"]]
@@ -91,7 +90,7 @@ def report(symbol: str) -> dict:
     ladder = state.ladder(packet)
     extra = None
     if ref["upside_extra"]:
-        extra = json.loads((fx / ref["upside_extra"]).read_text())
+        extra = refdata.load_json(ref["upside_extra"])
     r = {"symbol": symbol, "packet": packet, "quality": quality, "bars": bars, "metrics": m, "relative": rel,
          "sector": ref["sector"][0] if ref["sector"] else None, "weekly": done_wk, "history": hist,
          "evaluation": ev, "ladder": ladder, "lesson": ref["lesson"], "upside_extra": extra}

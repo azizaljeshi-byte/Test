@@ -8,6 +8,7 @@ from stockwatch.cis import decision as D
 from stockwatch.cis import explain as X
 from stockwatch.cis import level_packet as L
 from stockwatch.cis import presentation as V
+from stockwatch.cis import refdata
 from stockwatch.cis import shadow
 
 PACKETS = D.reviewed_packets()
@@ -15,7 +16,9 @@ PACKETS = D.reviewed_packets()
 
 def ref(symbol, held, tier=2, **changes):
     p = PACKETS[symbol]
-    inp = D.inputs_from_packet(p, V.recent(X.report(symbol)))
+    # the dated defense check is the only use of bars here; without the private data it has none (and the
+    # reference outcomes don't depend on it: no reference passes the reward/risk filter)
+    inp = D.inputs_from_packet(p, V.recent(X.report(symbol)) if refdata.available() else [])
     for k, v in changes.items():
         setattr(inp, k, v)
     return D.decide(p, inp, held, tier)
@@ -242,6 +245,7 @@ def test_live_inputs_use_completed_bars_and_a_validated_quote():
 
 # ---- shadow comparison
 
+@pytest.mark.skipif(not refdata.available(), reason="private CIS reference data not installed")
 def test_shadow_comparison_runs_old_and_new_on_the_same_frozen_bars():
     rows = shadow.compare()
     assert {r["symbol"] for r in rows} == {"ISRG", "FICO", "CRDO", "PODD"} and len(rows) == 13
@@ -256,21 +260,22 @@ def test_shadow_comparison_runs_old_and_new_on_the_same_frozen_bars():
 # ---- second-source comparison (offline helper)
 
 def test_source_check_separates_adjustment_coverage_and_missing_sessions():
-    from stockwatch.cis import features as F
     from stockwatch.cis import source_check as C
-    yahoo = F.read_csv(L.FIXTURES / "ISRG-adjusted-daily.csv").iloc[-300:]
-    same = C.compare(yahoo, yahoo.copy(), ("yahoo", "copy"), "2026-10-22")
-    assert same["status"] == "MATCH" and same["last_session"] == "2026-10-22"
+    from cis_helpers import synthetic
+    yahoo = synthetic(300)
+    last = str(yahoo.index[-1].date())
+    same = C.compare(yahoo, yahoo.copy(), ("yahoo", "copy"), last)
+    assert same["status"] == "MATCH" and same["last_session"] == last
     iex = yahoo.copy()
     iex["Volume"] = iex["Volume"] * 0.03                                  # a single venue's share of volume
     iex = iex.drop(iex.index[-5])                                         # a missing session
-    r = C.compare(yahoo, iex, ("yahoo", "iex"), "2026-10-22")
+    r = C.compare(yahoo, iex, ("yahoo", "iex"), last)
     assert r["volume_coverage_gap"] and r["only_in"]["yahoo"] and not r["adjustment_suspected"]
     raw = yahoo.copy()
     drift = pd.Series(range(len(raw)), index=raw.index) * 0.0001 + 1     # dividend adjustment grows back in time
     for k in ("Open", "High", "Low", "Close"):
         raw[k] = raw[k] * drift[::-1].values
-    assert C.compare(yahoo, raw, ("adj", "raw"), "2026-10-22")["adjustment_suspected"]
+    assert C.compare(yahoo, raw, ("adj", "raw"), last)["adjustment_suspected"]
     broken = yahoo.copy()
     broken.iloc[3, broken.columns.get_loc("Close")] = -1
     assert C.compare(yahoo, broken, ("a", "b"))["status"] == "NOT COMPARABLE"

@@ -11,6 +11,9 @@ from stockwatch.cis import features as F
 from stockwatch.cis import history as H
 from stockwatch.cis import level_packet as L
 from stockwatch.cis import presentation as V
+from stockwatch.cis import refdata
+
+from cis_helpers import synthetic
 from stockwatch.cis import state as S
 
 FIX = L.FIXTURES
@@ -23,12 +26,18 @@ BENCH_CSV = {"FICO": ("SPY-20261023-adjusted.csv", "XLK", "XLK-20261023-adjusted
 ACC = L.load_acceptance()
 
 
+# Vendor-derived reference prices aren't in the public repo (refdata). Tests marked needs_data run only where
+# the private, hash-verified files are installed; every other test runs everywhere on synthetic data.
+needs_data = pytest.mark.skipif(not refdata.available(), reason="private CIS reference data not installed")
+
+
 def bars(symbol, through=BOUNDARY):
-    return F.completed(F.read_csv(FIX / STOCK_CSV[symbol]), through)
+    return F.completed(refdata.bars(STOCK_CSV[symbol]), through)
 
 
 def evidence(symbol):
-    return json.loads((FIX / f"{symbol}-independent-evidence.json").read_text())
+    return refdata.load_json(f"{symbol}-independent-evidence.json")
+
 
 
 def close(a, b, tol=1e-9):
@@ -37,22 +46,44 @@ def close(a, b, tol=1e-9):
 
 # ---- provenance and data quality
 
-def test_fixture_files_match_the_handoff_manifest():
+def test_public_fixture_files_match_the_handoff_manifest_and_no_vendor_prices_ship():
     manifest = json.loads((FIX / "CIS-handoff-manifest.json").read_text())
     shipped = {f["name"]: f["sha256"] for f in manifest["files"] if (FIX / f["name"]).exists()}
-    assert len(shipped) >= 20
+    assert set(shipped) == {"chart-judgment-framework-v1.md", "CIS-chart-framework-v1-acceptance.json",
+                            "CIS-chart-framework-v1-implementation-notes.md", "CIS-chart-framework-v1-packet.schema.json",
+                            "CIS-chart-framework-v1-validation.txt", "CIS-handoff-readme.md"}
     for name, digest in shipped.items():
         assert F.sha256_file(FIX / name) == digest, name
+    assert not list(FIX.glob("*.csv")) and not any((FIX / n).exists() for n in refdata.PRIVATE)
 
 
+def test_private_data_is_used_only_when_its_hash_matches(tmp_path, monkeypatch):
+    monkeypatch.setenv(refdata.DATA_ENV, str(tmp_path))
+    with pytest.raises(refdata.Missing, match="isn't installed"):
+        refdata.path("ISRG-adjusted-daily.csv")
+    (tmp_path / "ISRG-adjusted-daily.csv").write_text("Date,Open,High,Low,Close,Volume\n")
+    with pytest.raises(refdata.Missing, match="doesn't match"):
+        refdata.path("ISRG-adjusted-daily.csv")
+    with pytest.raises(refdata.Missing, match="isn't in the handoff manifest"):
+        refdata.path("anything-else.csv")
+    assert not refdata.available() and "missing" in refdata.status()
+
+
+@needs_data
+def test_private_reference_files_match_the_manifest():
+    for name in refdata.PRIVATE:
+        assert F.sha256_file(refdata.path(name)) == refdata.manifest()[name]
+
+
+@needs_data
 @pytest.mark.parametrize("symbol", sorted(STOCK_CSV))
 def test_reference_series_pass_the_quality_checks(symbol):
-    q = F.check(F.read_csv(FIX / STOCK_CSV[symbol]), symbol)
+    q = F.check(refdata.bars(STOCK_CSV[symbol]), symbol)
     assert q.usable and q.problems == [] and q.first and q.last == "2026-10-23"
 
 
 def test_malformed_bars_are_refused_not_repaired():
-    good = bars("PODD").iloc[-30:].copy()
+    good = synthetic(30)
     cases = {
         "non-finite or non-positive prices": lambda d: d.assign(Close=d.Close.where(d.index != d.index[5], -1.0)),
         "high/low don't contain open and close": lambda d: d.assign(High=d.High.where(d.index != d.index[3], d.Low - 1)),
@@ -69,8 +100,9 @@ def test_malformed_bars_are_refused_not_repaired():
     assert q.usable and "zero-volume" in q.limitations[0]          # flagged, not filled
 
 
+@needs_data
 def test_the_forming_session_never_enters_completed_indicators():
-    raw = F.read_csv(FIX / STOCK_CSV["PODD"])
+    raw = refdata.bars(STOCK_CSV["PODD"])
     assert str(raw.index[-1].date()) == "2026-10-23"                 # the partial 23 Oct bar is in the file
     done = F.completed(raw, BOUNDARY)
     assert str(done.index[-1].date()) == BOUNDARY
@@ -80,6 +112,7 @@ def test_the_forming_session_never_enters_completed_indicators():
 
 # ---- indicators
 
+@needs_data
 @pytest.mark.parametrize("symbol", sorted(STOCK_CSV))
 def test_indicators_reproduce_the_reference_metrics(symbol):
     m, ev = F.metrics(bars(symbol)), evidence(symbol)["metrics"]
@@ -87,17 +120,19 @@ def test_indicators_reproduce_the_reference_metrics(symbol):
         assert close(m[k], v), (k, m[k], v)
 
 
+@needs_data
 @pytest.mark.parametrize("symbol", sorted(BENCH_CSV))
 def test_relative_returns_against_spy_and_the_sector_proxy(symbol):
     spy_file, sector, sector_file = BENCH_CSV[symbol]
     rs = evidence(symbol)["rs"]
     for name, f in (("SPY", spy_file), (sector, sector_file)):
-        bench = F.completed(F.read_csv(FIX / f), BOUNDARY)
+        bench = F.completed(refdata.bars(f), BOUNDARY)
         for n in (21, 63):
             assert close(F.relative_return(bars(symbol), bench, n), rs[f"{name}{n}"])
     assert F.relative_return(bars(symbol), None, 21) is None                # missing benchmark stays unknown
 
 
+@needs_data
 @pytest.mark.parametrize("symbol", sorted(STOCK_CSV))
 def test_weekly_bars_match_and_the_current_week_is_flagged_incomplete(symbol):
     wk = F.weekly(bars(symbol))
@@ -114,19 +149,20 @@ def test_rsi_edge_conventions_and_unavailable_history():
     down, flat = up[::-1].reset_index(drop=True), pd.Series([5.0] * 30)
     assert F.rsi(up).iloc[-1] == 100 and F.rsi(down).iloc[-1] == 0 and F.rsi(flat).iloc[-1] == 50
     assert F.rsi(up).iloc[:14].isna().all()                                 # fewer than 14 changes
-    m = F.metrics(bars("PODD").iloc[:30])
+    m = F.metrics(synthetic(30))
     assert m["ma50"] is None and m["ma200"] is None and m["rsi"] is not None  # unknown, never 0
 
 
 def test_relative_volume_excludes_the_signal_day():
-    df = bars("PODD")
+    df = synthetic()
     m = F.metrics(df)
     prior = df["Volume"].iloc[-21:-1].mean()
     assert m["volavg20"] == prior and m["rv"] == df["Volume"].iloc[-1] / prior
 
 
 def test_future_rows_cannot_change_past_indicators():
-    full, cut = F.indicators(bars("CRDO")), F.indicators(bars("CRDO", "2026-06-30"))
+    full = F.indicators(synthetic())
+    cut = F.indicators(synthetic().iloc[:400])
     common = cut.index
     pd.testing.assert_frame_equal(full.loc[common], cut)
 
@@ -139,7 +175,8 @@ def test_reference_packets_validate_and_reproduce_their_states():
         assert (r["confirmed_state"], r["quote_state"]) == (e["confirmed_state"], e["quote_state"]), symbol
         assert r["session_extreme_breaches"] == L.thaw(e["session_extreme_breaches"]), symbol
         assert [x["location"] for x in S.ladder(p)] == [c["current_quote_location"] for c in p.ceilings]
-        assert p["completed_close"] == pytest.approx(bars(symbol)["Close"].iloc[-1])
+        if refdata.available():
+            assert p["completed_close"] == pytest.approx(bars(symbol)["Close"].iloc[-1])
 
 
 def test_crdo_keeps_confirmed_provisional_and_intraday_facts_apart():
@@ -234,6 +271,7 @@ def test_ceiling_gap_clears_without_inventing_a_visit_and_partial_bars_never_con
 
 # ---- history
 
+@needs_data
 @pytest.mark.parametrize("symbol", sorted(STOCK_CSV))
 def test_history_reproduces_the_reference_analogues(symbol):
     ev = evidence(symbol)
@@ -258,7 +296,7 @@ def test_history_reproduces_the_reference_analogues(symbol):
 
 
 def test_history_selection_is_causal_and_unobserved_outcomes_are_null():
-    df = bars("PODD")
+    df = bars("PODD") if refdata.available() else synthetic(1300, seed=3)
     pol = H.POLICIES["PODD"]
     base = H.select(F.indicators(df), pol)
     future = df.copy()
@@ -272,6 +310,7 @@ def test_history_selection_is_causal_and_unobserved_outcomes_are_null():
     assert out["category"] is None and len(out["path"]) == 8
 
 
+@needs_data
 def test_history_counts_reconcile_and_rates_are_not_probabilities():
     for symbol in STOCK_CSV:
         got = H.analogues(bars(symbol), H.POLICIES[symbol])
@@ -283,6 +322,7 @@ def test_history_counts_reconcile_and_rates_are_not_probabilities():
 
 # ---- explanations and presentation
 
+@needs_data
 @pytest.mark.parametrize("symbol", sorted(X.REFERENCE))
 def test_every_read_is_evidence_based_and_never_a_buy(symbol):
     r = X.report(symbol)
@@ -294,6 +334,7 @@ def test_every_read_is_evidence_based_and_never_a_buy(symbol):
     assert "probab" not in text.lower() and "will reach" not in text.lower()
 
 
+@needs_data
 def test_room_check_and_crdo_without_an_entry_read():
     podd, crdo = X.report("PODD"), X.report("CRDO")
     assert podd["room"]["limited"] and "Room to the first ceiling is limited" in podd["takeaway"]
@@ -303,6 +344,7 @@ def test_room_check_and_crdo_without_an_entry_read():
     assert any("recovered above it" in o["evidence"] for o in crdo["why_down"]["for"])   # the 149 wick
 
 
+@needs_data
 def test_what_changes_lists_fixed_thresholds_and_the_verified_event():
     rows = X.report("PODD")["what_changes"]
     ifs = [x["if"] for x in rows]
@@ -311,12 +353,14 @@ def test_what_changes_lists_fixed_thresholds_and_the_verified_event():
     assert not any("verified_event" in str(x) for x in X.report("ISRG")["what_changes"])
 
 
+@needs_data
 def test_isrg_has_no_sector_proxy_and_says_so():
     r = X.report("ISRG")
     assert r["sector"] is None and set(r["relative"]) == {"SPY"}
     assert ["Sector proxy", "unavailable (not captured in the frozen inputs)"] in V.number_rows(r)
 
 
+@needs_data
 @pytest.mark.parametrize("symbol", sorted(X.REFERENCE))
 def test_figures_and_tables_build_from_real_bars(symbol):
     r = X.report(symbol)
