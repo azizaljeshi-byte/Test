@@ -240,3 +240,26 @@ def test_shadow_comparison_runs_old_and_new_on_the_same_frozen_bars():
     assert all(r["cis"]["no_order_placed"] for r in rows)
     md = shadow.markdown(rows)
     assert md.count("\n") == len(rows) + 1 and "BUY ON DIP" not in md
+
+
+# ---- second-source comparison (offline helper)
+
+def test_source_check_separates_adjustment_coverage_and_missing_sessions():
+    from stockwatch.cis import features as F
+    from stockwatch.cis import source_check as C
+    yahoo = F.read_csv(L.FIXTURES / "ISRG-adjusted-daily.csv").iloc[-300:]
+    same = C.compare(yahoo, yahoo.copy(), ("yahoo", "copy"), "2026-10-22")
+    assert same["status"] == "MATCH" and same["last_session"] == "2026-10-22"
+    iex = yahoo.copy()
+    iex["Volume"] = iex["Volume"] * 0.03                                  # a single venue's share of volume
+    iex = iex.drop(iex.index[-5])                                         # a missing session
+    r = C.compare(yahoo, iex, ("yahoo", "iex"), "2026-10-22")
+    assert r["volume_coverage_gap"] and r["only_in"]["yahoo"] and not r["adjustment_suspected"]
+    raw = yahoo.copy()
+    drift = pd.Series(range(len(raw)), index=raw.index) * 0.0001 + 1     # dividend adjustment grows back in time
+    for k in ("Open", "High", "Low", "Close"):
+        raw[k] = raw[k] * drift[::-1].values
+    assert C.compare(yahoo, raw, ("adj", "raw"), "2026-10-22")["adjustment_suspected"]
+    broken = yahoo.copy()
+    broken.iloc[3, broken.columns.get_loc("Close")] = -1
+    assert C.compare(yahoo, broken, ("a", "b"))["status"] == "NOT COMPARABLE"
