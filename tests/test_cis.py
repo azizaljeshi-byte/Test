@@ -6,9 +6,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from stockwatch.cis import explain as X
 from stockwatch.cis import features as F
 from stockwatch.cis import history as H
 from stockwatch.cis import level_packet as L
+from stockwatch.cis import presentation as V
 from stockwatch.cis import state as S
 
 FIX = L.FIXTURES
@@ -277,3 +279,53 @@ def test_history_counts_reconcile_and_rates_are_not_probabilities():
         assert sum(s["counts"].values()) == s["n"] == len(got["analogues"])
         assert all(not math.isnan(a["distance"]) for a in got["analogues"])
         assert "probab" not in got["rule"].lower()
+
+
+# ---- explanations and presentation
+
+@pytest.mark.parametrize("symbol", sorted(X.REFERENCE))
+def test_every_read_is_evidence_based_and_never_a_buy(symbol):
+    r = X.report(symbol)
+    text = " ".join([r["takeaway"]] + [o[k] for side in ("why_down", "why_up") for part in ("for", "against")
+                                       for o in r[side][part] for k in ("evidence", "meaning", "consequence")])
+    assert "buy now" not in text.lower() and "buy signal" not in text.lower().replace("not a buy signal", "")
+    assert r["why_down"]["for"] and r["why_up"]["for"]                       # both sides explained
+    assert all(o["evidence"] and o["consequence"] for o in r["why_down"]["for"] + r["why_up"]["for"])
+    assert "probab" not in text.lower() and "will reach" not in text.lower()
+
+
+def test_room_check_and_crdo_without_an_entry_read():
+    podd, crdo = X.report("PODD"), X.report("CRDO")
+    assert podd["room"]["limited"] and "Room to the first ceiling is limited" in podd["takeaway"]
+    assert "not a buy signal" in podd["takeaway"]
+    assert crdo["room"] is None and "provisionally" in crdo["takeaway"]
+    assert "not a buy signal" not in crdo["takeaway"]
+    assert any("recovered above it" in o["evidence"] for o in crdo["why_down"]["for"])   # the 149 wick
+
+
+def test_what_changes_lists_fixed_thresholds_and_the_verified_event():
+    rows = X.report("PODD")["what_changes"]
+    ifs = [x["if"] for x in rows]
+    assert "a completed close below 133" in ifs and "a completed close above 152" in ifs
+    assert any("2026-11-04" in x and "before open" in x for x in ifs)
+    assert not any("verified_event" in str(x) for x in X.report("ISRG")["what_changes"])
+
+
+def test_isrg_has_no_sector_proxy_and_says_so():
+    r = X.report("ISRG")
+    assert r["sector"] is None and set(r["relative"]) == {"SPY"}
+    assert ["Sector proxy", "unavailable (not captured in the frozen inputs)"] in V.number_rows(r)
+
+
+@pytest.mark.parametrize("symbol", sorted(X.REFERENCE))
+def test_figures_and_tables_build_from_real_bars(symbol):
+    r = X.report(symbol)
+    fig = V.candles(r, ["Floor", "Failure & damage", "Ceilings"])
+    candle = fig.data[0]
+    assert candle.type == "candlestick" and len(candle.x) == 130
+    assert list(candle.close) == list(r["bars"]["Close"].iloc[-130:])           # actual adjusted closes
+    assert V.weekly(r).data[0].type == "candlestick"
+    assert len(V.floor_rows(r)) == 4 and len(V.ceiling_rows(r)) == len(r["packet"].ceilings)
+    for a in r["history"]["analogues"]:
+        assert len(V.analogue_path(r, a).data[0].y) == len(a["path"])
+    assert len(V.history_rows(r)) == len(V.excursion_rows(r)) == r["history"]["summary"]["n"]
