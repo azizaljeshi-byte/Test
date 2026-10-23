@@ -620,7 +620,8 @@ def row(snap: dict, was: str | None = None) -> str:
             f'<span class="nm">{escape(name)}</span></div></div>'
             f'<div class="px">{num(price_now)}{day_html}</div><div class="why">{why_html}</div>'
             + (f'<div class="pl"><b>{"IF IT FAILS" if wait else "PLAN"}</b>{escape(plan)}</div>' if plan else "")
-            + (f'<div class="pl"><b>LEVELS</b>{escape(levels_line(snap))}</div>' if levels_line(snap) else "") + '</div></a>')
+            + (f'<div class="pl"><b>LEVELS</b>{escape(levels_line(snap))}</div>' if levels_line(snap) else "")
+            + (f'<div class="pl"><b>FLOW</b>{escape(flow_line(snap))}</div>' if flow_line(snap) else "") + '</div></a>')
 
 
 STATUS_STYLE = {"record_high": (OPP, "★"), "strong_uptrend": (OPP, "↗"), "pullback": (INFO, "↘"),
@@ -654,6 +655,44 @@ def levels_line(snap: dict) -> str:
     if "resist_low" in lv:
         bits.append(f'R {lv["resist_low"]:.2f}')
     return " · ".join(bits)
+
+
+def momentum_of(snap: dict) -> dict | None:
+    mo = ((snap.get("payload") or {}).get("technical") or {}).get("momentum")
+    return mo if isinstance(mo, dict) and mo.get("known") else None
+
+
+def flow_line(snap: dict) -> str:
+    """'Fading · distribution (sustained selling)' for the row. Left off when momentum is positive and nothing is
+    unusual, and off when it couldn't be read (Details says why)."""
+    mo = momentum_of(snap)
+    if not mo or (mo["cause"] == "none" and mo["momentum"] in ("strong", "building")):
+        return ""
+    return f'{mo["momentum_label"].title()} · {mo["cause_label"]}'
+
+
+def flow_note(snap: dict) -> str:
+    """The Details statement: momentum, the kind of move, and the numbers behind them."""
+    p = (snap.get("payload") or {}).get("technical") or {}
+    mo = p.get("momentum")
+    if not isinstance(mo, dict):
+        return ""
+    if not mo.get("known"):
+        return (f'<div class="mc-ev" style="--c:{MUTED}"><div class="t">~ Flow: no read</div><div style="font-size:.84rem;'
+                f'margin-top:.2rem;color:var(--ink)">{escape(mo.get("why") or "")}</div></div>')
+    f = mo["facts"]
+    bits = [f'{mo["tone"]}', f'20-day {f["ret20"]:+.1%}', "MACD above its signal" if f["macd_above_signal"] else "MACD below its signal",
+            f'{f["distribution_days"]} distribution days / {f["accumulation_days"]} accumulation days in 25']
+    if f.get("up_down_volume") is not None:
+        bits.append(f'{f["up_down_volume"]:.2f}x volume up vs down')
+    if f.get("market_ret20") is not None:
+        bits.append(f'market {f["market_ret20"]:+.1%}')
+    if f.get("sector_ret20") is not None:
+        bits.append(f'sector {f["sector_ret20"]:+.1%}')
+    color = {"strong": OPP, "building": OPP, "stabilising": INFO, "fading": WARN, "weak": WARN, "falling": RISK}[mo["momentum"]]
+    return (f'<div class="mc-ev" style="--c:{color}"><div class="t">≈ {escape(mo["momentum_label"])} · {escape(mo["cause_label"])}</div>'
+            f'<div style="font-size:.86rem;line-height:1.5;margin-top:.2rem;color:var(--ink)">{escape(mo["why"])}</div>'
+            f'<div style="font-size:.76rem;margin-top:.35rem;color:{MUTED}">{escape(" · ".join(bits))} · as of {escape(str(f["as_of"]))} close.</div></div>')
 
 
 def second_note(ps: dict | None) -> str:
