@@ -215,6 +215,9 @@ def status_message(t: dict, e, bar_date: str | None, now: datetime) -> str:
     prov = ps.get("provisional") if now_ok else None
     if prov:
         lines.append(prov["note"])
+    mo = (e.technical or {}).get("momentum")
+    if now_ok and isinstance(mo, dict) and mo.get("known"):
+        lines.append(f"Flow: {mo['momentum_label'].title()} ({mo['tone']}), {mo['cause_label']}.")
     lines.append("Automatic levels, not reviewed. Model levels from StockWatch's rules, not orders or predictions.")
     essentials = len("\n".join(head + lines)) + 1
     if essentials > LIMIT:
