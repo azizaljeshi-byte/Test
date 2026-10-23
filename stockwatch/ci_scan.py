@@ -91,8 +91,9 @@ def _sheet_problem(message: str) -> str:
 
 def last_session(now: datetime) -> date:
     """The latest weekday whose regular session has closed or is under way in New York (holidays ignored)."""
-    day = now.astimezone(NY).date()
-    if now.astimezone(NY).hour < 10:          # before the open, today's bar doesn't exist yet
+    ny = now.astimezone(NY)
+    day = ny.date()
+    if (ny.hour, ny.minute) < (9, 30):        # before the 09:30 open, today's bar doesn't exist yet
         day -= timedelta(days=1)
     while day.weekday() >= 5:
         day -= timedelta(days=1)
@@ -204,8 +205,9 @@ def holdings(mode: str, now: datetime, state_path: Path | None = None) -> Report
     if ok and stale_count:
         report.warnings.append(f"{stale_count} of {len(ok)} analysed tickers have prices older than the last session "
                                "(a market holiday can cause this); their calls aren't compared this run.")
-    quotes = sum(bool(e.quote.get("fetched_at")) and not e.quote.get("error") for e in ok)
-    report.add("Live quotes", f"{quotes} of {len(ok)}" + (" (synthetic)" if synthetic else ""))
+    quotes = sum(transitions.current_quote(e.quote, now) is not None for e in ok)
+    report.add("Live quotes", f"{quotes} of {len(ok)} traded in their session within the last hour"
+               + (" (synthetic)" if synthetic else ""))
 
     readings = {e.ticker: transitions.reading(e, e.ticker in stale)[0] for e in evals}
     bar_dates = {}
@@ -245,7 +247,7 @@ def holdings(mode: str, now: datetime, state_path: Path | None = None) -> Report
             if i:
                 time.sleep(1.1)        # Telegram allows about one message a second per chat
             try:
-                notify.telegram_send(transitions.message(t, by_ticker[t["ticker"]], bar_dates.get(t["ticker"])))
+                notify.telegram_send(transitions.message(t, by_ticker[t["ticker"]], bar_dates.get(t["ticker"]), now))
                 transitions.delivered(entries, t, stamp)
                 sent += 1
             except (notify.DeliveryError, ValueError) as e:

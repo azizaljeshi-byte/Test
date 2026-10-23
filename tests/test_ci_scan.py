@@ -217,7 +217,7 @@ def test_engine_plan_buy_on_dip_for_a_watch_verdict_is_tracked_like_the_dashboar
     entries, _, _ = step({}, ev("W", "WAIT", held=False))
     for _ in range(2):
         entries, ready, _ = transitions.step(entries, {"W": state}, "t")
-    msg = transitions.message(ready[0], e)
+    msg = transitions.message(ready[0], e, "2026-10-23", NOW)
     assert "WAIT → BUY ON DIP" in msg and "not a buy at the current price" in msg
     assert f"Entry zone: {plan['entry_low']:.2f}–{plan['entry_high']:.2f}" in msg and "BUY NOW" not in msg
 
@@ -265,7 +265,7 @@ def text(call_from, call_to, held=True, **kw):
          "from_stance": PLANS[call_from]["stance"], "from_verdict": VERDICT[call_from],
          "to": transitions.STANCE_CLASS[PLANS[call_to]["stance"]], "to_stance": PLANS[call_to]["stance"],
          "to_verdict": VERDICT[call_to]}
-    return transitions.message(t, ev("A", call_to, held=held, **kw))
+    return transitions.message(t, ev("A", call_to, held=held, **kw), "2026-10-23", NOW)
 
 
 def test_messages_carry_the_plans_levels_and_never_invent_them():
@@ -273,7 +273,7 @@ def test_messages_carry_the_plans_levels_and_never_invent_them():
     assert trim.startswith("🟠 A (held): HOLD → SELL SOME") and "HOLD → TRIM / REVIEW" in trim
     assert ("Trim: take some profit at the current price (the plan has no separate trim zone), keep the rest above 92.00."
             in trim) and "Target: 110.00 (52-week high)" in trim
-    assert "Price 100.00 (Yahoo, regular session, last trade Fri 10:55 New York)" in trim
+    assert "Price 100.00 (Yahoo, regular session, last trade Fri 23 Oct 10:55 New York)" in trim
     assert "not orders or predictions" in trim
     buy = text("WAIT", "BUY", held=False)
     assert "WAIT → BUY ON DIP" in buy and "Entry zone: 96.50–98.00" in buy and "Trigger: limit order" in buy
@@ -291,20 +291,55 @@ def test_messages_carry_the_plans_levels_and_never_invent_them():
 def test_price_shows_when_it_traded_not_when_it_was_fetched():
     e = ev("A", "HOLD")
     utc = timezone.utc
+    pre_now = datetime(2026, 10, 23, 12, 45, tzinfo=utc)                  # Fri 08:45 New York
     pre = {"market_state": "PRE", "ext_session": "pre", "ext_price": 101.5,
            "ext_time": datetime(2026, 10, 23, 12, 30, tzinfo=utc), "fetched_at": "2026-10-23T12:31:00+00:00"}
-    last_night = {"market_state": "PRE", "ext_session": "post", "ext_price": 99.0, "ext_stale": True,
-                  "ext_time": datetime(2026, 10, 22, 23, 50, tzinfo=utc), "fetched_at": "2026-10-23T12:31:00+00:00"}
-    no_time = {"market_state": "REGULAR", "live_price": 102.0, "fetched_at": "2026-10-23T15:00:00+00:00"}
-    naive = {"market_state": "REGULAR", "live_price": 102.0, "live_time": "2026-10-23T14:55:00"}
     e.quote = pre
-    assert transitions.price_line(e, "2026-10-22") == "Price 101.50 (Yahoo, pre-market, last trade Fri 08:30 New York)"
-    for q in (last_night, no_time, naive):         # never dressed up as a current price
+    assert transitions.price_line(e, "2026-10-22", pre_now) == \
+        "Price 101.50 (Yahoo, pre-market, last trade Fri 23 Oct 08:30 New York)"
+    regular = {"market_state": "REGULAR", "live_price": 102.0, "live_time": "2026-10-23T14:55:00+00:00"}
+    e.quote = regular
+    assert transitions.price_line(e, None, NOW) == "Price 102.00 (Yahoo, regular session, last trade Fri 23 Oct 10:55 New York)"
+    refused = {
+        "last night's after hours": ({"market_state": "PRE", "ext_session": "post", "ext_price": 99.0, "ext_stale": True,
+                                      "ext_time": datetime(2026, 10, 22, 23, 50, tzinfo=utc)}, pre_now),
+        "no trade time": ({"market_state": "REGULAR", "live_price": 102.0, "fetched_at": "2026-10-23T15:00:00+00:00"}, NOW),
+        "naive time": ({"market_state": "REGULAR", "live_price": 102.0, "live_time": "2026-10-23T14:55:00"}, NOW),
+        # a week-old regular bar, fetched today while the market is open
+        "old regular trade": ({"market_state": "REGULAR", "live_price": 75.0,
+                               "live_time": "2026-10-16T14:55:00+00:00", "fetched_at": "2026-10-23T15:00:00+00:00"}, NOW),
+        "same day, too old": (regular, datetime(2026, 10, 23, 16, 30, tzinfo=utc)),     # 95 minutes before the run
+        "in the future": ({**regular, "live_time": "2026-10-23T15:10:00+00:00"}, NOW),
+        "regular price outside the session": ({**regular, "live_time": "2026-10-23T13:00:00+00:00"},
+                                              datetime(2026, 10, 23, 13, 40, tzinfo=utc)),
+        # yesterday's after-hours trade not flagged stale by the adapter, still refused by its date
+        "old extended, not flagged": ({"market_state": "PRE", "ext_session": "post", "ext_price": 99.0, "ext_stale": False,
+                                       "ext_time": datetime(2026, 10, 22, 21, 0, tzinfo=utc)}, pre_now),
+        "pre-market label on a regular-hours time": ({**pre, "ext_time": datetime(2026, 10, 23, 14, 0, tzinfo=utc)},
+                                                      datetime(2026, 10, 23, 14, 10, tzinfo=utc)),
+    }
+    for why, (q, now) in refused.items():          # never dressed up as a current price
         e.quote = q
-        assert transitions.price_line(e, "2026-10-22") == "Price 100.00 (Yahoo, last daily bar 2026-10-22)"
-    assert transitions.price_line(e, None).endswith("last daily bar, date unknown)")
-    e.quote = {"market_state": "REGULAR", "live_price": 102.0, "live_time": "2026-10-23T14:55:00+00:00"}
-    assert "regular session, last trade Fri 10:55" in transitions.price_line(e, None)
+        assert transitions.current_quote(q, now) is None, why
+        assert transitions.price_line(e, "2026-10-22", now) == "Price 100.00 (Yahoo, last daily bar 2026-10-22)", why
+    assert transitions.price_line(e, None, NOW).endswith("last daily bar, date unknown)")
+
+
+def test_old_quote_with_fresh_daily_bars_is_sent_with_the_dated_daily_price(monkeypatch, tmp_path):
+    configure(monkeypatch)
+    fake = FakeTelegram()
+    monkeypatch.setattr(notify.urllib.request, "urlopen", fake)
+    fleet = Fleet(monkeypatch, tmp_path)                                  # today's daily bar for every ticker
+    fleet.run(ev("HELD", "HOLD"), ev("WATCH", "WAIT", held=False))
+    old = {"market_state": "REGULAR", "live_price": 75.0, "live_time": "2026-10-16T14:55:00+00:00",
+           "fetched_at": "2026-10-23T15:00:00+00:00"}
+    for _ in range(2):
+        held = ev("HELD", "TRIM")
+        held.quote = old
+        report = fleet.run(held, ev("WATCH", "WAIT", held=False))
+    assert dict(report.rows)["Live quotes"].startswith("1 of 2")         # only WATCH's quote is current
+    (text,) = [r["text"] for r in fake.requests]
+    assert "Price 100.00 (Yahoo, last daily bar 2026-10-23)" in text and "75.00" not in text
 
 
 def test_long_reasons_are_shortened_but_levels_and_disclaimer_always_arrive_whole():
@@ -313,7 +348,7 @@ def test_long_reasons_are_shortened_but_levels_and_disclaimer_always_arrive_whol
     e.plan = dict(PLANS["BUY"], trigger="limit order in the zone " + "x" * 3000)
     t = {"ticker": "A", "held": False, "from": "WAIT", "from_stance": "WAIT FOR CONFIRMATION", "from_verdict": "WATCH",
          "to": "DIP", "to_stance": "BUY ON PULLBACK", "to_verdict": "WATCH"}
-    msg = transitions.message(t, e, "2026-10-22")
+    msg = transitions.message(t, e, "2026-10-22", NOW)
     assert len(msg) <= notify.TELEGRAM_LIMIT and "…" in msg
     for required in ("Entry zone: 96.50–98.00", "Trigger: limit order in the zone " + "x" * 3000,
                      "Stop: 93.00 (below support at 94.00)", "Target: 108.00 (resistance)",
@@ -321,7 +356,7 @@ def test_long_reasons_are_shortened_but_levels_and_disclaimer_always_arrive_whol
         assert required in msg
     e.plan = dict(PLANS["BUY"], trigger="x" * 5000)                      # essentials alone too long: refused
     with pytest.raises(ValueError, match="exceed Telegram's limit"):
-        transitions.message(t, e, None)
+        transitions.message(t, e, None, NOW)
 
 
 def test_telegram_refuses_to_clip_an_oversized_message(monkeypatch):
@@ -534,6 +569,9 @@ def test_stale_and_missing_prices_are_counted(monkeypatch):
 def test_last_session_follows_the_new_york_clock():
     assert str(ci_scan.last_session(datetime(2026, 10, 23, 12, tzinfo=timezone.utc))) == "2026-10-22"  # Fri 08:00 NY
     assert str(ci_scan.last_session(NOW)) == "2026-10-23"                       # Fri 11:00 NY: today's bar exists
+    assert str(ci_scan.last_session(datetime(2026, 10, 23, 13, 29, tzinfo=timezone.utc))) == "2026-10-22"  # 09:29 NY
+    assert str(ci_scan.last_session(datetime(2026, 10, 23, 13, 30, tzinfo=timezone.utc))) == "2026-10-23"  # 09:30 open
+    assert str(ci_scan.last_session(datetime(2026, 10, 23, 13, 45, tzinfo=timezone.utc))) == "2026-10-23"  # 09:45
     assert str(ci_scan.last_session(datetime(2026, 10, 23, 21, tzinfo=timezone.utc))) == "2026-10-23"
     assert str(ci_scan.last_session(datetime(2026, 10, 25, 12, tzinfo=timezone.utc))) == "2026-10-23"  # Sunday
 

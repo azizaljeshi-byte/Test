@@ -16,7 +16,7 @@ Rules:
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 CONFIRM_RUNS = 2
@@ -137,18 +137,44 @@ def _when(v):
     return v if isinstance(v, datetime) and v.tzinfo is not None else None
 
 
-def price_line(e, bar_date: str | None) -> str:
-    """The price with when it actually traded. A live or extended-hours quote needs its own trade time;
-    last night's after-hours price seen before today's open, or any quote without a valid time, falls back
-    to the last completed daily bar."""
-    q = e.quote or {}
-    ny = lambda t: t.astimezone(NY).strftime("%a %H:%M")
+# A quote counts as current only if it traded in its own session, on the run's New York day, no later than the
+# run (plus clock skew) and at most QUOTE_MAX_AGE before it. Anything else falls back to the dated daily bar.
+QUOTE_MAX_AGE = timedelta(minutes=60)
+CLOCK_SKEW = timedelta(minutes=2)
+SESSIONS = {"regular": (time(9, 30), time(16, 0)), "pre": (time(4, 0), time(9, 30)), "post": (time(16, 0), time(20, 0))}
+SESSION_LABEL = {"regular": "regular session", "pre": "pre-market", "post": "after hours"}
+
+
+def _in_session(t: datetime, session: str, now: datetime) -> bool:
+    start, end = SESSIONS[session]
+    local = t.astimezone(NY)
+    return (local.date() == now.astimezone(NY).date() and start <= local.time() <= end
+            and now - QUOTE_MAX_AGE <= t <= now + CLOCK_SKEW)
+
+
+def current_quote(q: dict | None, now: datetime) -> tuple[float, str, datetime] | None:
+    """(price, session, trade time) for a quote that is current at `now`, or None.
+
+    `now` is the run's clock (timezone-aware). A regular-session price needs a trade between 09:30 and 16:00
+    New York today; a pre-market or after-hours one a trade inside that session today and not last night's.
+    Old, future, wrong-session, missing or naive times are all refused."""
+    q = q or {}
     live, t = q.get("live_price"), _when(q.get("live_time"))
-    if q.get("market_state") == "REGULAR" and _ok(live) and t:
-        return f"Price {live:.2f} (Yahoo, regular session, last trade {ny(t)} New York)"
-    ext, t = q.get("ext_price"), _when(q.get("ext_time"))
-    if _ok(ext) and t and not q.get("ext_stale") and q.get("ext_session") in ("pre", "post"):
-        return f"Price {ext:.2f} (Yahoo, {'pre-market' if q['ext_session'] == 'pre' else 'after hours'}, last trade {ny(t)} New York)"
+    if q.get("market_state") == "REGULAR" and _ok(live) and t and _in_session(t, "regular", now):
+        return live, "regular", t
+    ext, t, sess = q.get("ext_price"), _when(q.get("ext_time")), q.get("ext_session")
+    if sess in ("pre", "post") and _ok(ext) and t and not q.get("ext_stale") and _in_session(t, sess, now):
+        return ext, sess, t
+    return None
+
+
+def price_line(e, bar_date: str | None, now: datetime) -> str:
+    """The price with when it actually traded: a current quote (see `current_quote`) with its trade date and
+    time, otherwise the last completed daily bar with its date. The fetch time is never shown as a trade time."""
+    cur = current_quote(e.quote, now)
+    if cur:
+        price, sess, t = cur
+        return f"Price {price:.2f} (Yahoo, {SESSION_LABEL[sess]}, last trade {t.astimezone(NY):%a %d %b %H:%M} New York)"
     return f"Price {e.price:.2f} (Yahoo, last daily bar{f' {bar_date}' if bar_date else ', date unknown'})"
 
 
@@ -156,7 +182,7 @@ def _short(text: str, n: int) -> str:
     return text if len(text) <= n else text[:n - 1].rstrip() + "…"
 
 
-def message(t: dict, e, bar_date: str | None = None) -> str:
+def message(t: dict, e, bar_date: str | None, now: datetime) -> str:
     """The Telegram text for one transition. Levels come from the existing plan; missing ones say so.
 
     The call, price, levels, warnings and disclaimer are always sent in full; only the "why" is shortened
@@ -167,7 +193,7 @@ def message(t: dict, e, bar_date: str | None = None) -> str:
     plan = e.plan or {}
     held = "held" if t["held"] else "watchlist"
     head = [f"{ICON.get(t['to'], '•')} {e.ticker} ({held}): {label(t['from_stance'])} → {label(t['to_stance'])}",
-            price_line(e, bar_date)]
+            price_line(e, bar_date, now)]
     reasons = [_short(s.message, REASON_CHARS) for s in e.signals[:2]]
     verdicts = f"{t['from_verdict']} → {t['to_verdict']}" if t["from_verdict"] != t["to_verdict"] else t["to_verdict"]
     why = f"Why: {verdicts}" + (f". {'; '.join(reasons)}" if reasons else "")

@@ -55,10 +55,12 @@ the scheduled job. A watchlist stock is never told to "sell": the dashboard's ru
 
 **Each message** shows:
 - the ticker, held or watchlist, and the previous → new call
-- the price with when it **traded**: a regular-session or pre-market / after-hours trade time in New York
-  time, or "last daily bar" with its date. Last night's after-hours price seen before today's open, or a
-  quote without a valid trade time, falls back to the daily bar; the time a quote was fetched is never
-  shown as its trade time.
+- the price with when it **traded**, e.g. "regular session, last trade Fri 23 Oct 10:55 New York". A quote
+  is shown only if it is **current**: it traded today (New York date) inside its own session (pre-market
+  04:00–09:30, regular 09:30–16:00, after hours 16:00–20:00 New York), within the **last 60 minutes**
+  before the run, and not after it (2 minutes' clock allowance). Anything else (an old, future,
+  wrong-session or timeless trade, or last night's after-hours price) falls back to "last daily bar" with
+  its date. The time a quote was fetched is never shown as its trade time.
 - why: the verdict change and the top two reasons
 - the levels from the existing trade plan: entry zone and trigger for BUY / ADD / DIP (DIP says it's a conditional limit order, not a buy at the current price); the watch zone, marked
   "not an active buy", for WAIT; stop and target for HOLD; for TRIM, trim at the current price (the plan has no separate trim zone) with the stop; reduce /
@@ -141,14 +143,14 @@ After that, the schedule runs `holdings-scan` on its own. Its first run records 
 - a Telegram send failed or was rate-limited, or a change was confirmed with Telegram not configured
 
 **Green with a warning:**
-- some tickers couldn't be analysed, or have prices older than the last session (a market holiday can cause this); those stocks' calls aren't compared this run
+- some tickers couldn't be analysed, or have prices older than the last session (from the 09:30 New York open, today's bar is expected; a market holiday can cause this); those stocks' calls aren't compared this run
 - no saved memory (first run or expired): a baseline was recorded
 - Telegram isn't configured and there was nothing to send
 
 ntfy and email aren't used by the scheduled scan; a run never counts them as delivery.
 
 **A green run doesn't prove fresh data or a delivered message on its own.** Read the summary's "Latest
-daily bar", "Live quotes", "Decision changes" and "Delivery" rows. "telegram: 1 sent" means Telegram
+daily bar", "Live quotes" (only quotes current by the rule above count), "Decision changes" and "Delivery" rows. "telegram: 1 sent" means Telegram
 accepted the message.
 
 ## Schedule: Friday 23 October 2026
