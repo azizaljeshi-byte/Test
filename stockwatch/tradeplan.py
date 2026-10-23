@@ -198,6 +198,21 @@ def exit_on_breakdown(plan: dict | None, price_status: dict | None, watchlist: b
                        f"picture says. Rebuild only once price recovers above {lv['support_high']:.2f}."}
 
 
+def hold_off_buying(plan: dict | None, price_status: dict | None, watchlist: bool) -> dict | None:
+    """The plan follows the call: a confirmed breakdown under a buy or add plan turns it into hold (wait, on a
+    watchlist name), so no screen shows 'buy more' next to 'breakdown'. Entry, stop and targets stay for reference."""
+    if not plan or plan.get("stance") not in status.BUY_STANCES or not status.blocks_buy(price_status):
+        return plan
+    lv = price_status["levels"]
+    low = lv.get("support_low")
+    short = f"don't add yet · closed below support {low:.2f}" if low else "don't add yet · support broke"
+    trigger = f"a close back above the support zone ({lv['support_high']:.2f}) with the risk signals clear" \
+        if lv.get("support_high") else "price recovers above support"
+    return {**plan, "stance": "WAIT FOR CONFIRMATION" if watchlist else "HOLD", "status_exit": short, "trigger": trigger,
+            "notes": list(plan.get("notes", [])) + [
+                "Support broke on a completed close, so adding is on hold. Automatic levels, not reviewed: check the chart."]}
+
+
 def summary(plan: dict) -> str:
     """One-line plan for cards and notifications."""
     if not plan:

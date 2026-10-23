@@ -68,6 +68,16 @@ def forces_exit(price_status: dict | None, watchlist: bool) -> bool:
                 and price_status.get("code") in EXIT_CODES)
 
 
+BUY_STANCES = ("BUY NOW", "BUY ON PULLBACK", "BUY THE BREAKOUT", "ADD")
+
+
+def blocks_buy(price_status: dict | None) -> bool:
+    """True when a CONFIRMED breakdown (a completed close below support) sits under a buy or add call. Always on:
+    unlike the exit switch it sells nothing, it only stops the app saying 'buy more' and 'breakdown' about the same
+    stock at once. Unknown or missing status never blocks anything."""
+    return isinstance(price_status, dict) and price_status.get("code") in EXIT_CODES
+
+
 def rank(code: str | None) -> int | None:
     """Position in ORDER (higher is worse), or None for unknown."""
     return ORDER.index(code) if code in ORDER else None
