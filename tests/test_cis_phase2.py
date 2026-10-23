@@ -19,6 +19,13 @@ needs_data = pytest.mark.skipif(not refdata.available(), reason="private CIS ref
 NOW = datetime(2026, 10, 29, 15, 0, tzinfo=timezone.utc)          # Thursday 11:00 New York
 
 
+def fresh(n=500, end="2026-10-28", seed=7):
+    """Synthetic bars whose last completed session is the day before NOW."""
+    df = synthetic(n, seed=seed)
+    df.index = pd.bdate_range(end=end, periods=n)
+    return df
+
+
 def flat_then_crash(n=320, crash=85.0):
     """Synthetic: ~100 for months (so the 200-day average sits near 100), then one session closes at `crash`."""
     rng = np.random.default_rng(1)
@@ -181,7 +188,7 @@ def test_second_source_agreement_and_disagreement():
     assert W.second_source(yq, _fq(101.0), NOW)["status"] == "agree"
     bad = W.second_source(yq, _fq(105.0, high=106), NOW)
     assert bad["status"].startswith("DISAGREE") and bad["diff"] > 0.03
-    assert W.second_source(None, _fq(), NOW)["status"].startswith("not compared")
+    assert W.second_source(None, _fq(), NOW)["status"].startswith("not comparable")
 
 
 def _snap(ticker, watch=False, verdict="HOLD", plan=None, tier=2):
@@ -190,7 +197,7 @@ def _snap(ticker, watch=False, verdict="HOLD", plan=None, tier=2):
 
 
 def test_watchlist_row_for_an_unsupported_stock_keeps_the_legacy_call():
-    hist = synthetic(500, start="2024-11-20")
+    hist = fresh(500)
     r = W.row(_snap("SYN"), hist, None, None, NOW, packets={})
     assert r["coverage"] == "unsupported" and r["action"] == "CIS UNSUPPORTED"
     assert r["alert_preview"] == "no change (legacy kept)" and r["legacy"]["stance"] == "HOLD"
@@ -219,14 +226,14 @@ def test_watchlist_run_and_coverage_never_need_finnhub():
         def history(self, t):
             if t == "BAD":
                 raise RuntimeError("no data")
-            return synthetic(500, start="2024-11-20")
+            return fresh(500)
 
         def quote(self, t):
             return {}
     rows = W.run([_snap("AAA"), _snap("BAD", watch=True)], Prov(), NOW)
     cov = W.coverage(rows)
     assert cov["unsupported"] == 2 and cov["data problems"] == 1 and cov["candidate available"] == 1
-    assert all(r["second_source"]["status"].startswith("not compared") for r in rows)
+    assert all(r["second_source"]["status"].startswith("not comparable") for r in rows)
 
 
 def test_phase2_modules_stay_out_of_production_paths():
@@ -285,7 +292,7 @@ def test_an_old_finnhub_quote_never_becomes_the_current_price():
 def test_one_failing_stock_never_stops_the_comparison(monkeypatch):
     class Prov:
         def history(self, t):
-            return synthetic(500, start="2024-11-20")
+            return fresh(500)
 
         def quote(self, t):
             return {}
@@ -298,3 +305,82 @@ def test_one_failing_stock_never_stops_the_comparison(monkeypatch):
     assert ROW_KEYS <= set(bad) and bad["action"] == "CIS UNSUPPORTED" and "boom" in bad["reasons"][0]
     assert len(W.table_rows(rows)) == 3 and all(W.details(r)[0] for r in rows)
     assert W.coverage(rows)["data problems"] == 1
+
+
+
+# ---- Codex review of 5afee73: freshness for every ticker, comparable sources only, private report files
+
+@pytest.mark.parametrize("hist,why", [
+    (lambda: fresh(500, end="2022-12-01"), "behind the expected"),                         # Codex's old cache
+    (lambda: fresh(500).drop(pd.to_datetime(["2026-10-20", "2026-10-21", "2026-10-22"])), "missing"),
+])
+def test_stale_or_gappy_history_gives_no_current_candidate_for_any_ticker(hist, why):
+    for snap, packets in ((_snap("SYN"), {}), (_snap("ISRG", tier=1), None)):
+        r = W.row(snap, hist(), None, None, NOW, packets=packets)
+        assert why in r["data"] and r["candidate"] is None, snap["ticker"]
+        assert W.table_rows([r])[0][3] == "data problem" and W.coverage([r])["data problems"] == 1
+    isrg = W.row(_snap("ISRG", tier=1), hist(), None, None, NOW)
+    assert isrg["action"] == "DATA REVIEW"
+    assert W.row(_snap("SYN"), fresh(500), None, None, NOW, packets={})["candidate"]["as_of"] == "2026-10-28"
+
+
+YQ = {"market_state": "REGULAR", "live_price": 445.0, "live_time": "2026-10-29T14:55:00+00:00"}   # 10:55 New York
+
+
+@pytest.mark.parametrize("fq,why", [
+    (_fq(445.0, low=420.0, high=446.0, when=datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)), "isn't a current"),  # 08:00
+    (_fq(445.0, low=420.0, high=446.0, when=datetime(2026, 10, 29, 13, 40, tzinfo=timezone.utc)), "isn't a current"), # aged
+])
+def test_finnhub_from_another_session_or_aged_is_not_comparable_even_at_the_same_price(fq, why):
+    s = W.second_source(YQ, fq, NOW)
+    assert s["status"].startswith("not comparable") and why in s["status"]
+    isrg = D.reviewed_packets()["ISRG"]
+    c = isrg["completed_close"]
+    hist = pd.DataFrame({"Open": c, "High": c + 1, "Low": c - 1, "Close": c, "Volume": 1e6},
+                        index=pd.bdate_range("2026-06-01", "2026-10-28", tz="America/New_York"))
+    r = W.row(_snap("ISRG", tier=1), hist, YQ, fq, NOW)
+    assert not any(x.startswith("Intraday: today's low went below") for x in r["reasons"])
+    assert any("not available" in x for x in r["reasons"])
+
+
+def test_extended_session_yahoo_quote_is_not_compared_with_a_regular_finnhub_range():
+    pre = {"market_state": "PRE", "ext_session": "pre", "ext_price": 445.0, "ext_time": "2026-10-29T12:50:00+00:00"}
+    s = W.second_source(pre, _fq(445.0, when=datetime(2026, 10, 29, 12, 55, tzinfo=timezone.utc)),
+                        datetime(2026, 10, 29, 13, 0, tzinfo=timezone.utc))
+    assert s["status"].startswith("not comparable") and "extended session" in s["status"]
+
+
+def test_watchlist_cli_writes_owner_only_files_outside_git_and_refuses_unsafe_paths(tmp_path, monkeypatch):
+    import os
+    import stat
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    old = os.umask(0o022)
+    try:
+        out = tmp_path / "reports"
+        V.write_private(out, {"cis-walk-forward.md": "SYNTH ticker report"})
+        assert stat.S_IMODE(out.stat().st_mode) == 0o700
+        assert stat.S_IMODE((out / "cis-walk-forward.md").stat().st_mode) == 0o600
+        with pytest.raises(V.UnsafeOutput, match="already exists"):
+            V.write_private(out, {"x.md": "again"})                         # never reuse or overwrite
+        loose = tmp_path / "loose"
+        loose.mkdir(mode=0o755)
+        with pytest.raises(V.UnsafeOutput):
+            V.write_private(loose, {"x.md": "x"})
+        (tmp_path / "real").mkdir()
+        (tmp_path / "link").symlink_to(tmp_path / "real")
+        with pytest.raises(V.UnsafeOutput, match="symlink"):
+            V.write_private(tmp_path / "link" / "reports", {"x.md": "x"})
+        repo = tmp_path / "checkout"
+        (repo / ".git").mkdir(parents=True)
+        (repo / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+        with pytest.raises(V.UnsafeOutput, match="Git checkout"):
+            V.write_private(repo / "reports", {"x.md": "x"})
+        with pytest.raises(V.UnsafeOutput) as e:
+            V.write_private(repo / "reports", {"x.md": "SECRET-TICKER"})
+        assert "SECRET-TICKER" not in str(e.value) and str(repo) not in str(e.value)
+    finally:
+        os.umask(old)
+    monkeypatch.setenv("CI", "true")
+    with pytest.raises(SystemExit, match="CI"):
+        V.main(["--watchlist", "--out", str(tmp_path / "ci")])

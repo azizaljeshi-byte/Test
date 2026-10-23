@@ -38,9 +38,13 @@ Telegram. The CIS decision switch stays off; there is no active mode. Builds on 
   `~/.stockwatch/cis-data`). A file is used only if its SHA-256 matches the manifest (`stockwatch/cis/refdata.py`).
   Without them: CI runs on deterministic synthetic data and the 35 tests that need real prices skip; the
   Research view shows each packet's levels, states and shadow calls without charts or history.
-- **History:** the files are still in PR #30's branch history. To keep them out of the default branch, merge
-  with **squash** (or close #30 and squash-merge this PR, which contains it). Purging the branch history needs
-  a force-push, which is the owner's call.
+- **History and merge order:** the files are still in PR #30's branch history, and PR #30's tip still contains
+  them. To keep them out of the default branch:
+  1. **Don't merge PR #30 on its own** (squash or not, its tip adds the files).
+  2. When both are approved, **retarget PR #32 to the default branch** (it already contains all of #30's work)
+     and **squash-merge #32**: the default branch gets one commit whose tree has no vendor files.
+  3. **Close #30 as superseded** by #32.
+  Purging the feature branches' history needs a force-push, which is the owner's call.
 - The PR #30 screenshots (rendered charts) remain in `docs/cis-screenshots/`; remove them too if you want no
   chart renderings of vendor data in the repo.
 
@@ -131,8 +135,14 @@ Gaps are in ATR14 at the as-of session. "Overlapped" means a candidate zone touc
   must be specified and validated again before it's looked at for approval, never tuned on these outcomes.
 
 **On your own list (private):** `python -m stockwatch.cis.validate --watchlist` runs the same walk-forward on
-every ticker in your holdings list and writes `~/.stockwatch/cis-reports/cis-walk-forward.md`. It refuses to
-run in CI, because the report names your holdings.
+every ticker in your holdings list and writes the report into a **new** owner-only folder (0700, file 0600;
+default `~/.stockwatch/cis-reports/walk-forward-<time>/`). It refuses to run in CI, to write inside a Git
+checkout, through a symlink or into an existing folder, and its errors never print the path or a ticker.
+
+**Freshness for every ticker:** the whole-list shadow applies the same rule as reviewed packets before any
+candidate is computed: the latest completed bar may trail the last expected session by at most one weekday,
+with at most one weekday missing among the ten before it. A stale or gappy cache is a data problem, with its
+last session shown, and no current candidate state.
 
 ## Whole-list shadow (workstream B, items 6–7)
 
@@ -183,7 +193,10 @@ Gated rollout, each step a separate owner decision:
   today's New York session and not in the future, and its numbers are finite and consistent (low ≤ price ≤
   high). It stands in for a missing Yahoo quote only under the Yahoo rule (a regular-session trade at most 60
   minutes old); its high/low are used as intraday facts only when it agrees with a current Yahoo quote.
-  A stock that can't be compared at all still gets a full row, so one gap never stops the list. Daily candles on the free plan may be refused
+  A stock that can't be compared at all still gets a full row, so one gap never stops the list.
+  Prices are compared only when **both** are current regular-session trades (each at most 60 minutes old);
+  a pre-market, aged or extended-session quote on either side is "not comparable", even at the same price, and
+  Finnhub's high/low are then not used. Daily candles on the free plan may be refused
   ("no access"); they're not used.
 - **Daily bars:** for a side-by-side check, download a second source's adjusted daily bars privately and run
   `stockwatch/cis/source_check.compare` (see `docs/CIS_PROVIDER_CHECK.md`). Still **NOT VERIFIED**: no market-data

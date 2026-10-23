@@ -140,33 +140,43 @@ def inputs_from_packet(packet, recent_bars: list | None = None) -> Inputs:
                   None, packet["completed_close"], snap_day, True)
 
 
-def live_inputs(packet, hist, quote: dict | None, now: datetime) -> Inputs:
-    """Inputs from the app's cached daily bars and quote. Only completed sessions count as closes; the quote
-    is used only if it passes the same 'current trade' check as Telegram (`transitions.current_quote`)."""
-    from .. import transitions                      # shared quote validation; imported late to keep this light
+def current_bars(hist, now: datetime, symbol: str = "") -> tuple:
+    """(completed bars, None, last session) when the daily history is usable and current, else
+    (None, why not, last session or None). One policy for every live use, reviewed packet or not: valid OHLCV,
+    a latest completed bar at most MAX_BAR_LAG weekdays behind the last expected session (so an old cache, or
+    one that stopped receiving rows, is refused), and at most MAX_MISSING weekdays missing among the ten
+    before it. No exchange calendar: one weekday of slack covers a holiday."""
     today = now.astimezone(features.NY).date()
     if hist is None or len(hist) == 0:
-        return Inputs(None, None, data_ok=False, data_note="no daily bars cached yet", evaluated_on=str(today))
-    q = features.check(hist, packet.symbol)
+        return None, "no daily bars available", None
+    q = features.check(hist, symbol)
     boundary = features.default_boundary(hist.index, now)
     done = features.completed(hist, boundary) if boundary else hist.iloc[:0]
     if not q.usable or done.empty:
-        return Inputs(None, None, data_ok=False, data_note="; ".join(q.problems) or "no completed session",
-                      evaluated_on=str(today))
+        return None, "; ".join(q.problems) or "no completed session", None
     last = done.index[-1].date()
     expected = today - timedelta(days=1)
     while expected.weekday() >= 5:
         expected -= timedelta(days=1)
     lag = weekdays_between(last, expected) + (last < expected)
     if lag > MAX_BAR_LAG:
-        return Inputs(None, str(last), data_ok=False, evaluated_on=str(today),
-                      data_note=f"the latest completed bar is {last}, {lag} weekdays behind the expected {expected}")
+        return None, f"the latest completed bar is {last}, {lag} weekdays behind the expected {expected}", str(last)
     have = {d.date() for d in done.index[-15:]}
     checked = [d for d in (last - timedelta(days=i) for i in range(1, 15)) if d.weekday() < 5][:10]
     gaps = [d for d in checked if d not in have and d > done.index[0].date()]
     if len(gaps) > MAX_MISSING:
-        return Inputs(None, str(last), data_ok=False, evaluated_on=str(today),
-                      data_note=f"{len(gaps)} weekday sessions missing before {last} ({', '.join(map(str, sorted(gaps)))})")
+        return None, f"{len(gaps)} weekday sessions missing before {last} ({', '.join(map(str, sorted(gaps)))})", str(last)
+    return done, None, str(last)
+
+
+def live_inputs(packet, hist, quote: dict | None, now: datetime) -> Inputs:
+    """Inputs from the app's cached daily bars and quote. Only completed sessions count as closes; the quote
+    is used only if it passes the same 'current trade' check as Telegram (`transitions.current_quote`)."""
+    from .. import transitions                      # shared quote validation; imported late to keep this light
+    today = now.astimezone(features.NY).date()
+    done, note, last = current_bars(hist, now, packet.symbol)
+    if done is None:
+        return Inputs(None, last, data_ok=False, data_note=note, evaluated_on=str(today))
     rows = [{"session": str(i.date()), "high": float(r.High), "low": float(r.Low), "close": float(r.Close),
              "completed": True} for i, r in done.iterrows()]
     later = [b for b in rows if b["session"] > packet["as_of_completed_session"]]

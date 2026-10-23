@@ -47,16 +47,22 @@ def second_source(yahoo_quote: dict | None, fq: dict | None, now: datetime) -> d
     """Cross-check today's price between Yahoo and Finnhub. Disagreement is reported, never averaged away."""
     y = transitions.current_quote(yahoo_quote, now)
     f = finnhub_session(fq, now)
-    out = {"yahoo": None if y is None else y[0], "finnhub": None if f is None else f["price"],
+    out = {"yahoo": None if y is None else y[0], "yahoo_session": None if y is None else y[1],
+           "finnhub": None if f is None else f["price"], "finnhub_time": None if f is None else f["time"],
            "finnhub_current": bool(f and f["current"]),
            "session_low": None if f is None else f["low"], "session_high": None if f is None else f["high"]}
-    if y is None or f is None:
-        out["status"] = "not compared (" + ", ".join(n for n, v in (("no current Yahoo quote", y), ("no Finnhub quote today", f))
-                                                     if v is None) + ")"
-    else:
-        diff = f["price"] / y[0] - 1
-        out["diff"] = diff
-        out["status"] = "agree" if abs(diff) <= AGREE else f"DISAGREE by {diff:+.2%}"
+    # comparable only when both are current regular-session trades (same session, each at most an hour old)
+    why = [n for n, bad in (("no current Yahoo quote", y is None),
+                            ("Yahoo's quote is from the extended session", y is not None and y[1] != "regular"),
+                            ("no Finnhub quote today", f is None),
+                            ("Finnhub's quote isn't a current regular-session trade", f is not None and not f["current"]))
+           if bad]
+    if why:
+        out["status"] = "not comparable (" + "; ".join(why) + ")"
+        return out
+    diff = f["price"] / y[0] - 1
+    out["diff"] = diff
+    out["status"] = "agree" if abs(diff) <= AGREE else f"DISAGREE by {diff:+.2%}"
     return out
 
 
@@ -78,7 +84,7 @@ def row(snap: dict, hist, yahoo_quote: dict | None, fq: dict | None, now: dateti
     legacy = legacy_view(snap)
     second = second_source(yahoo_quote, fq, now)
     out = {"ticker": ticker, "held": held, "tier": snap.get("tier"), "legacy": legacy, "second_source": second,
-           "reasons": [], "data": None, "candidate": None, "discrepancy": {}, "alert_preview": None}
+           "reasons": [], "data": None, "data_as_of": None, "candidate": None, "discrepancy": {}, "alert_preview": None}
     packet = packets.get(ticker)
     if packet is not None:
         inp = decision.live_inputs(packet, hist, yahoo_quote, now)
@@ -107,14 +113,13 @@ def row(snap: dict, hist, yahoo_quote: dict | None, fq: dict | None, now: dateti
         out["alert_preview"] = ("same class" if out["cis_class"] == legacy["class"]
                                 else f"{legacy['class']} -> {out['cis_class']} (re-baselined silently at activation)")
     # automatic candidate levels: a diagnostic, never a call
-    if hist is None or len(hist) == 0:
-        out["data"] = "no daily bars available"
+    done, note, last = decision.current_bars(hist, now, ticker)   # the same freshness policy as reviewed packets
+    out["data_as_of"] = last
+    if done is None:
+        out["data"] = note
         return out
-    boundary = features.default_boundary(hist.index, now)
-    done = features.completed(hist, boundary) if boundary else hist.iloc[:0]
-    q = features.check(done, ticker)
-    out["data"] = "ok" if q.usable and len(done) else "; ".join(q.problems) or "no completed session"
-    pk, diag = candidates.extract(done.iloc[-400:], ticker, "provider") if out["data"] == "ok" else (None, {"why": out["data"]})
+    out["data"] = "ok"
+    pk, diag = candidates.extract(done.iloc[-400:], ticker, "provider")
     if pk is None:
         out["candidate"] = {"why": diag.get("why")}
     else:
@@ -122,6 +127,7 @@ def row(snap: dict, hist, yahoo_quote: dict | None, fq: dict | None, now: dateti
         st = decision.state.downside_state(pk["completed_close"], cp.downside)
         first = next((c for c in pk["upside"]["ceilings"] if c["zone"]["low"] > pk["completed_close"]), None)
         out["candidate"] = {"packet_id": cp.id, "stage": level_packet.stage(cp), "state": decision.DOWN_LABEL[st],
+                            "as_of": pk["as_of_completed_session"],
                             "floor": (pk["downside"]["zone"]["low"], pk["downside"]["zone"]["high"]),
                             "failure": pk["downside"]["failure"],
                             "first_ceiling": None if first is None else (first["zone"]["low"], first["zone"]["high"])}
@@ -163,7 +169,7 @@ def error_row(snap: dict, why: str) -> dict:
     """A row with the full shape for a stock that couldn't be compared at all."""
     return {"ticker": snap.get("ticker", "?"), "held": not (snap.get("payload") or {}).get("watchlist", True),
             "tier": snap.get("tier"), "legacy": {"stance": None, "class": None}, "second_source": {"status": "not compared"},
-            "reasons": [f"Couldn't compare: {why[:200]}"], "data": "comparison failed", "candidate": None,
+            "reasons": [f"Couldn't compare: {why[:200]}"], "data": "comparison failed", "data_as_of": None, "candidate": None,
             "discrepancy": {}, "alert_preview": "no change (legacy kept)", "coverage": "unsupported",
             "action": "CIS UNSUPPORTED", "cis_class": None, "packet_id": None}
 
@@ -186,10 +192,12 @@ def details(r: dict) -> tuple[str, str]:
             f"price check: {(r.get('second_source') or {}).get('status', 'not compared')}"]
     if r.get("data") not in (None, "ok"):
         bits.append(f"data: {r['data']}")
+    elif r.get("data_as_of"):
+        bits.append(f"bars to {r['data_as_of']}")
     elif c.get("why"):
         bits.append(f"no candidate: {c['why']}")
     if c.get("floor"):
-        bits.append(f"candidate floor {c['floor'][0]:g}–{c['floor'][1]:g}, failure {c['failure']:g}")
+        bits.append(f"candidate (as of {c.get('as_of')}) floor {c['floor'][0]:g}–{c['floor'][1]:g}, failure {c['failure']:g}")
     if d.get("stop_vs_candidate_failure") is not None:
         bits.append(f"legacy stop {d['stop_vs_candidate_failure']:+.1%} vs candidate failure")
     if d.get("legacy_target_is_measured_move"):

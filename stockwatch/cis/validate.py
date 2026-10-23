@@ -10,6 +10,7 @@
 
     python -m stockwatch.cis.validate --reference          # needs the private reference data
     python -m stockwatch.cis.validate --watchlist          # your holdings list; private output, local only
+                                                           # (a new 0700 folder, files 0600, never in a Git checkout)
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ import math
 import os
 import sys
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -221,6 +223,41 @@ def markdown_summary(name: str, s: dict) -> list[str]:
     return out
 
 
+class UnsafeOutput(Exception):
+    """The private report can't be written there. Messages never include the path or the report's contents."""
+
+
+def write_private(directory: str | Path, files: dict[str, str]) -> Path:
+    """Write a private report into a NEW owner-only directory (0700, files 0600), outside any Git checkout and
+    with no symlink in the path, like the private portfolio runner. Each file is written to a temporary name
+    and renamed, so a report is either complete or absent. Existing directories are never reused."""
+    path = Path(directory).expanduser().absolute()
+    chain = (path, *path.parents)
+    if any(p.is_symlink() for p in chain):
+        raise UnsafeOutput("refusing: the output path goes through a symlink")
+    if any((p / ".git").exists() for p in chain):
+        raise UnsafeOutput("refusing: the output path is inside a Git checkout")
+    if path.exists():
+        raise UnsafeOutput("refusing: the output directory already exists; give a new one")
+    if not path.parent.is_dir():
+        raise UnsafeOutput("refusing: the output directory's parent doesn't exist")
+    old = os.umask(0o077)
+    try:
+        path.mkdir(mode=0o700)
+        os.chmod(path, 0o700)
+        for name, body in files.items():
+            if "/" in name or name.startswith("."):
+                raise UnsafeOutput("refusing: report file names must be plain")
+            tmp = path / f".{name}.tmp"
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(body)
+            os.replace(tmp, path / name)
+    finally:
+        os.umask(old)
+    return path
+
+
 def _refuse_in_ci() -> None:
     if os.getenv("GITHUB_ACTIONS") or os.getenv("CI"):
         sys.exit("refusing to run in CI: this report is private (it names your holdings)")
@@ -230,7 +267,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--reference", action="store_true", help="compare candidates with the four reference packets")
     ap.add_argument("--watchlist", action="store_true", help="walk forward on every ticker in your holdings list")
-    ap.add_argument("--out", default=str(Path.home() / ".stockwatch" / "cis-reports"))
+    ap.add_argument("--out", help="a NEW private directory outside any Git checkout "
+                                   "(default: a new timestamped folder under ~/.stockwatch/cis-reports)")
     a = ap.parse_args(argv)
     if a.reference:
         for sym, r in compare_reference().items():
@@ -243,8 +281,13 @@ def main(argv=None) -> int:
         spy = prov.history("SPY", period="max")
         regime = spy["Close"] > spy["Close"].rolling(200).mean()
         regime.index = regime.index.tz_localize(None) if getattr(regime.index, "tz", None) else regime.index
-        out, lines = Path(a.out).expanduser(), []
-        out.mkdir(parents=True, exist_ok=True)
+        if a.out:
+            out = Path(a.out)
+        else:
+            base = Path.home() / ".stockwatch" / "cis-reports"
+            base.mkdir(mode=0o700, parents=True, exist_ok=True)
+            out = base / datetime.now(timezone.utc).strftime("walk-forward-%Y%m%d-%H%M%S")
+        lines = []
         for h in pf.holdings:
             try:
                 df = prov.history(h.ticker, period="max")
@@ -254,8 +297,11 @@ def main(argv=None) -> int:
                 lines += [f"**{h.ticker}**: unavailable ({e})", ""]
                 continue
             lines += markdown_summary(h.ticker, summarise(rows)) + [""]
-        (out / "cis-walk-forward.md").write_text("\n".join(lines))
-        print(f"wrote {out / 'cis-walk-forward.md'} ({len(pf.holdings)} tickers); keep it private")
+        try:
+            written = write_private(out, {"cis-walk-forward.md": "\n".join(lines)})
+        except UnsafeOutput as e:
+            sys.exit(str(e))
+        print(f"wrote a private report for {len(pf.holdings)} tickers to {written}; keep it private")
     return 0
 
 
