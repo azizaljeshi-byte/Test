@@ -2,7 +2,7 @@
 
 This summarises the whole project so far, for picking it up in a new conversation. It describes the state as of
 commit `b232d30` on branch `claude/stock-dashboard-alerts-rr9r83` (also the repo's default branch): 28 commits,
-about 8,000 lines of Python, 308 passing tests. The README has the user-facing setup guide; this file covers what's
+about 8,000 lines of Python, 324 passing tests. The README has the user-facing setup guide; this file covers what's
 built, why, and what to watch out for.
 
 ## 1. What it is
@@ -86,7 +86,9 @@ against each other. On top of that, every stock gets a plain-English briefing an
 15. **Notifications.**
     - **Channel:** Telegram (the owner's choice), or ntfy or email.
     - **Schedule:** a GitHub Actions job every 15 minutes from 4am to 8pm New York, plus a daily S&P scan push at 12:50 UTC.
-    - **Runner:** `stockwatch/ci_scan.py` (Issue #21). The scan always runs; the run summary gives counts and statuses only (public log) and goes red for a missing or example portfolio, a failed scan, half-set Telegram secrets, a failed send, or alerts with no channel. Manual runs default to a dry run. See `docs/TELEGRAM_ALERTS.md`.
+    - **Runner:** `stockwatch/ci_scan.py` (Issue #21). The scan always runs; the run summary gives counts and statuses only (public log) and goes red for a missing or example portfolio, demo data in a live scan, a failed scan, half-set Telegram secrets, a missing alert key, a failed send, or a change with no channel. Manual runs default to a dry run.
+    - **What's sent:** Telegram messages when a tracked stock's call (verdict + plan, the same as the dashboard's list) moves between classes, confirmed on two runs in a row, with the plan's levels (`stockwatch/transitions.py`). Per-signal alerts are no longer sent by the scheduled job.
+    - **Memory:** each stock's last call, encrypted with `STOCKWATCH_STATE_KEY` (`stockwatch/alert_state.py`), in the Actions cache. The scan's database (positions, costs) is never cached. See `docs/TELEGRAM_ALERTS.md`.
 16. **Ticker list from a Google Sheet.**
     - **Source:** the "StockWatch Holdings" sheet in the owner's Drive, link-shared as Viewer. Columns: Ticker, Tier, Shares, Avg cost, Target price, Notes.
     - **Readers:** both the app and the GitHub job read it.
@@ -140,7 +142,9 @@ against each other. On top of that, every stock gets a plain-English briefing an
 | `stockwatch/scanner.py` | `run_once`, `refresh_quotes`, CLI (`python -m stockwatch.scanner [--once] [--demo]`) |
 | `stockwatch/store.py` | SQLite: snapshots, alerts (deduplicated by ticker+code within a cooldown), ticker overrides, market scans, watermark |
 | `stockwatch/notify.py` | console / ntfy / Telegram / email; returns each channel's outcome, never echoes credentials |
-| `stockwatch/ci_scan.py` | the scheduled holdings scan's runner: portfolio source checks, dry run, Telegram check and test send, privacy-safe run summary (`docs/TELEGRAM_ALERTS.md`) |
+| `stockwatch/ci_scan.py` | the scheduled scan's runner: portfolio source checks, demo refusal, dry run, Telegram check and test send, privacy-safe run summary (`docs/TELEGRAM_ALERTS.md`) |
+| `stockwatch/transitions.py` | decision-change alerts: the reconciled call (also used by `ui._action`), baseline / two-run confirmation / outage rules, message text with the plan's levels |
+| `stockwatch/alert_state.py` | the encrypted alert memory kept in the public Actions cache (Fernet, key from `STOCKWATCH_STATE_KEY`) |
 | `stockwatch/finnhub.py` | Finnhub fallback client (paced under 60 requests a minute) |
 | `stockwatch/sec_audit.py` | read-only SEC financial-data audit (valuation Phase 1, `docs/SEC_DATA_AUDIT.md`); not imported by the app |
 | `stockwatch/sec_quality.py` | read-only SEC data-quality checks: selection provenance, revisions, stale and conflicting figures, checks against the filing (Phase 1B, `docs/SEC_DATA_QUALITY.md`); reached by the app only through `research_lab` |
@@ -156,7 +160,7 @@ against each other. On top of that, every stock gets a plain-English briefing an
 | `stockwatch/ui.py` | all CSS and HTML builders (cards, panels, tables, ladders) |
 | `.github/workflows/scan.yml` | scheduled scan and push job, plus the daily S&P job |
 | `.github/workflows/sec-audit.yml` | manual-only job that runs the SEC data audit on example tickers |
-| `tests/test_stockwatch.py`, `tests/test_valuation_scenarios.py`, `tests/test_chart_patterns.py`, `tests/test_research_lab.py`, `tests/test_valuation_evidence.py`, `tests/test_sec_access.py`, `tests/test_msft_dossier.py`, `tests/test_cash_conversion.py`, `tests/test_valuation_readiness.py`, `tests/test_ci_scan.py` | 308 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses, isolated research, the Research view's boundaries and the scheduled scan with a fake Telegram |
+| `tests/test_stockwatch.py`, `tests/test_valuation_scenarios.py`, `tests/test_chart_patterns.py`, `tests/test_research_lab.py`, `tests/test_valuation_evidence.py`, `tests/test_sec_access.py`, `tests/test_msft_dossier.py`, `tests/test_cash_conversion.py`, `tests/test_valuation_readiness.py`, `tests/test_ci_scan.py` | 324 tests: pure functions, fake providers, fake Yahoo/SEC/Finnhub responses, isolated research, the Research view's boundaries and the scheduled scan with a fake Telegram |
 
 **Data flow:** the provider fetches (cached), `engine.evaluate` builds an `Evaluation` (scores, signals, research,
 plan), `store.save_snapshot` writes JSON to SQLite, and the dashboard reads only the store. Alerts of severity 2 or
@@ -184,7 +188,9 @@ back empty are cached until their TTL runs out, so **reboot the app after adding
 | `FINNHUB_API_KEY` | Streamlit (+ GitHub) | second data source |
 | `SEC_USER_AGENT` | Streamlit + GitHub | "Name email" for SEC requests |
 | `NTFY_TOPIC` (+ optional `NTFY_SERVER`, `NTFY_TOKEN`), `DASHBOARD_URL` (variable) | GitHub | phone pushes; don't also set it in Streamlit, or pushes arrive twice |
-| `TELEGRAM_*`, `SMTP_*`, `ALERT_EMAIL_TO` | optional | other notification channels |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | GitHub | the scheduled scan's decision-change messages (Telegram only) |
+| `STOCKWATCH_STATE_KEY` | GitHub | 32+ random characters; encrypts the alert memory in the Actions cache. Without it, alerts are off |
+| `SMTP_*`, `ALERT_EMAIL_TO` | optional | email for the dashboard's own sweeps (not the scheduled scan) |
 | `STOCKWATCH_SWEEP_SECONDS` / `_QUOTE_SECONDS` / `_MARKET_SECONDS` | optional | live tracker intervals (120 / 60 / 1800) |
 | `STOCKWATCH_DEMO=1` | local | synthetic offline data |
 | `portfolio.yaml` `settings` / `tiers` | file or secret | intervals, cooldown, `risk_per_trade_pct`, tier weights, stops, maximum position size |
@@ -195,7 +201,7 @@ back empty are cached until their TTL runs out, so **reboot the app after adding
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                                   # 308 tests, no network needed
+python -m pytest -q                                   # 324 tests, no network needed
 STOCKWATCH_DEMO=1 streamlit run dashboard.py          # offline UI with synthetic data
 python -m stockwatch.scanner --once --demo            # one sweep from the CLI
 python -m stockwatch.market --demo                    # S&P scan from the CLI

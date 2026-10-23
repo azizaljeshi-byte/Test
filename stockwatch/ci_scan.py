@@ -1,18 +1,21 @@
-"""Holdings scan for the scheduled GitHub Actions job: python -m stockwatch.ci_scan --mode MODE
+"""Scheduled scan of every tracked stock: python -m stockwatch.ci_scan --mode MODE
 
-The scan runs whether or not a notification channel is set, and the run reports what actually
-happened: where the holdings came from, how many tickers were analysed, how fresh the prices are and
-whether each alert was delivered. The repository is public, so the log and the run summary carry
-counts and statuses only: no tickers, share counts, costs, bot token or chat ID.
+The scan runs whether or not Telegram is set up, and the run reports what actually happened: where the
+holdings came from, how many tickers were analysed, how fresh the prices are, and which decision changes
+were confirmed and delivered. Telegram gets a message when a stock's call moves between classes (WAIT ->
+BUY, HOLD -> TRIM...), held or watchlist (`transitions.py`). The repository is public, so the log and the
+run summary carry counts and statuses only: no tickers, share counts, costs, bot token or chat ID. The
+alert memory between runs is encrypted (`alert_state.py`); the scan's own database is thrown away.
 
 Modes:
-  holdings-scan       scan and deliver new alerts (the schedule uses this)
-  holdings-dry-run    scan against a throwaway copy of the alert history; nothing is sent or saved
+  holdings-scan       scan, send confirmed decision changes, save the alert memory (the schedule uses this)
+  holdings-dry-run    scan and count what would be sent; nothing is sent or saved; demo data allowed
   telegram-check      are both Telegram secrets present and well formed? (no network call)
   telegram-test-send  send one fixed test message with no holdings in it (needs --confirm SEND)
 
-Exit status 1 means something needs the owner: no real portfolio, the scanner failed, nothing could
-be analysed, Telegram half configured, a send failed, or alerts had no channel to go to.
+Exit status 1 means something needs the owner: no real portfolio, demo data in a live scan, the scanner
+failed, nothing could be analysed, Telegram half configured, the alert key missing, a send failed, or a
+change had no channel to go to.
 """
 from __future__ import annotations
 
@@ -22,16 +25,16 @@ import io
 import logging
 import os
 import re
-import shutil
 import tempfile
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import notify
+from . import alert_state, notify, transitions
 from .config import load_portfolio
 from .data import get_provider, selected_provider
-from .store import DEFAULT_DB, Store
+from .store import Store
 
 MODES = ("holdings-scan", "holdings-dry-run", "telegram-check", "telegram-test-send")
 NY, RIYADH = ZoneInfo("America/New_York"), ZoneInfo("Asia/Riyadh")
@@ -110,20 +113,32 @@ def freshness(evals, provider, now: datetime) -> tuple[date | None, int]:
     return latest, stale
 
 
-def check_channels(report: Report) -> bool:
-    """Report each channel; True when at least one can deliver. A half-set Telegram is an error."""
+def check_telegram(report: Report) -> bool:
+    """Decision-change alerts go to Telegram only. True when it can deliver; a half-set Telegram is an error."""
     tg = notify.telegram_config()
     report.add("Telegram", tg)
     if tg not in ("configured", "not configured"):
         report.errors.append(f"Telegram is {tg}. Fix the repository secrets; nothing can be sent to Telegram.")
-    others = [name for name, var in (("ntfy", "NTFY_TOPIC"), ("email", "SMTP_HOST")) if os.getenv(var)]
-    if others:
-        report.add("Other channels", ", ".join(others))
-    return tg == "configured" or bool(others)
+    unused = [name for name, var in (("ntfy", "NTFY_TOPIC"), ("email", "SMTP_HOST")) if os.getenv(var)]
+    if unused:
+        report.add("Other channels", f"{', '.join(unused)}: not used by the scheduled scan (Telegram only)")
+    return tg == "configured"
 
 
-def holdings(mode: str, now: datetime, db: Path = DEFAULT_DB) -> Report:
+def stale_tickers(evals, provider, now: datetime) -> set[str]:
+    expected = last_session(now)
+    out = set()
+    for e in evals:
+        hist = provider.peek_history(e.ticker) if hasattr(provider, "peek_history") else None
+        if hist is None or hist.empty or hist.index[-1].date() < expected:
+            out.add(e.ticker)
+    return out
+
+
+def holdings(mode: str, now: datetime, state_path: Path | None = None) -> Report:
     report = Report(mode, now)
+    state_path = state_path or alert_state.PATH
+    dry = mode == "holdings-dry-run"
     try:
         portfolio = load_portfolio()
     except Exception as e:
@@ -137,36 +152,40 @@ def holdings(mode: str, now: datetime, db: Path = DEFAULT_DB) -> Report:
     if source == "example file":
         report.errors.append("Only the example list was found, which isn't your portfolio, so nothing was scanned. "
                              "Add your holdings as the STOCKWATCH_PORTFOLIO repository secret (or STOCKWATCH_SHEET_URL).")
-        check_channels(report)
+        check_telegram(report)
         return report
     held = sum(not h.is_watchlist for h in portfolio.holdings)
-    report.add("Tickers", f"{len(portfolio.holdings)} ({held} with shares, {len(portfolio.holdings) - held} watchlist)")
+    report.add("Tracked stocks", f"{len(portfolio.holdings)} ({held} held, {len(portfolio.holdings) - held} watchlist)")
     if not portfolio.holdings:
         report.errors.append(f"The {source} has no holdings, so nothing was scanned.")
-        check_channels(report)
+        check_telegram(report)
         return report
-    if not held:
-        report.warnings.append("No holding has a share count, so everything is treated as watchlist "
-                               "(no stop-loss or position alerts).")
+    provider_name = selected_provider(portfolio.settings.data_provider)
+    synthetic = provider_name == "demo"
+    report.add("Market data", "SYNTHETIC demo prices (not market data)" if synthetic else "Yahoo")
+    if synthetic and not dry:
+        report.errors.append("The demo data provider is selected (STOCKWATCH_DEMO or data_provider: demo). "
+                             "A live scan never runs or alerts on synthetic prices; use holdings-dry-run to try it.")
+        check_telegram(report)
+        return report
+    can_deliver = check_telegram(report)
+    report.add("Alert state key", alert_state.key_status())
+    if alert_state.key_status() != "configured" and not dry:
+        report.errors.append(f"{alert_state.KEY_ENV} is {alert_state.key_status()}: without it the alert memory can't be "
+                             "stored privately, so decision-change alerts are off. Add a random 32+ character "
+                             "repository secret.")
 
-    can_deliver = check_channels(report)
-    dry = mode == "holdings-dry-run"
-    with contextlib.ExitStack() as stack:
-        if dry:   # a throwaway copy: alerts found here are neither sent nor remembered
-            tmp = Path(stack.enter_context(tempfile.TemporaryDirectory())) / "dry-run.db"
-            if Path(db).exists():
-                shutil.copy(db, tmp)
-            db = tmp
+    with tempfile.TemporaryDirectory() as tmp:
         try:
             from .scanner import analyse
-            provider = get_provider(selected_provider(portfolio.settings.data_provider))
-            store = Store(db)
-            # library output names tickers; keep it out of the public log
-            sink = io.StringIO()
+            provider = get_provider(provider_name)
+            # a throwaway database: snapshots hold share counts and costs, so nothing of it is kept or cached
+            store = Store(Path(tmp) / "scan.db")
+            sink = io.StringIO()       # library output names tickers; keep it out of the public log
             logging.disable(logging.CRITICAL)
             try:
                 with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
-                    evals, alerts = analyse(portfolio, provider, store, quiet=True)
+                    evals, _ = analyse(portfolio, provider, store, quiet=True)
             finally:
                 logging.disable(logging.NOTSET)
         except Exception as e:
@@ -176,39 +195,68 @@ def holdings(mode: str, now: datetime, db: Path = DEFAULT_DB) -> Report:
     ok = [e for e in evals if not e.error]
     report.add("Analysed", f"{len(ok)} of {len(evals)}")
     if not ok:
-        report.errors.append("No ticker could be analysed (market data unavailable?), so nothing was checked for alerts.")
+        report.errors.append("No ticker could be analysed (market data unavailable?), so no decision was checked.")
     elif len(ok) < len(evals):
         report.warnings.append(f"{len(evals) - len(ok)} of {len(evals)} tickers couldn't be analysed this run.")
-    latest, stale = freshness(ok, provider, now)
+    latest, stale_count = freshness(ok, provider, now)
+    stale = stale_tickers(ok, provider, now)
     report.add("Latest daily bar", f"{latest} (expected {last_session(now)})" if latest else "none")
-    if ok and stale:
-        report.warnings.append(f"{stale} of {len(ok)} analysed tickers have prices older than the last session "
-                               "(a market holiday can cause this).")
+    if ok and stale_count:
+        report.warnings.append(f"{stale_count} of {len(ok)} analysed tickers have prices older than the last session "
+                               "(a market holiday can cause this); their calls aren't compared this run.")
     quotes = sum(bool(e.quote.get("fetched_at")) and not e.quote.get("error") for e in ok)
-    report.add("Live quotes", f"{quotes} of {len(ok)}")
-    report.add("New alerts", len(alerts))
+    report.add("Live quotes", f"{quotes} of {len(ok)}" + (" (synthetic)" if synthetic else ""))
 
+    readings = {e.ticker: transitions.reading(e, e.ticker in stale)[0] for e in evals}
+    if alert_state.key_status() != "configured":
+        report.add("Decision changes", "not checked (no alert state key)")
+        return report
+    try:
+        entries, restored = alert_state.load(state_path)
+    except alert_state.StateError as e:
+        report.errors.append(f"Alert memory unreadable: {e}. Starting a new baseline; no changes can be alerted this run.")
+        entries, restored = {}, "unreadable"
+    if restored == "none":
+        report.warnings.append("No saved alert memory (first run, or the cache expired after 7 days unused): "
+                               "this run records each stock's current call as the baseline and alerts nothing.")
+    report.add("Alert memory", f"{restored} ({len(entries)} stocks)" if restored == "restored" else restored)
+    stamp = now.isoformat(timespec="seconds")
+    entries, ready, counts = transitions.step(entries, readings, stamp)
+    report.add("Decision changes", f"{len(ready)} confirmed · {counts['pending']} awaiting confirmation · "
+                                   f"{counts['baseline']} new baselines · {counts['skipped']} without valid data")
     if dry:
-        report.add("Delivery", f"dry run: {len(alerts)} alert(s) would be sent; nothing sent, alert history unchanged")
+        report.add("Delivery", f"dry run: {len(ready)} message(s) would be sent; nothing sent or saved")
         if not can_deliver:
-            report.warnings.append("No notification channel is configured: a live run would have nowhere to send alerts.")
+            report.warnings.append("Telegram isn't configured: a live run would have nowhere to send changes.")
         return report
-    if not alerts:
-        report.add("Delivery", "nothing new to send")
-        if not can_deliver:
-            report.warnings.append("No notification channel is configured, so future alerts won't reach you. "
-                                   "Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
-        return report
-    if not can_deliver:
-        report.add("Delivery", "not sent: no channel configured")
-        report.errors.append(f"{len(alerts)} new alert(s) found but no notification channel is configured. "
-                             "The alert history isn't saved on a failed run, so they're retried once a channel works.")
-        return report
-    results = notify.send(alerts, quiet=True)
-    report.add("Delivery", "; ".join(f"{k}: {v}" for k, v in results.items() if v != "not configured"))
-    for name, outcome in results.items():
-        if outcome.startswith("failed"):
-            report.errors.append(f"{name} {outcome}. The alert history isn't saved on a failed run, so they're retried.")
+
+    sent = failed = 0
+    by_ticker = {e.ticker: e for e in evals}
+    if ready and not can_deliver:
+        report.errors.append(f"{len(ready)} decision change(s) confirmed but Telegram isn't configured. "
+                             "They stay pending and are sent once it is.")
+    elif ready:
+        for i, t in enumerate(ready):
+            if i:
+                time.sleep(1.1)        # Telegram allows about one message a second per chat
+            try:
+                notify.telegram_send(transitions.message(t, by_ticker[t["ticker"]]))
+                transitions.delivered(entries, t, stamp)
+                sent += 1
+            except notify.DeliveryError as e:
+                failed += 1
+                last_error = str(e)
+        if failed:
+            report.errors.append(f"{failed} of {len(ready)} Telegram message(s) failed ({last_error}). "
+                                 "They stay pending and are retried next run.")
+    elif not can_deliver:
+        report.warnings.append("Telegram isn't configured, so future decision changes won't reach you. "
+                               "Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
+    report.add("Delivery", f"telegram: {sent} sent, {failed} failed" if ready else "nothing to send")
+    try:
+        alert_state.save(entries, state_path)
+    except Exception as e:
+        report.errors.append(f"Alert memory couldn't be saved ({type(e).__name__}); confirmed changes may repeat.")
     return report
 
 

@@ -5,6 +5,8 @@ import math
 import re
 from html import escape
 
+from .transitions import effective_stance
+
 OPP, RISK, WARN, INFO, MUTED, INK = "#3dffa8", "#ff4d7a", "#ffb020", "#36c5f0", "#5f8796", "#c9f5e4"
 
 VERDICT_STYLE = {  # color, glyph
@@ -518,8 +520,6 @@ ACTIONS = {  # plan stance -> the plain call at the top of a list row, its glyph
     "WAIT FOR CONFIRMATION": ("WAIT", "◌", INFO), "HOLD": ("HOLD", "●", INFO), "NO TRADE": ("PASS", "✕", MUTED),
     "TRIM": ("SELL SOME", "◆", WARN), "TRIM / PROTECT": ("SELL SOME", "◆", WARN), "REDUCE / EXIT": ("SELL", "▼", RISK),
 }
-VERDICT_ACTIONS = {"OPPORTUNITY - ADD": "ADD", "BUY SETUP": "BUY NOW", "TRIM / REVIEW": "TRIM", "RISK - REVIEW": "REDUCE / EXIT",
-                   "AVOID": "NO TRADE"}
 
 
 REBOUND = 0.03   # a sell call on a stock up this much today waits for the close instead of selling into the bounce
@@ -576,9 +576,8 @@ def _action(snap: dict) -> tuple[str, str, str]:
     p = snap["payload"]
     if p.get("error") or snap["verdict"] == "ERROR":
         return "NO SIGNAL", "?", MUTED
-    stance = (p.get("plan") or {}).get("stance") or VERDICT_ACTIONS.get(snap["verdict"], "HOLD" if not p["watchlist"] else "WAIT FOR CONFIRMATION")
-    if p["watchlist"] and stance in ("TRIM", "TRIM / PROTECT", "REDUCE / EXIT", "HOLD"):
-        stance = "NO TRADE" if stance != "HOLD" else "WAIT FOR CONFIRMATION"
+    # the same reconciliation the Telegram decision-change alerts use
+    stance = effective_stance(snap["verdict"], p.get("plan"), p["watchlist"])
     return ACTIONS.get(stance, (stance, "●", INFO))
 
 

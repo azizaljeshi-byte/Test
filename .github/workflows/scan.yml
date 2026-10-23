@@ -50,6 +50,7 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+      STOCKWATCH_STATE_KEY: ${{ secrets.STOCKWATCH_STATE_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -62,16 +63,24 @@ jobs:
           if [ -z "$SEC_USER_AGENT" ]; then
             echo "::warning title=SEC_USER_AGENT not set::Add the SEC_USER_AGENT repository secret (a name and email). Without it SEC requests use a generic identifier and SEC may refuse some."
           fi
-      # the alert history, so the same alert isn't re-sent every 15 min. It's saved only when the job
-      # succeeds, so alerts that weren't delivered (failed send, no channel) are retried next run.
+      # The alert memory between runs (each tracked stock's last call), encrypted with STOCKWATCH_STATE_KEY.
+      # Actions caches in a public repo are readable by anyone who can open a pull request, so only the
+      # encrypted file is cached: the scan's own database (share counts, costs, prices) is never kept.
       - if: startsWith(env.MODE, 'holdings')
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
-          path: data/stockwatch.db
-          key: stockwatch-db-${{ github.run_id }}
-          restore-keys: stockwatch-db-
+          path: data/alert_state.bin
+          key: stockwatch-alert-state-${{ github.run_id }}
+          restore-keys: stockwatch-alert-state-
       - name: Run ${{ env.MODE }}
         run: python -m stockwatch.ci_scan --mode "$MODE" --confirm "$CONFIRM"
+      # saved even when the run is red: the memory only records changes that were actually delivered,
+      # so a failed send stays pending and is retried next run
+      - if: always() && env.MODE == 'holdings-scan' && hashFiles('data/alert_state.bin') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: data/alert_state.bin
+          key: stockwatch-alert-state-${{ github.run_id }}
 
   market:
     if: github.event.schedule == '50 12 * * 1-5' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'market-scan')

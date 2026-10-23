@@ -125,6 +125,15 @@ def _fit(header: str, lines: list[str], limit: int = TELEGRAM_LIMIT) -> str:
     return header[:limit]
 
 
+def telegram_send(text: str) -> str:
+    """Send one message; raises DeliveryError (safe to log) unless Telegram accepted it."""
+    status = telegram_config()
+    if status != "configured":
+        raise DeliveryError(f"Telegram {status}")
+    _telegram_post(text)
+    return "sent"
+
+
 def telegram_test(stamp: str) -> str:
     """Send one fixed message with no holdings in it, to prove the bot and chat work."""
     status = telegram_config()
