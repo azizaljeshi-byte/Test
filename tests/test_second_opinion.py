@@ -179,7 +179,7 @@ def test_a_failing_second_source_never_breaks_the_evaluation(monkeypatch):
     monkeypatch.setattr(data, "second_opinion", boom)
     monkeypatch.setattr(status, "assess", lambda *a, **k: ps("breakdown"))
     e = evaluate(Holding("AAA", 1, 10.0), make_portfolio(), DemoProvider())
-    assert e.technical["price_status"]["code"] == "breakdown" and e.technical["price_status"]["second"] is None
+    assert e.technical["price_status"]["code"] == "breakdown" and e.technical["price_status"]["second"]["unavailable"]
 
 
 def test_the_second_opinion_changes_no_call(monkeypatch):
@@ -189,3 +189,53 @@ def test_the_second_opinion_changes_no_call(monkeypatch):
     monkeypatch.setattr(data, "second_opinion", lambda t: {**RAW, "signal": "buy"})
     b = evaluate(Holding("AAA", 1, 10.0), make_portfolio(), DemoProvider())
     assert (a.verdict, a.plan) == (b.verdict, b.plan)
+
+
+# ---- never silent: the screen says why there is no second opinion
+
+def test_the_reason_depends_on_whether_a_key_is_set():
+    assert "no FINNHUB_API_KEY" in status.second_unavailable(False)["unavailable"]
+    assert "paid plan" in status.second_unavailable(True)["unavailable"]
+
+
+def test_the_engine_records_why_when_finnhub_gives_nothing(monkeypatch):
+    monkeypatch.setattr(status, "assess", lambda *a, **k: ps("breakdown"))
+    monkeypatch.setattr(data, "second_opinion", lambda t: None)
+    monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
+    e = evaluate(Holding("AAA", 1, 10.0), make_portfolio(), DemoProvider())
+    assert "no FINNHUB_API_KEY" in e.technical["price_status"]["second"]["unavailable"]
+    monkeypatch.setenv("FINNHUB_API_KEY", "k")
+    e = evaluate(Holding("AAA", 1, 10.0), make_portfolio(), DemoProvider())
+    assert "paid plan" in e.technical["price_status"]["second"]["unavailable"]
+    monkeypatch.setattr(status, "assess", lambda *a, **k: ps("record_high"))
+    e = evaluate(Holding("AAA", 1, 10.0), make_portfolio(), DemoProvider())
+    assert "second" not in e.technical["price_status"]                              # healthy stocks aren't asked
+
+
+def test_details_says_no_read_with_the_reason():
+    line = ui.second_note({"second": status.second_unavailable(False)})
+    assert line == "Finnhub: no read. No FINNHUB_API_KEY is set on the app."
+
+
+def snap_second(sec):
+    e = ev("SNAP", "HOLD")
+    e.technical = {"price_status": ps("testing_support", second=sec)}
+    return snap_of(e)
+
+
+def test_the_row_carries_a_short_finnhub_tag():
+    confirms = status.second_opinion("testing_support", RAW, 96.0)
+    assert "<b>FINNHUB</b>confirms · SELL" in ui.row(snap_second(confirms))
+    clash = status.second_opinion("testing_support", {**RAW, "signal": "buy"}, 96.0)
+    assert ui.second_tag(snap_second(clash)) == "disagrees · BUY"
+    mixed = status.second_opinion("testing_support", {**RAW, "signal": "neutral"}, 96.0)
+    assert ui.second_tag(snap_second(mixed)) == "mixed · NEUTRAL"
+    assert ui.second_tag(snap_second(status.second_opinion("testing_support", {"levels": [93.5]}, 96.0))) == "levels only"
+    assert ui.second_tag(snap_second(status.second_unavailable(True))) == "no read"
+    assert "<b>FINNHUB</b>no read" in ui.row(snap_second(status.second_unavailable(False)))
+
+
+def test_a_healthy_row_shows_no_finnhub_line():
+    e = ev("SNAP", "HOLD")
+    e.technical = {"price_status": ps("record_high")}
+    assert ui.second_tag(snap_of(e)) == "" and "FINNHUB" not in ui.row(snap_of(e))

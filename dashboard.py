@@ -180,7 +180,7 @@ try:
     reg = market_regime(bench)
     reg_color = {"RISK-ON": ui.OPP, "RISK-OFF": ui.RISK}.get(reg["state"], ui.WARN)
     market_tile = ("Market", reg["state"], f"{session} · SPY {ui.pct(reg['day_change'], digits=1)} · "
-                   f"{ui.pct(reg['vs_200d'])} vs 200d", reg_color)
+                   f"{ui.pct(reg['vs_200d'])} vs 200d" + (f" · {reg['reason']}" if reg.get("reason") else ""), reg_color)
 except Exception:
     market_tile = (("Market", "LOADING", "fetching SPY prices in the background", ui.MUTED) if bench is None
                    else ("Market", "NO SIGNAL", "benchmark unavailable", ui.MUTED))

@@ -142,7 +142,7 @@ def portfolio(snaps: list[dict], prevs: dict[str, dict | None], regime: dict | N
     lines = []
     if regime:
         mood = {"RISK-ON": "supportive (SPY in an uptrend)", "RISK-OFF": "hostile (SPY below its 200-day)",
-                "CAUTION": "mixed (SPY trend unclear)"}[regime["state"]]
+                "CAUTION": f"mixed ({regime.get('reason') or 'SPY trend unclear'})"}[regime["state"]]
         lines.append(f"Market backdrop is {mood}; SPY {_pct(regime['day_change'])} today.")
     urgent = [s["ticker"] for s in snaps if any(x["kind"] == "risk" and x["severity"] >= 3 for x in s["payload"]["signals"])]
     if urgent:
