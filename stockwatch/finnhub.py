@@ -123,3 +123,11 @@ def news(ticker: str, days: int = 4) -> list[dict]:
     return [{"title": r["headline"], "publisher": r.get("source"), "url": r.get("url"),
              "published": datetime.fromtimestamp(r["datetime"], tz=timezone.utc)}
             for r in sorted(rows, key=lambda r: r.get("datetime", 0), reverse=True)[:10] if r.get("headline")]
+
+
+def quote(ticker: str) -> dict:
+    """Finnhub's latest quote: price, today's high/low/open, previous close and the trade time (Unix seconds).
+    A second source for the CIS shadow only; nothing in scoring or alerts reads it."""
+    q = _get("/quote", symbol=ticker) or {}
+    return {"price": q.get("c"), "high": q.get("h"), "low": q.get("l"), "open": q.get("o"),
+            "prev_close": q.get("pc"), "time": q.get("t"), "source": "Finnhub"}
