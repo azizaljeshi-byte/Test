@@ -315,7 +315,7 @@ if view == "target":
                                            else "Add it on the Fleet tab to track it."))
     p = snap["payload"]
     t, f, ev = p["technical"], p["fundamental"], p.get("events") or {}
-    st.markdown(ui.cards([snap]) + ui.status_note(snap) + ui.reassess_note(snap), unsafe_allow_html=True)
+    st.markdown(ui.cards([snap]) + ui.status_note(snap) + ui.flow_note(snap) + ui.reassess_note(snap), unsafe_allow_html=True)
     industry = (p.get("profile") or {}).get("industry")
     if industry:
         st.caption(industry)

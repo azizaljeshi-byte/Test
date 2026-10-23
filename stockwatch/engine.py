@@ -6,8 +6,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from . import analogs, catalysts, deepdive, fundamental, relative, sec, status, street, technical, tradeplan, transitions
+from . import analogs, catalysts, deepdive, fundamental, momentum, relative, sec, status, street, technical, tradeplan, transitions
 from .config import Holding, Portfolio
+from . import data
 from .data import SECTOR_ETFS, DataProvider
 from .signals import OPPORTUNITY, RISK, Signal
 
@@ -203,9 +204,8 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
     # relative strength nudges the technical score; benchmarks are cached across tickers
     sector_etf = SECTOR_ETFS.get(f.get("sector") or "")
     market_hist = _optional(provider.history, portfolio.settings.benchmark)
-    rs_adj, rs, rs_sig = relative.analyze(
-        hist, market_hist,
-        _optional(provider.history, sector_etf) if sector_etf else None, sector_etf, h.tier)
+    sector_hist = _optional(provider.history, sector_etf) if sector_etf else None
+    rs_adj, rs, rs_sig = relative.analyze(hist, market_hist, sector_hist, sector_etf, h.tier)
     if rs_adj:
         tech["score_parts"] = tech.get("score_parts", []) + [("Relative strength vs SPY (3 months)", round(rs_adj, 1))]
         tech["raw_points"] = tech.get("raw_points", 0) + rs_adj
@@ -219,6 +219,13 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
     now = datetime.now(timezone.utc)
     live = transitions.current_quote(quote, now)
     tech["price_status"] = _optional(status.assess, hist, now, live[0] if live else None, not h.is_watchlist)
+    # how the move is happening (momentum and whether it is an event, the market, selling pressure or drift); display only
+    tech["momentum"] = _optional(momentum.assess, hist, market_hist, sector_hist, now)
+    ps = tech["price_status"]
+    if not light and isinstance(ps, dict) and ps.get("code") in status.BEARISH:
+        # a second source's technical read, only where it matters (a weak or broken stock), to keep the requests few
+        ps["second"] = status.second_opinion(ps["code"], _optional(data.second_opinion, h.ticker),
+                                             (ps.get("levels") or {}).get("close"))
 
     raw_sec = None if light else _optional(provider.filings, h.ticker)
     raw_events = _optional(provider.events, h.ticker) or {}
@@ -291,6 +298,7 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
                                     tech, plan_fs)
             plan = tradeplan.reconcile(plan, signals)
             plan = tradeplan.exit_on_breakdown(plan, tech.get("price_status"), h.is_watchlist)
+            plan = tradeplan.hold_off_buying(plan, tech.get("price_status"), h.is_watchlist)
         ev.plan = plan
     except Exception as e:
         log.warning("trade plan failed for %s: %s", h.ticker, e)

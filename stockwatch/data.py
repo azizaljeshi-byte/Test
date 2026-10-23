@@ -440,6 +440,21 @@ def _fallback(kind: str, ticker: str):
         return None
 
 
+_SECOND: dict[str, tuple[float, dict | None]] = {}
+SECOND_TTL = 6 * 3600       # technical reads move slowly; this keeps the Finnhub requests few
+
+
+def second_opinion(ticker: str) -> dict | None:
+    """Finnhub's technical read for one ticker, cached for hours. None when Finnhub isn't configured or answers nothing."""
+    hit = _SECOND.get(ticker)
+    if hit and time.monotonic() - hit[0] < SECOND_TTL:
+        return hit[1]
+    out = _fallback("second_opinion", ticker)
+    if out is not None or hit is None:       # a failed refresh keeps the older read rather than blanking it
+        _SECOND[ticker] = (time.monotonic(), out)
+    return _SECOND[ticker][1]
+
+
 def _bar_summary(bars: pd.DataFrame) -> dict:
     """Latest bar and its session, the latest regular-session close, and the regular close
     of the trading day before it (for today's change)."""

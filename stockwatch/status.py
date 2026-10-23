@@ -55,6 +55,10 @@ FROM_FLOOR = {"testing_floor": "testing_support", "warning": "breakdown", "failu
 # on a held stock into a SELL call (plan, dashboard and Telegram together); nothing else needs to change.
 EXIT_ON_BREAKDOWN = False
 EXIT_CODES = ("breakdown", "deep_breakdown")
+# Telegram: message whenever a stock's status changes (record high -> strong uptrend, ... -> breakdown, and back).
+# Same safe rules as the call-change alerts: the first reading is a silent baseline, a change must be seen on two
+# runs in a row, a failed send is retried. Set False to stop status messages without touching call alerts.
+ALERT_ON_CHANGE = True
 
 
 def forces_exit(price_status: dict | None, watchlist: bool) -> bool:
@@ -62,6 +66,47 @@ def forces_exit(price_status: dict | None, watchlist: bool) -> bool:
     Nothing to sell on a watchlist name, and no status (unknown or missing) never forces anything."""
     return bool(EXIT_ON_BREAKDOWN and not watchlist and isinstance(price_status, dict)
                 and price_status.get("code") in EXIT_CODES)
+
+
+BUY_STANCES = ("BUY NOW", "BUY ON PULLBACK", "BUY THE BREAKOUT", "ADD")
+
+
+def blocks_buy(price_status: dict | None) -> bool:
+    """True when a CONFIRMED breakdown (a completed close below support) sits under a buy or add call. Always on:
+    unlike the exit switch it sells nothing, it only stops the app saying 'buy more' and 'breakdown' about the same
+    stock at once. Unknown or missing status never blocks anything."""
+    return isinstance(price_status, dict) and price_status.get("code") in EXIT_CODES
+
+
+BEARISH = ("weakening", "testing_support", "breakdown", "deep_breakdown")
+
+
+def second_opinion(code: str | None, raw: dict | None, close: float | None = None) -> dict | None:
+    """Compare another source's technical read with our status. Display only: it never changes a status, call or
+    alert. `raw` is finnhub.second_opinion(); None or an empty read gives None (the screen says nothing, not a guess).
+    Only a clear signal agrees or disagrees: a neutral or split read is 'mixed'."""
+    if not isinstance(raw, dict) or code not in ORDER:
+        return None
+    sig = str(raw.get("signal") or "").lower()
+    lv = sorted(float(x) for x in raw.get("levels") or [] if isinstance(x, (int, float)) and np.isfinite(x) and x > 0)
+    out = {"source": raw.get("source") or "Finnhub", "signal": sig or None, "buy": raw.get("buy"), "neutral": raw.get("neutral"),
+           "sell": raw.get("sell"), "trending": raw.get("trending"), "support": None, "resistance": None, "agrees": None}
+    if close is not None and np.isfinite(close):
+        below, above = [x for x in lv if x < close], [x for x in lv if x > close]
+        out["support"] = below[-1] if below else None
+        out["resistance"] = above[0] if above else None
+    if sig not in ("buy", "sell", "neutral"):
+        out["verdict"] = None
+        out["agrees"] = None
+        return out if (out["support"] or out["resistance"]) else None
+    bearish = code in BEARISH
+    if sig == "neutral":
+        out["verdict"] = "mixed"
+    elif (sig == "sell") == bearish:
+        out["verdict"], out["agrees"] = "confirms", True
+    else:
+        out["verdict"], out["agrees"] = "disagrees", False
+    return out
 
 
 def rank(code: str | None) -> int | None:
@@ -144,6 +189,10 @@ def assess(hist, now: datetime | None = None, quote_price: float | None = None, 
                 "major_damage": dn["major_damage"]}
         levels.update(support_low=dn["zone"]["low"], support_high=dn["zone"]["high"], exit_below=dn["warning"],
                       failure=dn["failure"], deep_below=dn["major_damage"])
+        above = [c["zone"] for c in (pk.get("upside") or {}).get("ceilings") or [] if c["zone"]["low"] > close]
+        if above:       # the nearest automatic ceiling over the close: the number to watch on the way up
+            near = min(above, key=lambda z: z["low"])
+            levels.update(resist_low=near["low"], resist_high=near["high"])
 
     why_floor = "" if floor_known else (f" Support levels unavailable ({diag.get('why', 'unknown reason')}), "
                                         "so a breakdown can't be confirmed.")

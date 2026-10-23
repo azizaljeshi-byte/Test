@@ -280,3 +280,71 @@ def test_the_engine_leaves_the_plan_alone_while_the_switch_is_off(monkeypatch):
     e = evaluate(Holding("AAA", 1, 10.0), make_portfolio(), DemoProvider())
     assert e.plan.get("status_exit") is None                                   # no exit plan was built from the status
     assert e.technical["price_status"]["code"] == "breakdown"                  # but the status is still recorded
+
+
+# ---- a confirmed breakdown never sits under "buy more" (always on, independent of the exit switch)
+
+ADD_PLAN = dict(plan_of("NOW"), stance="ADD")
+
+
+@pytest.mark.parametrize("code,blocks", [("breakdown", True), ("deep_breakdown", True), ("testing_support", False),
+                                         ("weakening", False), ("record_high", False), ("unknown", False)])
+def test_only_a_confirmed_breakdown_blocks_buying(code, blocks):
+    assert status.blocks_buy(ps(code)) is blocks
+    assert status.blocks_buy(None) is False and status.blocks_buy({}) is False
+
+
+@pytest.mark.parametrize("stance", ["ADD", "BUY NOW", "BUY ON PULLBACK", "BUY THE BREAKOUT"])
+def test_a_buy_over_a_breakdown_becomes_hold_or_wait(stance):
+    plan = dict(ADD_PLAN, stance=stance)
+    held_out = tradeplan.hold_off_buying(plan, ps("breakdown"), False)
+    assert plan["stance"] == stance and held_out["stance"] == "HOLD"           # the original is not mutated
+    assert tradeplan.summary(held_out) == "don't add yet · closed below support 98.00"
+    assert "101.00" in held_out["trigger"] and "adding is on hold" in held_out["notes"][-1]
+    assert tradeplan.hold_off_buying(plan, ps("deep_breakdown"), True)["stance"] == "WAIT FOR CONFIRMATION"
+
+
+def test_testing_support_keeps_the_buy_because_buying_at_support_is_coherent():
+    assert tradeplan.hold_off_buying(ADD_PLAN, ps("testing_support"), False) is ADD_PLAN
+    assert transitions.effective_stance("OPPORTUNITY - ADD", ADD_PLAN, False, ps("testing_support")) == "ADD"
+
+
+def test_other_plans_are_left_alone():
+    for plan in (plan_of("HOLD"), plan_of("TRIM"), None):
+        assert tradeplan.hold_off_buying(plan, ps("breakdown"), False) is plan
+    assert tradeplan.hold_off_buying(ADD_PLAN, None, False) is ADD_PLAN
+
+
+def test_effective_stance_never_says_buy_over_a_breakdown():
+    for stance in ("ADD", "BUY NOW", "BUY ON PULLBACK", "BUY THE BREAKOUT"):
+        plan = dict(ADD_PLAN, stance=stance)
+        assert transitions.effective_stance("OPPORTUNITY - ADD", plan, False, ps("breakdown")) == "HOLD"
+        assert transitions.effective_stance("BUY SETUP", plan, True, ps("breakdown")) == "WAIT FOR CONFIRMATION"
+
+
+def test_the_row_shows_hold_and_breakdown_not_buy_more_and_breakdown():
+    e = ev("HOOD", "NOW")
+    e.technical = {"price_status": ps("breakdown")}
+    e.plan = tradeplan.hold_off_buying(dict(ADD_PLAN), e.technical["price_status"], False)
+    html = ui.row(snap_of(e))
+    assert "BREAKDOWN" in html and "BUY MORE" not in html and "in the entry zone now" not in html
+    assert "add yet" in html and "closed below support 98.00" in html
+    plain = ev("HOOD", "NOW")
+    plain.technical = {"price_status": ps("testing_support")}
+    plain.plan = dict(ADD_PLAN)
+    assert "BUY MORE" in ui.row(snap_of(plain)) and "TESTING SUPPORT" in ui.row(snap_of(plain))
+
+
+def test_telegram_sees_hold_not_buy_when_support_has_broken():
+    e = ev("HOOD", "NOW")
+    e.verdict, e.plan = "OPPORTUNITY - ADD", dict(ADD_PLAN)
+    e.technical = {"price_status": ps("breakdown")}
+    state, why = transitions.reading(e, False)
+    assert state["state"] == "HOLD" and state["stance"] == "HOLD", why
+
+
+def test_the_engine_holds_off_buying_over_a_breakdown(monkeypatch):
+    monkeypatch.setattr(status, "assess", lambda *a, **k: ps("breakdown"))
+    e = evaluate(Holding("AAA", 1, 10.0), make_portfolio(), DemoProvider())
+    stance = transitions.effective_stance(e.verdict, e.plan, e.watchlist, e.technical["price_status"])
+    assert stance not in status.BUY_STANCES
