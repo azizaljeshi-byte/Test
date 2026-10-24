@@ -131,6 +131,20 @@ and dropped, so none of it is in the code.
 - **Calendar (owner, 2026-10-24).** On Details, a Today-to-event line and event rows (date block, title, one line, a bell for
   that event), past events dimmed. Shows only events the app already knows (earnings, ex-dividend, upgrades and downgrades,
   filings), nothing invented. The same events feed the Upcoming events list on Radar.
+- **Key levels / technical evidence page (owner, 2026-10-24, modelled on a phone Technical screen from Investing.com).** Under
+  the Key levels pill: a technical summary (one verdict with a sell / neutral / buy bar and counts); our graded zones first; pivot
+  points (R3 to S3, Classic and Fibonacci, from the last session, resistance red, support green); moving averages (MA5, 10, 20, 50,
+  100, 200, simple and exponential, each value with Buy or Sell by price above or below); and an indicator table with value and
+  plain read: RSI (14), Stochastic (9,6), StochRSI, MACD (12,26), ADX (14), Williams %R, CCI (14), ATR (14), Highs/Lows (14),
+  Ultimate Oscillator, ROC, Bull/Bear Power (13). The owner wants these because they back up the call with visible evidence.
+  - Oversold and overbought show amber ("a bounce is possible"), not Buy or Sell; ATR is volatility, not a direction.
+  - **The summary counts as one check in the "x/6 sure" total, not as 12 or 14.** These indicators mostly measure the same
+    thing (trend and momentum), so counting each one would inflate confidence (`docs/INDICATORS.md`, Principle). It is the same
+    kind of read as the TradingView rating we already use as a second opinion, and the table shows what is behind it.
+  - Computed by the app from the daily bars it already holds (no new data source or key), so it still works when TradingView
+    is blocked; show our reading beside TradingView's and say when they differ. The rule that turns the readings into
+    "Strong sell" to "Strong buy" is set during testing and written here before it is built.
+  - Display only: no change to scoring, calls, stops or alerts.
 - **News in the design.** Add the news the app already collects (`newsfeed.py`) to the new look: a news line with its tier tag
   (HOT, IMPORTANT, ROUTINE) and sources on the opened card, a "Critical news" strip at the top of Radar, and a marker on the
   dot map for a stock with HOT news. The Day Board never showed the news strip clearly, which is why it was hard to find.
