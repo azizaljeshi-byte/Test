@@ -278,7 +278,7 @@ def radar_list(snaps: list[dict], brief: str):
 
 if view == "radar":
     st.markdown(ui.news_strip(snaps), unsafe_allow_html=True)
-    radar_list(snaps, ui.mission_brief(briefing.portfolio(snaps, prevs, reg), tickers))
+    radar_list(snaps, dayboard.today_card(briefing.portfolio(snaps, prevs, reg), tickers, datetime.now(NY).strftime("%A %d %b")))
 
 # ---------------------------------------------------------------- CIS shadow decision (STOCKWATCH_CIS_DECISIONS=shadow)
 def _cis_shadow_card(ticker: str, snap: dict):
