@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import briefing, dayboard, design, details, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -365,6 +365,9 @@ if view == "target":
             with st.spinner(f"Analysing {ticker}..."):
                 store.save_snapshot(evaluate(Holding(ticker, 2, 0), portfolio, data))
             st.rerun()
+
+    st.markdown('<div class="mc-section">Fundamentals</div>', unsafe_allow_html=True)
+    st.markdown(fundamentals_view.fundamentals(snap), unsafe_allow_html=True)
 
     with st.expander("Company overview & report card", expanded=False):
         st.markdown(ui.overview_card(briefing.overview(snap), ticker), unsafe_allow_html=True)
