@@ -261,3 +261,4 @@ Playwright screenshots at phone width (390px).
 - **AI analyst:** a written opinion on any stock (needs a Claude API key).
 - **Broker import,** plus average costs in the sheet, which would turn on P&L and cost-based stops.
 - **Holidays:** a market-holiday calendar.
+- **Tightening ideas** (entries that are not falling knives; cause-aware sells): recorded in `docs/TIGHTENING.md`, deliberately not built until the current build has been tested.
