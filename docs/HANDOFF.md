@@ -262,3 +262,4 @@ Playwright screenshots at phone width (390px).
 - **Broker import,** plus average costs in the sheet, which would turn on P&L and cost-based stops.
 - **Holidays:** a market-holiday calendar.
 - **Tightening ideas** (entries that are not falling knives; cause-aware sells): recorded in `docs/TIGHTENING.md`, deliberately not built until the current build has been tested.
+- **Indicators to study** (weekly trend alignment first, then volume, sector relative strength, ADX and squeeze, breadth): recorded in `docs/INDICATORS.md`, not built.
