@@ -230,3 +230,15 @@ def test_the_card_shows_the_after_hours_price_or_that_there_were_no_trades():
     assert "AH" in html and "101.50" in html
     s["payload"]["quote"] = {"market_state": "POST", "ext_price": float("nan")}
     assert "AH no trades yet" in dayboard.card(s)
+
+
+def test_today_card_rows_and_chips():
+    lines = ["Market backdrop is supportive (risk-on).", "Needs attention now: DIS, GLW.", "In a buy zone: AAPL.",
+             "Reporting this week: GLW (3d), NVDA (5d).", "Big out-of-hours moves: TSLA -4.2% AH, AMD +3.1% pre.",
+             "Strongest: AAPL, MSFT. Weakest: DIS, GLW.", "Something new."]
+    html = dayboard.today_card(lines, ["DIS"], "Friday 23 Oct")
+    assert 'class="rd-today"' in html and "Friday 23 Oct" in html
+    assert html.count('class="rd-bc act"') == 2 and html.count('class="rd-bc buy"') == 3
+    assert "view=target&t=GLW" in html and "<small>3d</small>" in html
+    assert 'class="rd-bc dn"' in html and "-4.2% AH" in html and "Note" in html
+    assert dayboard.today_card([], [], "") == ""
