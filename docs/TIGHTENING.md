@@ -99,6 +99,8 @@ and dropped, so none of it is in the code.
   tuple in `dashboard.py`, the segmented control built from the other views, and the pages still opening at `?view=fleet` and
   `?view=research` (checked: both render). The two hints that say "Add it on the Fleet tab" (Details and Turbo) become a tappable
   "Fleet page" link to `?view=fleet`. Without that link there is no way to add or remove a ticker in the app, so keep it.
+- **Tab bar colours (owner, 2026-10-24).** The tabs use the same colours as the cards and both themes, from the same named
+  colour variables: dark or light surface, the selected tab filled in the accent colour, the rest muted. No separate palette for the bar.
 - **Same design on every tab.** The agreed card look (section 7) and both themes apply to Radar, Turbo, Details, S&P 500, Log
   and Briefing, so one stock looks the same wherever it appears. Start from the shared pieces (status colours, call tag, price
   and change pill, bell) so each tab reuses them.
