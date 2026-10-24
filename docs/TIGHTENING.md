@@ -105,8 +105,14 @@ and dropped, so none of it is in the code.
   both themes and the same colours: Radar (dot map and list), Turbo, Details, S&P 500, Log, Briefing, and the hidden Fleet and
   Research pages when opened. The Details page (seen on a stock with an AVOID badge, FUND / TECH / ALL bars, a WEAKENING box and
   a stack of notes) becomes the opened card of section 7: call, gauge line, how sure, zones, plan, news, in that order, with the
-  long notes folded behind a tap. One stock looks the same wherever it appears. Build from shared pieces (status colours, call tag,
+  two explanation blocks kept (see the next point). One stock looks the same wherever it appears. Build from shared pieces (status colours, call tag,
   price and change pill, bell, gauge line, zone row, news line) so each tab reuses them, one tab per pull request.
+- **Keep the explanation blocks (owner, 2026-10-24: "I like these comments, very good").** On Details, the structure block (for
+  example WEAKENING: the close is below the 50 and 200-day averages, why a breakdown cannot be confirmed, "Not owned: nothing to exit",
+  plus the TradingView and Stooq lines) and the momentum block (for example FALLING, distribution: the heavy-volume days, the
+  volume ratio, RSI, MACD, market and sector moves, the as-of date) are valued and stay in the redesign. They are not removed
+  or folded away when the card gets shorter: they move onto the opened card as two "why" blocks in the new look, in plain
+  English, and the closed card stays short. Any text trimming in the design session must not lose their reasons.
 - **News in the design.** Add the news the app already collects (`newsfeed.py`) to the new look: a news line with its tier tag
   (HOT, IMPORTANT, ROUTINE) and sources on the opened card, a "Critical news" strip at the top of Radar, and a marker on the
   dot map for a stock with HOT news. The Day Board never showed the news strip clearly, which is why it was hard to find.
