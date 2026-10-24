@@ -275,3 +275,17 @@ def test_the_missing_news_message_keeps_the_key_name_intact():
     b = premarket.build(FakeProvider(), [], PRE)
     html = dict(ui.briefing_sections(b, set()))["Market headlines"]
     assert "No FINNHUB_API_KEY is set" in html
+
+
+def test_holdings_news_uses_every_source_hottest_first():
+    stories = [{"title": "Acme files for bankruptcy", "url": "https://x/1", "published": "2026-10-23T10:00+00:00", "sources": ["Google News", "SEC"],
+                "tier": 3, "rank": 330},
+               {"title": "Acme opens a new office", "url": None, "published": "2026-10-23T11:00+00:00", "sources": ["Yahoo"], "tier": 1, "rank": 100}]
+    snaps = [{"ticker": "ACME", "payload": {"watchlist": False, "events": {"wire": {"stories": stories}, "news": [
+        {"title": "Acme opens a new office", "published": "2026-10-23T11:00+00:00", "publisher": "Yahoo", "url": None}]}}}]
+    out = premarket.holdings_news(snaps, PRE)
+    assert [n["title"] for n in out] == ["Acme files for bankruptcy", "Acme opens a new office"]       # hot first, no duplicate
+    assert out[0]["tier"] == 3 and out[0]["sources"] == ["Google News", "SEC"]
+    from stockwatch import ui
+    html = ui._news_cards(out)
+    assert "HOT" in html and "Google News · SEC" in html

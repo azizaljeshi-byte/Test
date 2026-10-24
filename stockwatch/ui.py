@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import re
+from datetime import datetime, timezone
 from html import escape
 
 from . import status
@@ -47,6 +48,10 @@ a { color: var(--info); }
 .mc-title { font-family:'Orbitron',sans-serif; font-weight:900; font-size:1.05rem; letter-spacing:.24em; color:var(--opp);
   text-shadow:0 0 14px rgba(61,255,168,.45); line-height:1.1; }
 .mc-sub { color:var(--muted); font-family:var(--mono); font-size:.68rem; letter-spacing:.08em; text-transform:uppercase; margin-top:.15rem; }
+.nwb .nw{margin-top:.5rem;font-size:.84rem;line-height:1.35;color:var(--ink);border-top:1px solid rgba(27,52,66,.8);padding-top:.45rem}
+.nwb a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--muted)}
+.nwb .nt{font-size:.58rem;font-weight:800;letter-spacing:.06em;color:#111;background:var(--c);border-radius:99px;padding:.08rem .4rem;margin-right:.2rem}
+.nwb .ns{font-size:.7rem;color:var(--soft);margin-top:.15rem}
 .mc-blink { animation: blink 1.6s steps(2) infinite; color: var(--opp); }
 @keyframes blink { 50% { opacity: 0; } }
 .mc-hero { margin:.9rem 0 .2rem; }
@@ -808,6 +813,71 @@ def flow_note(snap: dict) -> str:
             f'<div style="font-size:.76rem;margin-top:.35rem;color:{MUTED}">{escape(" · ".join(bits))} · as of {escape(str(f["as_of"]))} close.</div></div>')
 
 
+TIER_STYLE = {3: ("HOT", RISK), 2: ("IMPORTANT", WARN), 1: ("ROUTINE", MUTED)}
+
+
+def wire_of(snap: dict) -> dict | None:
+    w = ((snap.get("payload") or {}).get("events") or {}).get("wire")
+    return w if isinstance(w, dict) else None
+
+
+def _age(published: str, now: datetime | None = None) -> str:
+    try:
+        d = datetime.fromisoformat(published)
+        d = d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return ""
+    mins = max((((now or datetime.now(timezone.utc)) - d).total_seconds()) / 60, 0)
+    return f"{mins:.0f} min ago" if mins < 90 else f"{mins / 60:.0f} h ago" if mins < 36 * 60 else f"{mins / 1440:.0f} d ago"
+
+
+def _story(s: dict, ticker: str | None = None) -> str:
+    label, color = TIER_STYLE.get(s["tier"], TIER_STYLE[1])
+    src = " · ".join(escape(x) for x in s["sources"])
+    title = escape(s["title"])
+    head = f'<a href="{escape(s["url"])}" target="_blank" rel="noopener">{title}</a>' if s.get("url") else title
+    who = f'<a href="?view=target&t={escape(ticker)}" target="_self"><b>{escape(ticker)}</b></a> ' if ticker else ""
+    return (f'<div class="nw" style="--c:{color}"><span class="nt">{label}</span> {who}{head}'
+            f'<div class="ns">{src} · {_age(s["published"])}</div></div>')
+
+
+def news_strip(snaps: list[dict], hours: int = 48) -> str:
+    """The critical news across the whole list, hottest first, with which sources carried each story. Quiet when there is
+    none, and it says which sources could not be read so a silent strip is never mistaken for no news."""
+    hot, down, seen = [], set(), 0
+    for sn in snaps:
+        w = wire_of(sn)
+        if not w:
+            continue
+        seen += 1
+        down |= {k for k, v in (w.get("sources") or {}).items() if v not in ("ok", "no headlines")}
+        hot += [(sn["ticker"], x) for x in w.get("stories", []) if x["tier"] >= 3 and (x.get("age_h") or 0) <= hours]
+    hot.sort(key=lambda t: -t[1]["rank"])
+    if not seen:
+        return ""
+    note = f'<div class="ns">Not read: {escape(", ".join(sorted(down)))}</div>' if down else ""
+    if not hot:
+        return (f'<div class="mc-ev nwb" style="--c:{MUTED}"><div class="t">No critical news on your list</div>'
+                f'<div class="ns">Checked Yahoo, Google News, SEC filings and Finnhub for the last {hours} hours.</div>{note}</div>')
+    return (f'<div class="mc-ev nwb" style="--c:{RISK}"><div class="t">🚨 Critical news · {len(hot)}</div>'
+            + "".join(_story(x, t) for t, x in hot[:8]) + note + '</div>')
+
+
+def wire_note(snap: dict) -> str:
+    """Details: this stock's stories from every source, ranked, with the sources that carried each."""
+    w = wire_of(snap)
+    if not w:
+        return ""
+    stories = w.get("stories") or []
+    down = [k for k, v in (w.get("sources") or {}).items() if v not in ("ok", "no headlines")]
+    note = f'<div class="ns">Not read: {escape(", ".join(sorted(down)))}</div>' if down else ""
+    if not stories:
+        return (f'<div class="mc-ev nwb" style="--c:{MUTED}"><div class="t">News: nothing in the last 3 days</div>{note}</div>')
+    top = max(x["tier"] for x in stories)
+    return (f'<div class="mc-ev nwb" style="--c:{TIER_STYLE[top][1]}"><div class="t">News from {len(set(y for x in stories for y in x["sources"]))} source(s)</div>'
+            + "".join(_story(x) for x in stories[:8]) + note + '</div>')
+
+
 def second_tag(snap: dict) -> str:
     """The short Finnhub line for a row: 'confirms · SELL', 'disagrees · BUY', 'mixed', or 'no read'. Only weak or
     broken stocks are asked, so healthy rows show nothing."""
@@ -1424,7 +1494,12 @@ def _news_cards(rows: list[dict], market: bool = False) -> str:
         who = escape(n.get("publisher") or "") if market else (
             f'<a href="?view=target&t={escape(n["ticker"])}" target="_self" style="color:{INFO};border:0">{escape(n["ticker"])}</a>'
             f' · {escape(n.get("publisher") or "")}')
-        out.append(f'<div class="bf-news" style="--c:{tone}"><div class="t">{who}</div><div>{link}</div></div>')
+        badge = ""
+        if not market and n.get("tier", 1) >= 2:
+            label, color = TIER_STYLE[n["tier"]]
+            badge = f'<span class="nwb"><span class="nt" style="--c:{color}">{label}</span></span> '
+        srcs = f'<div class="mc-d" style="margin-top:.15rem">{" · ".join(escape(x) for x in n["sources"])}</div>' if n.get("sources") else ""
+        out.append(f'<div class="bf-news" style="--c:{tone}"><div class="t">{who}</div><div>{badge}{link}</div>{srcs}</div>')
     return "".join(out)
 
 

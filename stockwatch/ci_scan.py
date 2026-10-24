@@ -31,7 +31,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import alert_state, notify, status, transitions
+from . import alert_state, newsfeed, notify, status, transitions
 from .config import load_portfolio
 from .data import get_provider, selected_provider
 from .store import Store
@@ -228,6 +228,7 @@ def holdings(mode: str, now: datetime, state_path: Path | None = None) -> Report
                                "this run records each stock's current call as the baseline and alerts nothing.")
     report.add("Alert memory", f"{restored} ({len(entries)} stocks)" if restored == "restored" else restored)
     stamp = now.isoformat(timespec="seconds")
+    entries, news_state = newsfeed.split(entries)                       # the news memory rides in the same file
     entries, status_state = transitions.split_state(entries)            # the price-status memory rides in the same file
     entries, ready, counts = transitions.step(entries, readings, stamp)
     report.add("Decision changes", f"{len(ready)} confirmed · {counts['pending']} awaiting confirmation · "
@@ -238,7 +239,14 @@ def holdings(mode: str, now: datetime, state_path: Path | None = None) -> Report
         status_state, status_ready, sc = transitions.step_status(status_state, status_readings, stamp)
         report.add("Status changes", f"{len(status_ready)} confirmed · {sc['pending']} awaiting confirmation · "
                                      f"{sc['baseline']} new baselines · {sc['skipped']} without a status")
-    queue = [("decision", t) for t in ready] + [("status", t) for t in status_ready]
+    news_ready = []
+    if newsfeed.NEWS_ALERT_MIN <= 3:
+        first_news = news_state is None
+        wires = {e.ticker: ((e.events or {}).get("wire")) for e in evals if not e.error}
+        news_state, news_ready, nc = newsfeed.step(news_state, wires, now)
+        report.add("Critical news", f"first run: {nc['baseline']} stories recorded, nothing sent" if first_news
+                   else f"{nc['ready']} to send · {nc['deferred']} deferred to the next run")
+    queue = [("decision", t) for t in ready] + [("status", t) for t in status_ready] + [("news", t) for t in news_ready]
     if dry:
         report.add("Delivery", f"dry run: {len(queue)} message(s) would be sent; nothing sent or saved")
         if not can_deliver:
@@ -258,6 +266,9 @@ def holdings(mode: str, now: datetime, state_path: Path | None = None) -> Report
                 if kind == "decision":
                     notify.telegram_send(transitions.message(t, by_ticker[t["ticker"]], bar_dates.get(t["ticker"]), now))
                     transitions.delivered(entries, t, stamp)
+                elif kind == "news":
+                    notify.telegram_send(newsfeed.message(t))
+                    newsfeed.delivered(news_state, t, now)
                 else:
                     notify.telegram_send(transitions.status_message(t, by_ticker[t["ticker"]],
                                                                     bar_dates.get(t["ticker"]), now))
@@ -274,7 +285,7 @@ def holdings(mode: str, now: datetime, state_path: Path | None = None) -> Report
                                "Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
     report.add("Delivery", f"telegram: {sent} sent, {failed} failed" if queue else "nothing to send")
     try:
-        alert_state.save(transitions.join_state(entries, status_state), state_path)
+        alert_state.save(newsfeed.join(transitions.join_state(entries, status_state), news_state or {}), state_path)
     except Exception as e:
         report.errors.append(f"Alert memory couldn't be saved ({type(e).__name__}); confirmed changes may repeat.")
     return report
