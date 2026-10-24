@@ -118,6 +118,19 @@ and dropped, so none of it is in the code.
   `?view=target&t=TICKER`), which shows everything: scores, the six sections (Overview, Key levels, Analysis & numbers,
   Scenarios, Past reactions, What changes), the news with every source, and the history. The Details page gets the same look
   and keeps all of its content; nothing there is removed in the redesign.
+- **Icons on every comment line (owner, 2026-10-24, chose design B).** Each line of Why, Changed and Watch next gets an icon on a
+  small colour chip and a lightly tinted bar with a coloured left edge: green ▲ good for the stock, red ▼ bad for the stock,
+  amber ! be careful, blue i just so you know, with a four-item key at the top. The icon comes from the type of line the app
+  already produces (risk, opportunity, key level, trigger, warning), not from reading the words; a line that mixes good and bad
+  takes the worse side. The words do not change.
+- **Details page layout, approved (owner, 2026-10-24).** Top to bottom: section pills (Overview, Key levels, Analysis & numbers,
+  Scenarios, Past reactions); header card with price, change, after-hours, bell, call, one plain sentence, the gauge line and the
+  scores; How sure (with the reason for any skipped check); the structure and momentum blocks; Why, with icons; Where it may stop
+  or turn (only true levels; "None found" with the reason when there is no support); Plan; Changed; Watch next; Calendar; News;
+  buttons (full numbers, back to Radar).
+- **Calendar (owner, 2026-10-24).** On Details, a Today-to-event line and event rows (date block, title, one line, a bell for
+  that event), past events dimmed. Shows only events the app already knows (earnings, ex-dividend, upgrades and downgrades,
+  filings), nothing invented. The same events feed the Upcoming events list on Radar.
 - **News in the design.** Add the news the app already collects (`newsfeed.py`) to the new look: a news line with its tier tag
   (HOT, IMPORTANT, ROUTINE) and sources on the opened card, a "Critical news" strip at the top of Radar, and a marker on the
   dot map for a stock with HOT news. The Day Board never showed the news strip clearly, which is why it was hard to find.
