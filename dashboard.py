@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import briefing, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import briefing, dayboard, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -245,8 +245,6 @@ def verdict_changes(snaps: list[dict]) -> dict[str, str]:
 @st.fragment
 def radar_list(snaps: list[dict], brief: str):
     """Radar scope, brief, filter + list. A fragment, so tapping a filter redraws only this part of the page."""
-    scope = st.empty()
-    st.markdown(brief, unsafe_allow_html=True)
     # filters follow the verdict shown on each card, so every card in a filter shows that status
     groups = {
         "Risk": lambda x: x["verdict"] in ("RISK - REVIEW", "TRIM / REVIEW", "AVOID"),
@@ -261,9 +259,7 @@ def radar_list(snaps: list[dict], brief: str):
     choice = st.pills("Filter", list(labels), format_func=labels.get, default="All", key="radar_filter",
                       label_visibility="collapsed")
     shown = [x for x in snaps if groups[choice](x)] if choice in groups else snaps
-    scope.markdown(ui.radar(snaps, {x["ticker"] for x in shown}), unsafe_allow_html=True)
-    st.markdown(ui.rows(shown, changed=verdict_changes(snaps)) if shown else '<div class="mc-d">No stocks with this status right now.</div>',
-                unsafe_allow_html=True)
+    st.markdown(dayboard.render(shown, changed=verdict_changes(snaps), brief=brief), unsafe_allow_html=True)
 
 
 if view == "radar":
