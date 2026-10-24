@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import briefing, dayboard, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import briefing, dayboard, design, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -50,6 +50,16 @@ def cached_portfolio(code_version: str):
 
 base = cached_portfolio(CODE_VERSION)
 store = get_store(CODE_VERSION)
+
+# the theme: the address (?theme=light) wins, then what the owner chose last, then follow the phone (auto)
+_saved_theme = st.query_params.get("theme") or store.get_setting("theme") or design.DEFAULT_THEME
+_saved_theme = _saved_theme if _saved_theme in design.THEMES else design.DEFAULT_THEME
+THEME = st.session_state.get("theme") or _saved_theme
+st.markdown(design.theme_css(THEME), unsafe_allow_html=True)
+
+
+def _save_theme():
+    store.set_setting("theme", st.session_state.get("theme") or design.DEFAULT_THEME)
 data = provider(selected_provider(base.settings.data_provider), CODE_VERSION)
 # with a Google Sheet, the sheet is the only list; dashboard additions are for setups without one
 portfolio = base if base.sheet_url else store.apply_overrides(base)
@@ -118,6 +128,8 @@ if base.sheet_error:
     st.warning(f"Couldn't read the Google Sheet, showing the backup list instead. {base.sheet_error}")
 
 def controls():
+    st.segmented_control("Theme", list(design.THEMES), format_func=design.THEMES.get, default=THEME, key="theme",
+                         on_change=_save_theme, label_visibility="collapsed")
     c1, c2 = st.columns([1, 1.6])
     c1.button("⟳ Sweep now", width="stretch", on_click=scan_now)
     if note := st.session_state.pop("sweep_note", None):

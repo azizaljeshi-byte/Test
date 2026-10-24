@@ -26,6 +26,9 @@ CREATE INDEX IF NOT EXISTS ix_alert_key ON alerts(ticker, code, created_at);
 CREATE TABLE IF NOT EXISTS market_scans (
     id INTEGER PRIMARY KEY, scanned_at TEXT, payload TEXT
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY, value TEXT
+);
 CREATE TABLE IF NOT EXISTS ticker_overrides (
     ticker TEXT PRIMARY KEY, tier INTEGER, shares REAL, removed INTEGER DEFAULT 0, updated_at TEXT
 );
@@ -155,6 +158,17 @@ class Store:
             "SELECT scanned_at, price, technical_score, fundamental_score, composite, verdict"
             " FROM snapshots WHERE ticker=? ORDER BY id DESC LIMIT ?", (ticker, limit))
         return [dict(r) for r in rows][::-1]
+
+    # ---- small display settings (for example the theme); display only
+
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
+        r = self.conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return r["value"] if r else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        self.conn.execute("INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                          (key, value))
+        self.conn.commit()
 
     # ---- tickers added / removed from the dashboard, layered over portfolio.yaml
 
