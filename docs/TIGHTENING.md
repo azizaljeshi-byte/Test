@@ -203,6 +203,25 @@ Samples shown and agreed; nothing is built.
   on Details. Only the top technical and fundamental reads, one earnings pair and one news line show on the closed card, so it
   stays short; everything else is behind the tap.
 
+## 12. One accurate trade decision per stock, as if it trades automatically (owner, 2026-10-24), methodology, for after testing
+Found on the DIS Details page: "STRONG HOLD" on the card, a WEAKENING chart, a plan stop of 106.48 and a structure exit of 110.13 at
+the same time. The owner wants the system built as if it were going to trade on its own, with no information hidden and one accurate
+decision. Nothing here is built; it changes how calls, stops and exits are decided, so it goes in as its own pull request flagged as a
+methodology change, after testing on real tickers and the owner's go-ahead.
+- **One decision per stock**, from fixed rules in a fixed order: hard exit, then warning exit, then risk limit, then entry or hold.
+  The composite score stops being an action word ("STRONG HOLD"); it becomes a quality rating next to the decision.
+- **The decision card has:** the action; entry (zone, order type, size) for a buy; a **warning exit** (a daily close below the
+  support floor) and a **hard stop** (during the day, protects against a gap through the floor); a target; the reasons not to buy
+  more (blocks); and when it is reviewed (each daily close, and before earnings).
+- **The two exits are two stages of one exit, not two answers.** DIS: close below 110.13 triggers the exit; a gap through it is
+  caught by the 106.48 stop. Both are shown, each with its job.
+- **No decision without fresh data.** A missing check says which one and shows "no decision", never a guess (and never a score of 0).
+- **Nothing hidden.** Every check and level stays on the page, split into evidence that agrees and evidence that disagrees.
+- **Owner to decide in testing:** at the warning exit, sell all or sell half; whether the warning exit acts after the close only or
+  also during the day.
+- **Display first:** until this is built, stage 4 of the design shows the Details page with the decision on top and every source
+  under it, labelled, and changes no call.
+
 ## 11. To find out first (testing)
 - How often the checks disagree with the call, and on which stocks.
 - Whether the graded zones (HIGH, MEDIUM, LOW) predict reactions better than the automatic CIS levels.
