@@ -101,7 +101,7 @@ def stock(snap: dict, prev: dict | None = None) -> dict:
     q = p.get("quote") or {}
     if _ok(q.get("ext_change")) and _ok(q.get("ext_price")):
         label = "Pre-market" if q.get("ext_session") == "pre" else "After hours"
-        watch.append(f"{label} it is trading at {q['ext_price']:.2f} ({q['ext_change'] * 100:+.1f}% vs the last close); "
+        watch.append(f"{label} it is trading at ${q['ext_price']:.2f} ({q['ext_change'] * 100:+.1f}% vs the last close); "
                      "the scores above use regular-session prices.")
     if ev.get("earnings_date"):
         line = (f"Earnings around {ev['earnings_date']} (~{ev['days_to_earnings']} days, estimated from past filings)"
@@ -114,25 +114,25 @@ def stock(snap: dict, prev: dict | None = None) -> dict:
     lv = val.get("levels") or {}
     parts = []
     if _ok(lv.get("support")):
-        parts.append(f"support near {lv['support']:.2f} ({_pct(lv['support'] / price - 1)})")
+        parts.append(f"support near ${lv['support']:.2f} ({_pct(lv['support'] / price - 1)})")
     if _ok(lv.get("resistance")):
-        parts.append(f"resistance near {lv['resistance']:.2f} ({_pct(lv['resistance'] / price - 1)})")
+        parts.append(f"resistance near ${lv['resistance']:.2f} ({_pct(lv['resistance'] / price - 1)})")
     if parts:
         watch.append("Key levels: " + ", ".join(parts) + ".")
     sma200 = t.get("sma200")
     if _ok(sma200):
         if trend == "down" or price < sma200:
-            watch.append(f"A close back above the 200-day ({sma200:.2f}, {_pct(sma200 / price - 1)}) would turn the trend up.")
+            watch.append(f"A close back above the 200-day (${sma200:.2f}, {_pct(sma200 / price - 1)}) would turn the trend up.")
         else:
-            watch.append(f"Losing the 200-day ({sma200:.2f}, {_pct(sma200 / price - 1)}) would break the uptrend.")
+            watch.append(f"Losing the 200-day (${sma200:.2f}, {_pct(sma200 / price - 1)}) would break the uptrend.")
     fv = val.get("fair_value")
     if fv:
-        watch.append(f"Fair-value estimate {fv['low']:.2f}-{fv['high']:.2f}, midpoint {fv['mid']:.2f} "
+        watch.append(f"Fair-value estimate ${fv['low']:.2f}-${fv['high']:.2f}, midpoint ${fv['mid']:.2f} "
                      f"({_pct(fv['upside'])}) from {len(fv['methods'])} method{'s' if len(fv['methods']) != 1 else ''}.")
     if not p.get("watchlist") and _ok(t.get("trailing_stop")):
         ts = t["trailing_stop"]
-        watch.append(f"Price is below its trailing stop ({ts:.2f}) - the stop has been hit." if price < ts
-                     else f"Trailing stop sits at {ts:.2f} ({_pct(ts / price - 1)}).")
+        watch.append(f"Price is below its trailing stop (${ts:.2f}) - the stop has been hit." if price < ts
+                     else f"Trailing stop sits at ${ts:.2f} ({_pct(ts / price - 1)}).")
     if _ok(smart.get("short_pct_float")) and smart["short_pct_float"] >= 0.15:
         watch.append(f"{smart['short_pct_float'] * 100:.0f}% of the float is sold short - expect sharp squeezes and drops.")
     return {"headline": headline, "why": why, "changed": changed, "watch": watch}
