@@ -101,9 +101,15 @@ and dropped, so none of it is in the code.
   "Fleet page" link to `?view=fleet`. Without that link there is no way to add or remove a ticker in the app, so keep it.
 - **Tab bar colours (owner, 2026-10-24).** The tabs use the same colours as the cards and both themes, from the same named
   colour variables: dark or light surface, the selected tab filled in the accent colour, the rest muted. No separate palette for the bar.
-- **Same design on every tab.** The agreed card look (section 7) and both themes apply to Radar, Turbo, Details, S&P 500, Log
-  and Briefing, so one stock looks the same wherever it appears. Start from the shared pieces (status colours, call tag, price
-  and change pill, bell) so each tab reuses them.
+- **Same design across the entire app (owner, 2026-10-24).** Not only Radar: every tab and page takes the agreed card look,
+  both themes and the same colours: Radar (dot map and list), Turbo, Details, S&P 500, Log, Briefing, and the hidden Fleet and
+  Research pages when opened. The Details page (seen on a stock with an AVOID badge, FUND / TECH / ALL bars, a WEAKENING box and
+  a stack of notes) becomes the opened card of section 7: call, gauge line, how sure, zones, plan, news, in that order, with the
+  long notes folded behind a tap. One stock looks the same wherever it appears. Build from shared pieces (status colours, call tag,
+  price and change pill, bell, gauge line, zone row, news line) so each tab reuses them, one tab per pull request.
+- **News in the design.** Add the news the app already collects (`newsfeed.py`) to the new look: a news line with its tier tag
+  (HOT, IMPORTANT, ROUTINE) and sources on the opened card, a "Critical news" strip at the top of Radar, and a marker on the
+  dot map for a stock with HOT news. The Day Board never showed the news strip clearly, which is why it was hard to find.
 - **The owner finds the current look annoying** and asked for more professional options (design session): the Yahoo-style
   list was the direction chosen so far, with three more directions to compare before anything is built.
 
