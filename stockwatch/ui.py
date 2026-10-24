@@ -285,6 +285,75 @@ ul.cis-why li { margin-bottom:.45rem; line-height:1.35; }
 .stExpander { border-radius:14px !important; }
 .stExpander summary p { font-weight:500; font-size:.9rem; }
 [data-testid="stSegmentedControl"] button { border-radius:10px !important; }
+
+/* ---- briefing */
+.bf-hero { position:relative; overflow:hidden; border:1px solid var(--line); border-radius:20px; padding:1.1rem 1.1rem 1rem; margin:.4rem 0 .9rem;
+  background: radial-gradient(520px 220px at 100% 0%, color-mix(in srgb, var(--c) 30%, transparent), transparent 70%), linear-gradient(180deg, var(--panel2), var(--panel)); }
+.bf-hero::after { content:''; position:absolute; inset:auto -20% -60% -20%; height:70%; background: radial-gradient(closest-side, color-mix(in srgb, var(--c) 22%, transparent), transparent); filter:blur(8px); pointer-events:none; }
+.bf-pill { display:inline-block; font:500 .66rem var(--mono); letter-spacing:.12em; color:var(--soft); border:1px solid var(--line); border-radius:999px; padding:.18rem .6rem; }
+.bf-word { font:900 clamp(1.7rem,8vw,2.6rem)/1.05 'Orbitron',var(--head); letter-spacing:.04em; color:var(--c); margin:.55rem 0 .15rem; text-shadow:0 0 22px color-mix(in srgb, var(--c) 55%, transparent); }
+.bf-sub { font-size:.86rem; color:var(--soft); position:relative; z-index:1; }
+.bf-flow { display:flex; gap:.35rem; overflow-x:auto; scroll-snap-type:x mandatory; padding:.1rem .1rem .6rem; margin:0 -.2rem; scrollbar-width:none; }
+.bf-flow::-webkit-scrollbar, .bf-rail::-webkit-scrollbar { display:none; }
+.bf-step { flex:0 0 auto; min-width:7.6rem; scroll-snap-align:start; position:relative; border:1px solid var(--line); border-radius:12px; padding:.5rem .7rem .55rem; background:var(--panel); }
+.bf-step::after { content:'›'; position:absolute; right:-.62rem; top:50%; transform:translateY(-52%); color:var(--muted); font-size:1.2rem; z-index:2; }
+.bf-step:last-child::after { display:none; }
+.bf-step b { display:block; font:600 .62rem var(--mono); letter-spacing:.14em; color:var(--c); text-transform:uppercase; }
+.bf-step span { display:block; font-size:.8rem; color:var(--ink); margin-top:.15rem; line-height:1.3; }
+.bf-rail { display:flex; gap:.6rem; overflow-x:auto; scroll-snap-type:x mandatory; margin:.2rem -.2rem .6rem; padding:.2rem .2rem .5rem; scrollbar-width:none; }
+.bf-card { flex:0 0 72%; max-width:15rem; scroll-snap-align:start; border:1px solid var(--line); border-radius:16px; padding:.75rem .85rem .6rem; position:relative; overflow:hidden;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--c) 14%, var(--panel2)), var(--panel)); }
+.bf-card .k { font:500 .66rem var(--mono); letter-spacing:.14em; color:var(--soft); text-transform:uppercase; }
+.bf-card .v { font:700 1.7rem/1.1 var(--head); color:var(--c); margin:.15rem 0 .1rem; }
+.bf-card .d { font-size:.74rem; color:var(--muted); line-height:1.35; }
+.bf-card svg { display:block; width:100%; height:2.4rem; margin-top:.35rem; }
+.bf-minis { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.55rem; }
+.bf-mini { border:1px solid var(--line); border-radius:14px; padding:.55rem .7rem .4rem; background:linear-gradient(180deg, var(--panel2), var(--panel)); border-left:3px solid var(--c); }
+.bf-mini .k { font:500 .62rem var(--mono); letter-spacing:.12em; color:var(--soft); text-transform:uppercase; }
+.bf-mini .v { font:600 1.1rem var(--head); color:var(--ink); }
+.bf-mini .d { font-size:.7rem; color:var(--c); }
+.bf-mini svg { display:block; width:100%; height:1.6rem; margin-top:.2rem; }
+.bf-heat { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.4rem; }
+@media (min-width: 820px) { .bf-heat { grid-template-columns:repeat(4,minmax(0,1fr)); } .bf-minis { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+.bf-sec { border-radius:12px; padding:.55rem .55rem .5rem; min-height:4.6rem; border:1px solid color-mix(in srgb, var(--c) 40%, var(--line));
+  background: color-mix(in srgb, var(--c) calc(var(--a) * 1%), var(--panel)); display:flex; flex-direction:column; justify-content:space-between; }
+.bf-sec .k { font:500 .6rem var(--mono); letter-spacing:.08em; color:var(--soft); text-transform:uppercase; line-height:1.25; }
+.bf-sec .v { font:700 1.05rem var(--head); color:var(--ink); }
+.bf-sec .n { font-size:.62rem; color:var(--ink); opacity:.85; }
+.bf-donut { display:flex; gap:1rem; align-items:center; border:1px solid var(--line); border-radius:16px; padding:.8rem; background:linear-gradient(180deg, var(--panel2), var(--panel)); }
+.bf-donut svg { flex:0 0 7.4rem; width:7.4rem; height:7.4rem; }
+.bf-leg { flex:1; min-width:0; display:grid; gap:.3rem; }
+.bf-leg div { font-size:.78rem; color:var(--ink); display:flex; align-items:center; gap:.4rem; }
+.bf-leg i { width:.6rem; height:.6rem; border-radius:3px; background:var(--c); flex:0 0 auto; }
+.bf-leg em { margin-left:auto; font-style:normal; font:600 .78rem var(--mono); color:var(--soft); }
+.bf-mv { border:1px solid var(--line); border-radius:16px; padding:.5rem .7rem; background:linear-gradient(180deg, var(--panel2), var(--panel)); }
+.bf-row { display:grid; grid-template-columns:3.6rem 1fr 3.4rem; gap:.4rem; align-items:center; padding:.22rem 0; font-size:.8rem; }
+.bf-row b { font:600 .78rem var(--mono); color:var(--ink); }
+.bf-row .bar { position:relative; height:.7rem; }
+.bf-row .bar::before { content:''; position:absolute; left:50%; top:-.1rem; bottom:-.1rem; width:1px; background:var(--line); }
+.bf-row .bar i { position:absolute; top:0; bottom:0; border-radius:4px; background:var(--c); box-shadow:0 0 10px color-mix(in srgb, var(--c) 60%, transparent); }
+.bf-row em { font-style:normal; font:600 .76rem var(--mono); color:var(--c); text-align:right; }
+.bf-news { border:1px solid var(--line); border-left:3px solid var(--c); border-radius:12px; padding:.55rem .7rem; margin:.4rem 0; background:var(--panel); }
+.bf-news .t { font:500 .62rem var(--mono); letter-spacing:.1em; color:var(--muted); text-transform:uppercase; }
+.bf-news div + div { font-size:.84rem; line-height:1.45; color:var(--ink); margin-top:.12rem; }
+.bf-news a { color:var(--ink); text-decoration:none; border-bottom:1px dotted var(--muted); }
+
+/* ---- stock rows: the price leads */
+.mc-li .hd { display:flex; justify-content:space-between; align-items:flex-end; gap:.6rem; margin:.15rem 0 .1rem; }
+.mc-li .hd .id { display:block; min-width:0; flex:1 1 auto; }
+.mc-li .hd .id .k { display:inline-block; margin-right:.4rem; vertical-align:middle; }
+.mc-li .hd .nm { display:block; margin-top:.05rem; }
+.mc-li .pxb { text-align:right; flex:0 0 auto; }
+.mc-li .pxb .big { display:block; font:700 1.75rem/1.05 var(--mono); letter-spacing:-.01em; color:var(--ink); }
+.mc-li .chg { display:inline-block; margin-top:.2rem; font:600 .78rem var(--mono); color:var(--c); padding:.12rem .5rem; border-radius:999px;
+  background:color-mix(in srgb, var(--c) 14%, transparent); border:1px solid color-mix(in srgb, var(--c) 35%, transparent); }
+.mc-li .ext { font:400 .72rem var(--mono); color:var(--muted); text-align:right; margin:.1rem 0 .3rem; }
+.mc-li .ext b { color:var(--soft); font-weight:600; }
+.mc-li .why { margin-top:.45rem; }
+.mc-li .facts { margin-top:.55rem; padding:.2rem .6rem; border-radius:10px; background:rgba(255,255,255,.025); border:1px solid rgba(27,52,66,.7); }
+.mc-li .facts .pl { margin:0; padding:.28rem 0; border-top:0; display:grid; grid-template-columns:5.3rem 1fr; gap:.4rem; font-size:.7rem; }
+.mc-li .facts .pl + .pl { border-top:1px solid rgba(27,52,66,.55); }
+.mc-li .facts .pl b { margin:0; color:var(--muted); font-size:.6rem; letter-spacing:.14em; padding-top:.1rem; }
 </style>
 """
 
@@ -353,6 +422,48 @@ def _price(snap: dict) -> tuple[float | None, str]:
                      f'{q["ext_price"]:.2f} <small><i class="mc-g" style="color:{OPP if ch >= 0 else RISK}">'
                      f'{"▲" if ch >= 0 else "▼"}</i>{pct(ch, digits=1)}</small>')
     return price_now, day_html
+
+
+def price_parts(snap: dict) -> dict:
+    """The price block for a list row, in pieces so the price can lead: {'price', 'day' (a change or None),
+    'live' (HH:MM or ''), 'ext' ((label, price, change) or None), 'note' (e.g. 'AH no trades yet')}. Same rules as
+    `_price`, which the other screens still use."""
+    p = snap["payload"]
+    day = p.get("technical", {}).get("day_change")
+    q = p.get("quote") or {}
+    live = q.get("market_state") == "REGULAR" and not nan(q.get("live_price"))
+    price = q["live_price"] if live else snap["price"]
+    if live and not nan(q.get("live_change")):
+        day = q["live_change"]
+    ext, note = None, ""
+    if q.get("market_state") in ("PRE", "POST") and (nan(q.get("ext_price")) or q.get("ext_stale")):
+        note = f'{"PRE" if q["market_state"] == "PRE" else "AH"} no trades yet'
+    if not nan(q.get("ext_price")) and not nan(q.get("ext_change")):
+        label = "PRE" if q.get("ext_session") == "pre" else ("AH (last night)" if q.get("ext_stale") else "AH")
+        ext = (label, q["ext_price"], q["ext_change"])
+    return {"price": price, "day": None if nan(day) else day, "live": q["fetched_at"][11:16] if live and q.get("fetched_at") else "",
+            "ext": ext, "note": note}
+
+
+def price_block(snap: dict) -> tuple[str, str]:
+    """The big price with its day change under it, and a quieter line for live / pre-market / after-hours."""
+    pp = price_parts(snap)
+    chg = ""
+    if pp["day"] is not None:
+        c = OPP if pp["day"] >= 0 else RISK
+        chg = (f'<span class="chg" style="--c:{c}">{"▲" if pp["day"] >= 0 else "▼"} {pct(pp["day"], digits=1)}</span>')
+    top = f'<div class="pxb"><b class="big">{num(pp["price"])}</b>{chg}</div>'
+    bits = []
+    if pp["live"]:
+        bits.append(f'<span style="color:{OPP}">● LIVE {pp["live"]}</span>')
+    if pp["ext"]:
+        label, price, change = pp["ext"]
+        c = OPP if change >= 0 else RISK
+        bits.append(f'<span>{escape(label)} <b>{price:.2f}</b> <i style="color:{c};font-style:normal">'
+                    f'{"▲" if change >= 0 else "▼"} {pct(change, digits=1)}</i></span>')
+    if pp["note"]:
+        bits.append(f'<span>{escape(pp["note"])}</span>')
+    return top, (f'<div class="ext">{" · ".join(bits)}</div>' if bits else "")
 
 
 def card(snap: dict, was: str | None = None) -> str:
@@ -596,7 +707,6 @@ def row(snap: dict, was: str | None = None) -> str:
     color, _ = VERDICT_STYLE.get(snap["verdict"], (MUTED, "●"))
     call, glyph, acolor = action(snap)
     tag = f'<span class="mc-tag">OWNED · T{snap["tier"]}</span>' if not p["watchlist"] else ""
-    price_now, day_html = _price(snap)
     r, why = ring(snap)
     top = p["signals"][0] if p["signals"] else None
     wait = reassess(snap)
@@ -613,16 +723,18 @@ def row(snap: dict, was: str | None = None) -> str:
     name = "" if name.upper() == snap["ticker"] else name
     from .tradeplan import summary
     plan = summary(p.get("plan"))
+    price_html, ext_html = price_block(snap)
+    facts = "".join(x for x in (
+        f'<div class="pl"><b>{"IF IT FAILS" if wait else "PLAN"}</b>{escape(plan)}</div>' if plan else "",
+        f'<div class="pl"><b>LEVELS</b>{escape(levels_line(snap))}</div>' if levels_line(snap) else "",
+        f'<div class="pl"><b>FLOW</b>{escape(flow_line(snap))}</div>' if flow_line(snap) else "",
+        f'<div class="pl"><b>FINNHUB</b>{escape(second_tag(snap))}</div>' if second_tag(snap) else "") if x)
     return (f'<a class="mc-a" href="?view=target&t={escape(snap["ticker"])}" target="_self">'
             f'<div class="mc-li{" own" if not p["watchlist"] else ""}" style="--c:{color};--a:{acolor}">'
             f'<div class="call"><span class="act">{glyph} {escape(call)}</span>{new}{status_chip(snap)}{tag}</div>'
-            f'<div class="mc-row"><div class="id"><b class="k"></b><span class="mc-tk">{escape(snap["ticker"])}</span>'
-            f'<span class="nm">{escape(name)}</span></div></div>'
-            f'<div class="px">{num(price_now)}{day_html}</div><div class="why">{why_html}</div>'
-            + (f'<div class="pl"><b>{"IF IT FAILS" if wait else "PLAN"}</b>{escape(plan)}</div>' if plan else "")
-            + (f'<div class="pl"><b>LEVELS</b>{escape(levels_line(snap))}</div>' if levels_line(snap) else "")
-            + (f'<div class="pl"><b>FLOW</b>{escape(flow_line(snap))}</div>' if flow_line(snap) else "")
-            + (f'<div class="pl"><b>FINNHUB</b>{escape(second_tag(snap))}</div>' if second_tag(snap) else "") + '</div></a>')
+            f'<div class="hd"><div class="id"><b class="k"></b><span class="mc-tk">{escape(snap["ticker"])}</span>'
+            f'<span class="nm">{escape(name)}</span></div>{price_html}</div>{ext_html}'
+            f'<div class="why">{why_html}</div>' + (f'<div class="facts">{facts}</div>' if facts else "") + '</div></a>')
 
 
 STATUS_STYLE = {"record_high": (OPP, "★"), "strong_uptrend": (OPP, "↗"), "pullback": (INFO, "↘"),
@@ -1177,37 +1289,145 @@ def _macro_tile(r: dict) -> tuple[str, str, str, str]:
     return r["label"], shown, escape(detail), _tone(None if head is None else (-head if inverse else head))
 
 
-def briefing_sections(b: dict, tickers=()) -> list[tuple[str, str]]:
-    """(title, html) for each part of the briefing, in reading order."""
-    out: list[tuple[str, str]] = []
-    out.append(("Where the market stands", tiles([_brief_tile(r) for r in b["indexes"]])))
-    out.append(("Macro", tiles([_macro_tile(r) for r in b["macro"]])))
-    out.append(("Sectors", tiles([_brief_tile(r, extra=("yours: " + ", ".join(r["names"])) if r.get("names") else "")
-                                  for r in sorted(b["sectors"], key=lambda r: -(_brief_move(r)[0] or -9))])))
+DONUT = [OPP, INFO, WARN, "#b58cff", RISK, "#ff8fd1", "#7de0c5", MUTED]
+
+
+def spark(values, color: str) -> str:
+    """A small area line for a price series, scaled to its own range. Empty when there are fewer than 5 points."""
+    v = [float(x) for x in values or [] if isinstance(x, (int, float)) and x == x]
+    if len(v) < 5:
+        return ""
+    lo, hi = min(v), max(v)
+    span = (hi - lo) or 1.0
+    pts = [f"{i / (len(v) - 1) * 100:.1f},{28 - (x - lo) / span * 26:.1f}" for i, x in enumerate(v)]
+    line = " ".join(pts)
+    return (f'<svg viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true">'
+            f'<polygon points="0,30 {line} 100,30" fill="{color}" opacity=".14"/>'
+            f'<polyline points="{line}" fill="none" stroke="{color}" stroke-width="1.8" vector-effect="non-scaling-stroke" '
+            f'stroke-linejoin="round" stroke-linecap="round"/></svg>')
+
+
+def donut(parts: list[tuple[float, str]], centre: str, sub: str = "") -> str:
+    """A ring of (share, colour) parts that add up to 1, with a label in the middle."""
+    segs, at = [], 0.0
+    for frac, color in parts:
+        n = max(frac * 100, 0.0)
+        segs.append(f'<circle cx="21" cy="21" r="15.9155" fill="none" stroke="{color}" stroke-width="5.2" '
+                    f'stroke-dasharray="{max(n - 0.6, 0.1):.2f} {100 - max(n - 0.6, 0.1):.2f}" stroke-dashoffset="{25 - at:.2f}"/>')
+        at += n
+    return (f'<svg viewBox="0 0 42 42" aria-hidden="true"><circle cx="21" cy="21" r="15.9155" fill="none" stroke="{"#1b3442"}" '
+            f'stroke-width="5.2" opacity=".5"/>{"".join(segs)}<text x="21" y="21.5" text-anchor="middle" fill="{INK}" '
+            f'font-size="6.2" font-weight="700">{escape(centre)}</text><text x="21" y="27" text-anchor="middle" fill="{MUTED}" '
+            f'font-size="2.9">{escape(sub)}</text></svg>')
+
+
+def _hero(b: dict) -> str:
+    m = b.get("mood") or {"word": "NO READ", "tone": "flat"}
+    color = {"up": OPP, "down": RISK}.get(m["tone"], WARN)
+    return (f'<div class="bf-hero" style="--c:{color}"><span class="bf-pill">{escape(SESSION_LABEL.get(b["session"], b["session"]))}'
+            f' · {escape(b["as_of"][11:16])} UTC</span><div class="bf-word">{escape(m["word"])}</div>'
+            f'<div class="bf-sub">{escape(b["takeaway"])}</div></div>')
+
+
+def _flow(b: dict) -> str:
+    vix = next((r for r in b["macro"] if r["symbol"] == "^VIX"), None)
+    known = [r for r in b["sectors"] if _brief_move(r)[0] is not None]
+    best = max(known, key=lambda r: _brief_move(r)[0], default=None)
+    worst = min(known, key=lambda r: _brief_move(r)[0], default=None)
+    mv = b.get("movers") or {}
+    big = {m["ticker"] for k in ("prior", "now") for m in mv.get(k) or []}
+    top = (b.get("exposure") or [None])[0]
+    steps = [("Macro", INFO, f'VIX {vix["last"]:.1f}' if vix and vix.get("last") is not None else "no VIX"),
+             ("Sectors", OPP, (f'{best["label"]} {pct(_brief_move(best)[0], digits=1)} · {worst["label"]} '
+                               f'{pct(_brief_move(worst)[0], digits=1)}') if best and worst and best is not worst else "no sector prices"),
+             ("Movers", WARN, f'{len(big)} big move{"" if len(big) == 1 else "s"} on your names' if big else "no big moves"),
+             ("Your names", "#b58cff", f'{top["pct"] * 100:.0f}% {top["sector"]}' if top else "no owned positions")]
+    return '<div class="bf-flow">' + "".join(f'<div class="bf-step" style="--c:{c}"><b>{k}</b><span>{escape(t)}</span></div>'
+                                             for k, c, t in steps) + '</div>'
+
+
+def _index_cards(b: dict) -> str:
+    cards = []
+    for r in b["indexes"]:
+        head, bits = _brief_move(r)
+        color = _tone(head)
+        value = "n/a" if head is None else pct(head, digits=1)
+        fut = (r.get("future") or {}).get("now")
+        tag = f'<span style="color:{color}">{"▲" if (head or 0) >= 0 else "▼"} {"futures" if fut is not None else "move"}</span>'
+        cards.append(f'<div class="bf-card" style="--c:{color}"><div class="k">{escape(r["label"])} · {tag}</div>'
+                     f'<div class="v">{value}</div><div class="d">{escape(" · ".join(bits))}</div>{spark(r.get("spark"), color)}</div>')
+    return f'<div class="bf-rail">{"".join(cards)}</div>'
+
+
+def _macro_minis(b: dict) -> str:
+    cells = []
+    for r in b["macro"]:
+        label, value, detail, color = _macro_tile(r)
+        cells.append(f'<div class="bf-mini" style="--c:{color}"><div class="k">{escape(label)}</div><div class="v">{escape(value)}</div>'
+                     f'<div class="d">{detail}</div>{spark(r.get("spark"), color)}</div>')
+    return f'<div class="bf-minis">{"".join(cells)}</div>'
+
+
+def _heatmap(b: dict) -> str:
+    cells = []
+    for r in sorted(b["sectors"], key=lambda r: -(_brief_move(r)[0] if _brief_move(r)[0] is not None else -9)):
+        head, bits = _brief_move(r)
+        color = _tone(head)
+        alpha = 0 if head is None else min(abs(head) / 0.02, 1.0) * 42 + 6
+        names = f'<div class="n">★ {escape(", ".join(r["names"]))}</div>' if r.get("names") else ""
+        cells.append(f'<div class="bf-sec" style="--c:{color};--a:{alpha:.0f}"><div class="k">{escape(r["label"])} · {escape(r["symbol"])}</div>'
+                     f'<div class="v">{"n/a" if head is None else pct(head, digits=1)}</div>{names}</div>')
+    return f'<div class="bf-heat">{"".join(cells)}</div>'
+
+
+def _exposure(b: dict, tickers) -> str:
     ex = b.get("exposure") or []
-    if ex:
-        out.append(("Your exposure by industry", tiles([(g["sector"], f'{g["pct"] * 100:.0f}%',
-                                                        link_tickers(", ".join(g["names"][:8]), tickers), INFO) for g in ex])))
+    parts = [(g["pct"], DONUT[i % len(DONUT)]) for i, g in enumerate(ex)]
+    legend = "".join(f'<div style="--c:{DONUT[i % len(DONUT)]}"><i></i>{escape(g["sector"])}<em>{g["pct"] * 100:.0f}%</em></div>'
+                     for i, g in enumerate(ex))
+    return f'<div class="bf-donut">{donut(parts, f"{len(ex)}", "industries")}<div class="bf-leg">{legend}</div></div>'
+
+
+def _mover_bars(rows: list[dict]) -> str:
+    top = max((abs(m["pct"]) for m in rows), default=0.1)
+    scale = max(top, 0.08)
+    out = []
+    for m in rows[:6]:
+        color = _tone(m["pct"])
+        half = min(abs(m["pct"]) / scale, 1.0) * 50
+        pos = f'left:50%;width:{half:.1f}%' if m["pct"] >= 0 else f'left:{50 - half:.1f}%;width:{half:.1f}%'
+        out.append(f'<div class="bf-row" style="--c:{color}"><b><a href="?view=target&t={escape(m["ticker"])}" target="_self" '
+                   f'style="color:inherit;text-decoration:none">{escape(m["ticker"])}</a></b><div class="bar"><i style="{pos}"></i></div>'
+                   f'<em>{pct(m["pct"], digits=1)}</em></div>')
+    return f'<div class="bf-mv">{"".join(out)}</div>'
+
+
+def _news_cards(rows: list[dict], market: bool = False) -> str:
+    out = []
+    for n in rows:
+        tone = INFO if market else {"positive": OPP, "negative": RISK}.get(n.get("tone"), MUTED)
+        title = escape(n["title"])
+        link = f'<a href="{escape(n["url"])}" target="_blank" rel="noopener">{title}</a>' if n.get("url") else title
+        who = escape(n.get("publisher") or "") if market else (
+            f'<a href="?view=target&t={escape(n["ticker"])}" target="_self" style="color:{INFO};border:0">{escape(n["ticker"])}</a>'
+            f' · {escape(n.get("publisher") or "")}')
+        out.append(f'<div class="bf-news" style="--c:{tone}"><div class="t">{who}</div><div>{link}</div></div>')
+    return "".join(out)
+
+
+def briefing_sections(b: dict, tickers=()) -> list[tuple[str, str]]:
+    """(title, html) for each part of the briefing, in reading order. An empty title means no heading."""
+    out: list[tuple[str, str]] = [("", _hero(b) + _flow(b)), ("Where the market stands", _index_cards(b)),
+                                  ("Macro", _macro_minis(b)), ("Sectors · strongest first", _heatmap(b))]
+    if b.get("exposure"):
+        out.append(("Your exposure by industry", _exposure(b, tickers)))
     mv = b.get("movers") or {}
     for title, key in (("Biggest moves last session", "prior"), ("Biggest moves now (pre-market, after-hours, live)", "now")):
         rows = mv.get(key) or []
-        body = tiles([(m["ticker"], pct(m["pct"], digits=1), "owned" if m["held"] else "watchlist", _tone(m["pct"]))
-                      for m in rows[:6]]) if rows else '<div class="mc-d">No major moves (3% or more) among your tracked names.</div>'
-        out.append((title, body))
-    news = []
-    for n in b.get("holdings_news") or []:
-        tone = {"positive": OPP, "negative": RISK}.get(n.get("tone"), MUTED)
-        title = escape(n["title"])
-        link = f'<a href="{escape(n["url"])}" target="_blank" rel="noopener">{title}</a>' if n.get("url") else title
-        news.append(f'<div class="mc-ev" style="--c:{tone}"><div class="t"><a href="?view=target&t={escape(n["ticker"])}" '
-                    f'target="_self">{escape(n["ticker"])}</a> · {escape(n.get("publisher") or "")}</div>'
-                    f'<div style="font-size:.84rem;line-height:1.45;margin-top:.15rem;color:var(--ink)">{link}</div></div>')
-    out.append(("News on your names", "".join(news) or '<div class="mc-d">No fresh headlines on your tracked names.</div>'))
-    mkt = []
-    for n in b.get("market_news") or []:
-        title = escape(n["title"])
-        link = f'<a href="{escape(n["url"])}" target="_blank" rel="noopener">{title}</a>' if n.get("url") else title
-        mkt.append(f'<div class="mc-ev" style="--c:{INFO}"><div class="t">{escape(n.get("publisher") or "")}</div>'
-                   f'<div style="font-size:.84rem;line-height:1.45;margin-top:.15rem;color:var(--ink)">{link}</div></div>')
-    out.append(("Market headlines", "".join(mkt) or f'<div class="mc-d">{escape(_cap(b.get("market_news_why") or "none right now"))}.</div>'))
+        out.append((title, _mover_bars(rows) if rows else
+                    '<div class="mc-d">No major moves (3% or more) among your tracked names.</div>'))
+    out.append(("News on your names", _news_cards(b.get("holdings_news") or []) or
+                '<div class="mc-d">No fresh headlines on your tracked names.</div>'))
+    out.append(("Market headlines", _news_cards(b.get("market_news") or [], market=True) or
+                f'<div class="mc-d">{escape(_cap(b.get("market_news_why") or "none right now"))}.</div>'))
     return out
