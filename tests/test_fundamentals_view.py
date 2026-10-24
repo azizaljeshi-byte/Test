@@ -45,3 +45,16 @@ def test_revenue_and_profit_per_share_are_drawn_when_the_research_has_them():
           {"quarter": "2026-04-30", "eps_estimate": 1.0, "eps_actual": 0.9, "reaction": 0.05}]
     html = fv.fundamentals(snap_with(real_metrics(STRONG), research={"earnings": {"revenue_q": rq, "quarters": qs}}))
     assert "Revenue, last 5 quarters" in html and "$150.0M" in html and "BEAT" in html and "MISS" in html and "-20%" in html
+
+
+def test_the_report_card_letters_company_line_delivery_and_insiders_are_folded_in():
+    s = snap_with(real_metrics(STRONG), source="Yahoo", research={
+        "earnings": {"reported": 4, "beats": 0, "avg_move": 0.14, "quarters": [
+            {"quarter": f"2026-0{i}-30", "eps_estimate": 1.0, "eps_actual": 0.8} for i in (7, 6, 5, 4)]},
+        "smart_money": {"buyers_90d": 1, "short_pct_float": 0.22, "institution_pct": 0.55}})
+    s["payload"]["profile"] = {"name": "Acme Corp", "industry": "Software", "country": "United States", "market_cap": 15.5e9,
+                               "employees": 1126, "website": "https://example.com", "summary": "Makes things."}
+    html = fv.fundamentals(s)
+    assert "Acme Corp" in html and "website" in html and "Report card" in html and "Beat 0 of the last 4" in html
+    assert "1 buyer in 90 days" in html and "22% of shares are sold short" in html and "Institutions own 55%" in html
+    assert "not part of the fundamentals rating" in html and "Overall" not in html

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from html import escape
 
-from . import design, ui
+from . import briefing, design, ui
 from .ui import nan
 
 MIN_COVERAGE = 30       # same as engine.MIN_FUND_COVERAGE: under this the score is unknown
@@ -86,6 +86,10 @@ def _revenue(rq: list[dict]) -> str:
             + margins("gross_margin", "Gross margin") + margins("op_margin", "Operating margin"))
 
 
+def _usd(v: float) -> str:
+    return f"-${abs(v):.2f}" if v < 0 else f"${v:.2f}"
+
+
 def _eps(quarters: list[dict]) -> str:
     rows = [q for q in quarters[:4] if q.get("eps_actual") is not None and q.get("eps_estimate") is not None][::-1]
     if not rows:
@@ -100,9 +104,62 @@ def _eps(quarters: list[dict]) -> str:
         move = "" if mv is None or nan(mv) else f'<em class="{"up" if mv >= 0 else "dn"}">{mv * 100:+.0f}%</em>'
         out += (f'<div class="fv-eq"><span>{escape(str(q["quarter"])[:7])}</span><div class="fv-pair">'
                 f'<i class="e" style="width:{max(abs(e) / top * 100, 3):.0f}%"></i><i class="a" style="width:{max(abs(a) / top * 100, 3):.0f}%"></i></div>'
-                f'<b class="fv-tag {cls}">{res}</b><small>${e:.2f} → ${a:.2f}</small>{move}</div>')
+                f'<b class="fv-tag {cls}">{res}</b><small>{_usd(e)} → {_usd(a)}</small>{move}</div>')
     return ('<div class="fv-k">Profit per share: expected vs actual</div><div class="fv-lg"><span><u class="e"></u>Expected</span>'
             f'<span><u class="a"></u>Actual</span><span class="mv">Share move on report day</span></div>{out}')
+
+
+AREA_OF = {"growth": "Growth", "quality": "Profitability", "balance": "Balance sheet", "valuation": "Valuation"}
+SHORT = {"Profitability": "Profit", "Balance sheet": "Balance", "Momentum": "Chart", "Earnings delivery": "Earnings", "Smart money": "Insiders"}
+TONE = {"A": "good", "B": "good", "C": "neutral", "D": "weak", "F": "bad"}
+
+
+def _company(o: dict) -> str:
+    site = f' · <a href="{escape(o["website"])}" target="_blank">website</a>' if o.get("website") else ""
+    about = ""
+    summary = o.get("summary") or ""
+    if summary:
+        about = f'<details class="fv-about"><summary>About the company</summary><p>{escape(summary)}</p></details>'
+    return f'<div class="fv-co"><b>{escape(o["name"])}</b><small>{escape(o["intro"])}{site}</small>{about}</div>'
+
+
+def _chips(grades: list[dict]) -> str:
+    chips = "".join(f'<span class="fv-ch"><b class="{TONE.get(g["grade"], "neutral")}">{escape(g["grade"])}</b>'
+                    f'{escape(SHORT.get(g["area"], g["area"]))}</span>' for g in grades)
+    return ('<div class="fv-k">Report card</div>' f'<div class="fv-chs">{chips}</div>'
+            '<small class="fv-ft">Chart and Insiders come from other pages; they are not part of the fundamentals rating.</small>')
+
+
+def _delivery(earn: dict) -> str:
+    qs = [q for q in (earn.get("quarters") or [])[:4] if q.get("eps_actual") is not None and q.get("eps_estimate") is not None]
+    if not qs:
+        return ""
+    beats = [q["eps_actual"] > q["eps_estimate"] for q in qs][::-1]
+    dots = "".join(f'<i class="{"y" if b else "m"}"></i>' for b in beats)
+    n = sum(beats)
+    move = (f'Shares moved about {earn["avg_move"] * 100:.0f}% on report days.'
+            if earn.get("avg_move") is not None and not nan(earn["avg_move"]) else "")
+    return (f'<div class="fv-k">Earnings delivery</div><div class="fv-bt"><div class="fv-dots">{dots}</div>'
+            f'<b class="{"up" if n == len(qs) else "dn" if n == 0 else ""}">Beat {n} of the last {len(qs)}</b></div>'
+            + (f'<small class="fv-ft">{move}</small>' if move else ""))
+
+
+def _smart(sm: dict) -> str:
+    if not sm:
+        return ""
+    out = []
+    if sm.get("buyers_90d"):
+        out.append(("good", f"Insiders: {sm['buyers_90d']} buyer{'s' if sm['buyers_90d'] != 1 else ''} in 90 days."))
+    elif sm.get("sellers_90d", 0) >= 3:
+        out.append(("bad", f"Insiders: {sm['sellers_90d']} sold in 90 days, no buying."))
+    sp = sm.get("short_pct_float")
+    if sp is not None and not nan(sp):
+        out.append(("bad" if sp >= 0.15 else "careful" if sp >= 0.08 else "info",
+                    f"{sp * 100:.0f}% of shares are sold short." + (" Expect sharp moves both ways." if sp >= 0.15 else "")))
+    ip = sm.get("institution_pct")
+    if ip is not None and not nan(ip):
+        out.append(("info", f"Institutions own {ip * 100:.0f}%."))
+    return ('<div class="fv-k">Insiders and short sellers</div>' + "".join(design.icon_line(k, t) for k, t in out)) if out else ""
 
 
 def fundamentals(snap: dict) -> str:
@@ -111,6 +168,11 @@ def fundamentals(snap: dict) -> str:
     research = p.get("research") or {}
     earn = research.get("earnings") or {}
     lines, got = measure_lines(f)
+    try:
+        o = briefing.overview(snap)
+    except (KeyError, TypeError, ValueError):
+        o = None
+    letter = {g["area"]: g["grade"] for g in (o or {}).get("grades", [])}
     total = len(MEASURES) + 1
     source = f.get("source") or "Yahoo"
     if f.get("available") is False or (f.get("coverage") or 0) < MIN_COVERAGE:
@@ -124,18 +186,20 @@ def fundamentals(snap: dict) -> str:
         for key, name in PILLARS:
             v = f.get(f"pillar_{key}")
             r = design.fundamentals_rating(v)
-            tiles += (f'<div class="fv-pl"><em>{name}</em>' + (
+            lt = letter.get(AREA_OF[key])
+            badge = f'<u class="g {TONE.get(lt, "neutral")}">{lt}</u>' if lt and lt != "?" else ""
+            tiles += (f'<div class="fv-pl"><em>{name}</em>{badge}' + (
                 f'<b>{v:.0f}</b><span style="color:var(--dz-{design.STEP_KEYS[r[1]]})">{r[0]}</span>{design.pips(r[1])}'
                 if r else '<b>n/a</b><span>not enough data</span>') + '</div>')
         pillars = f'<div class="fv-pls">{tiles}</div>'
-    body = design.icon_key() + "".join(design.icon_line(k, t) for k, t in lines)
+    body = (_chips(o["grades"]) if o and o.get("grades") else "") + design.icon_key() + "".join(design.icon_line(k, t) for k, t in lines)
     rq = (earn.get("revenue_q") or [])
     gm = rq[0].get("gross_margin") if rq else None
     body += (design.icon_line("info", f"Gross margin: {gm * 100:.0f}% in the last quarter.") if gm is not None and not nan(gm) else "")
-    body += _revenue(rq) + _eps(earn.get("quarters") or [])
+    body += _revenue(rq) + _delivery(earn) + _eps(earn.get("quarters") or []) + _smart(research.get("smart_money") or {})
     if not (lines or rq or earn.get("quarters")):
         body = '<div class="fv-note">No fundamentals could be read for this stock right now.</div>'
-    return f'<style>{CSS}</style><div class="fv"><div class="fv-card">{head}{pillars}{body}</div></div>'
+    return f'<style>{CSS}</style><div class="fv"><div class="fv-card">{_company(o) if o else ""}{head}{pillars}{body}</div></div>'
 
 
 CSS = """
@@ -159,5 +223,17 @@ CSS = """
 .fv-tag{font-size:.6rem;padding:2px 5px;border-radius:5px;text-align:center;color:#0b1118}.fv-tag.b{background:var(--dz-buy,#3fd08d)}
 .fv-tag.m{background:var(--dz-act,#ff7b78)}.fv-tag.l{background:var(--dz-line,#243041);color:var(--dz-soft,#aab3c3)}
 .fv-eq small{color:var(--dz-soft,#aab3c3)}.fv-eq em{font-style:normal;text-align:right;font-weight:700}.fv .up{color:var(--dz-buy,#3fd08d)}.fv .dn{color:var(--dz-act,#ff7b78)}
+.fv-co b{font-size:1.02rem}.fv-co small{display:block;color:var(--dz-muted,#8b95a7);font-size:.72rem;margin-top:4px;line-height:1.4}
+.fv-co a{color:var(--dz-calm,#8da2d6)}.fv-about{margin-top:6px;font-size:.78rem;color:var(--dz-soft,#aab3c3)}.fv-about summary{cursor:pointer;color:var(--dz-calm,#8da2d6)}
+.fv-hd{margin-top:12px}
+.fv-pl u{text-decoration:none;display:inline-grid;place-items:center;width:28px;height:28px;border-radius:8px;font-weight:800;color:#0b1118;margin-right:8px;vertical-align:middle}
+.fv .g.good,.fv-ch b.good{background:var(--dz-good,#a6e08a)}.fv .g.neutral,.fv-ch b.neutral{background:var(--dz-neutral,#9aa6b8)}
+.fv .g.weak,.fv-ch b.weak{background:var(--dz-weak,#ffa566)}.fv .g.bad,.fv-ch b.bad{background:var(--dz-bad,#ff6b6b)}
+.fv-chs{display:flex;flex-wrap:wrap;gap:6px}.fv-ch{display:flex;gap:6px;align-items:center;font-size:.7rem;color:var(--dz-soft,#aab3c3);
+  background:color-mix(in srgb,var(--dz-ink,#e9eef5) 5%,transparent);border-radius:9px;padding:4px 8px 4px 4px}
+.fv-ch b{display:grid;place-items:center;width:20px;height:20px;border-radius:6px;color:#0b1118;font-size:.72rem}
+.fv-ft{display:block;color:var(--dz-muted,#8b95a7);font-size:.68rem;margin:8px 0 10px}
+.fv-bt{display:flex;align-items:center;gap:12px}.fv-dots{display:flex;gap:5px}.fv-dots i{width:22px;height:22px;border-radius:50%;background:var(--dz-line,#243041)}
+.fv-dots i.y{background:var(--dz-buy,#3fd08d)}.fv-dots i.m{background:var(--dz-act,#ff7b78)}
 .fv-note{font-size:.84rem;color:var(--dz-muted,#8b95a7)}
 """
