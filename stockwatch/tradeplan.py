@@ -21,6 +21,19 @@ def _ok(v) -> bool:
     return v is not None and not (isinstance(v, float) and math.isnan(v))
 
 
+FAR_ABOVE = 0.15        # a trigger more than 15% above the price is shown as steps, not one distant number
+
+
+def recovery_steps(price: float, sma20, sma50, sma200) -> str | None:
+    """'recovery steps: 20-day 352.10 (+6.4%), 50-day 410.00 (+23.9%), 200-day 518.65 (+56.7%)': each moving average
+    still above the price, nearest first. None when none of them is above it."""
+    steps = sorted((v, name) for name, v in (("20-day", sma20), ("50-day", sma50), ("200-day", sma200))
+                   if _ok(v) and v > price)
+    if not steps:
+        return None
+    return "recovery steps: " + ", ".join(f"{name} {v:.2f} ({(v / price - 1) * 100:+.1f}%)" for v, name in steps)
+
+
 def build(hist: pd.DataFrame, tech: dict, fund: dict, fs: float, verdict: str, tier: int, watchlist: bool,
           levels: dict | None = None, fair_value: dict | None = None, events: dict | None = None,
           quote: dict | None = None) -> dict:
@@ -78,6 +91,8 @@ def build(hist: pd.DataFrame, tech: dict, fund: dict, fs: float, verdict: str, t
         level = sma200 if _ok(sma200) and price < sma200 else (sma50 if _ok(sma50) else price + atr)
         low, high = level, level + 0.5 * atr
         trigger = f"a daily close back above {level:.2f} ({(level / price - 1) * 100:+.1f}%)"
+        if level / price - 1 > FAR_ABOVE:       # too far to act on as one number: show the steps up to it
+            trigger = recovery_steps(price, sma20, sma50, sma200) or trigger
     entry = (low + high) / 2 if not held else price
 
     # ---- stop: structural if it's sensible, otherwise volatility-based
