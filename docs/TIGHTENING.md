@@ -37,8 +37,8 @@ Recorded only. Not built until testing is finished, and best done in the design 
 **Gauge line.** The gauge on each card repeats "BAD" three times (call, gauge word, end label), which is confusing. Replace it
 with a line with a lightning bolt marking where the stock stands. Four samples were shown (A bolt on a gradient line with a
 tag above, B five named steps Bad / Weak / Neutral / Good / Strong with the current one lit and each word shown once, C a
-zig-zag lightning line with a dot, D a fill-from-left power line with the bolt at the tip). My pick is B. The owner has not
-chosen yet. Known sample faults to fix in the build: the tag in A touches the reason text, and the left label in D touches the bolt.
+zig-zag lightning line with a dot, D a fill-from-left power line with the bolt at the tip). The owner chose A (2026-10-24). Alongside it, the owner wants less on the card: fewer lines and labels, so the call, the line and the plain-English zone
+recommendations carry the meaning (what to remove is decided in the design session). Known sample faults to fix in the build: the tag in A touches the reason text, and the left label in D touches the bolt.
 
 **Zone grades.** Drop the HIGH / MEDIUM / LOW badges on support and resistance zones. Show one plain-English recommendation
 per zone instead, from a single legend that is the same on every card (a universal legend). Wording to draft and test, for example:
