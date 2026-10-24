@@ -114,6 +114,11 @@ more attention (sell or buy). A sample was shown; nothing is built.
   act and buy, medium for watch, small for calm. Act and buy dots get a slow pulse ring, off when the phone asks for reduced
   motion. Big dots carry the ticker inside; small calm ones carry a small ticker above.
 - **Tap.** A dot opens that stock's card (section 7) under the chart, with a dashed ring on the selected dot.
+- **Zoom (owner, 2026-10-24).** The default view shows dots only, no names, so the whole book fits and stays calm. The chart zooms
+  with pinch or + and − buttons in the corner. Choosing a filter (Act, Watch, Buy, Calm) zooms the chart onto those dots
+  automatically and turns the names on (ticker and today's change inside big dots, ticker above small ones); "All" zooms back
+  out. The axis bands (Bad to Strong) rescale and only the visible ones are labelled. Dots outside the filter are hidden.
+  Sample frames: all, Act zoomed, Watch zoomed. The label on a small dot can spill over its edge; widen or move it in the build.
 - **Open choices.** Whether size also reflects position size; where the chart sits (top of Radar, or its own tab); collisions
   when many calm stocks cluster (nudge apart, or tap-to-zoom). A one-line strip version was tried and dropped: too cramped.
 - **Data.** Needs no new data: the gauge position, today's change and the call already exist for every stock.
