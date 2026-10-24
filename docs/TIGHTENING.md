@@ -92,7 +92,20 @@ tickers, so they stay out of the public repo). This replaces the Day Board list 
 - **Order of work.** Test the current build first; then build the list and closed card, the opened card, then movers and
   events, then the theme switch. Display only: no change to scoring, calls, stops or alerts.
 
-## 8. To find out first (testing)
+## 8. Tabs: hide Fleet and Research, apply the design everywhere (owner, 2026-10-24), for after testing
+Recorded only; the owner asked to write it down and keep the change for later. The tab change was tried on a throwaway branch
+and dropped, so none of it is in the code.
+- **Hide Fleet and Research** from the tab bar (Radar, Turbo, Details, S&P 500, Log and Briefing stay). Plan: a `HIDDEN_VIEWS`
+  tuple in `dashboard.py`, the segmented control built from the other views, and the pages still opening at `?view=fleet` and
+  `?view=research` (checked: both render). The two hints that say "Add it on the Fleet tab" (Details and Turbo) become a tappable
+  "Fleet page" link to `?view=fleet`. Without that link there is no way to add or remove a ticker in the app, so keep it.
+- **Same design on every tab.** The agreed card look (section 7) and both themes apply to Radar, Turbo, Details, S&P 500, Log
+  and Briefing, so one stock looks the same wherever it appears. Start from the shared pieces (status colours, call tag, price
+  and change pill, bell) so each tab reuses them.
+- **The owner finds the current look annoying** and asked for more professional options (design session): the Yahoo-style
+  list was the direction chosen so far, with three more directions to compare before anything is built.
+
+## 9. To find out first (testing)
 - How often the checks disagree with the call, and on which stocks.
 - Whether the graded zones (HIGH, MEDIUM, LOW) predict reactions better than the automatic CIS levels.
 - Which of the first live news and TradingView or Stooq reads fail, and why.
