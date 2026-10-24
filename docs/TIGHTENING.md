@@ -219,6 +219,10 @@ methodology change, after testing on real tickers and the owner's go-ahead.
 - **Nothing hidden.** Every check and level stays on the page, split into evidence that agrees and evidence that disagrees.
 - **Owner to decide in testing:** at the warning exit, sell all or sell half; whether the warning exit acts after the close only or
   also during the day.
+- **Where the company is heading, drawn not written (owner, 2026-10-24): version C, small tiles.** Five tiles instead of the
+  paragraph: Analysts say (rating word, buy/hold/sell bar and counts), Street target (price with the % to it and how many
+  analysts), 12-month range (bear to bull with now marked), Chance higher (ring), EPS growth (this year, next year). Every price
+  carries the $ sign. A source that has no figure shows "not available" on its tile, never a guess.
 - **Display first:** until this is built, stage 4 of the design shows the Details page with the decision on top and every source
   under it, labelled, and changes no call.
 
