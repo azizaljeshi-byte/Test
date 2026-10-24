@@ -226,6 +226,8 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
         # a second source's technical read, only where it matters (a weak or broken stock), to keep the requests few
         ps["second"] = status.second_opinion(ps["code"], _optional(data.second_opinion, h.ticker),
                                              (ps.get("levels") or {}).get("close")) or status.second_unavailable(finnhub.enabled())
+        # an independent price series re-checks that the closes behind this status are right (catches bad Yahoo data)
+        ps["pricecheck"] = _optional(data.price_check, h.ticker, hist["Close"]) or {"source": "Stooq", "unavailable": "the check did not run"}
 
     raw_sec = None if light else _optional(provider.filings, h.ticker)
     raw_events = _optional(provider.events, h.ticker) or {}

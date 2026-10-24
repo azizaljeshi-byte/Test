@@ -445,14 +445,31 @@ SECOND_TTL = 6 * 3600       # technical reads move slowly; this keeps the Finnhu
 
 
 def second_opinion(ticker: str) -> dict | None:
-    """Finnhub's technical read for one ticker, cached for hours. None when Finnhub isn't configured or answers nothing."""
+    """A second technical read for one ticker, cached for hours: TradingView first (no key), then Finnhub. None when
+    neither answers; a failed refresh keeps the older read rather than blanking it."""
     hit = _SECOND.get(ticker)
     if hit and time.monotonic() - hit[0] < SECOND_TTL:
         return hit[1]
-    out = _fallback("second_opinion", ticker)
-    if out is not None or hit is None:       # a failed refresh keeps the older read rather than blanking it
+    from . import tradingview
+    out = tradingview.second_opinion(ticker) or _fallback("second_opinion", ticker)
+    if out is not None or hit is None:
         _SECOND[ticker] = (time.monotonic(), out)
     return _SECOND[ticker][1]
+
+
+_PRICECHECK: dict = {}
+
+
+def price_check(ticker: str, closes) -> dict:
+    """Stooq re-check of our recent closes, cached 6 h. Always a dict (with `unavailable` and a reason on failure)."""
+    hit = _PRICECHECK.get(ticker)
+    if hit and time.monotonic() - hit[0] < SECOND_TTL:
+        return hit[1]
+    from . import stooq
+    out = stooq.check(ticker, closes)
+    if "unavailable" not in out or hit is None:
+        _PRICECHECK[ticker] = (time.monotonic(), out)
+    return _PRICECHECK[ticker][1]
 
 
 def _bar_summary(bars: pd.DataFrame) -> dict:
