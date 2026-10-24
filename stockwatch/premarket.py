@@ -125,24 +125,37 @@ def movers(snaps: list[dict]) -> dict:
 
 
 def holdings_news(snaps: list[dict], now: datetime) -> list[dict]:
+    """News on your names: every source's stories (Yahoo, Google News, SEC filings, Finnhub) merged by headline, the
+    hottest first (critical, then important), held names ahead of watchlist ones inside a tier. Falls back to Yahoo's own
+    headlines for a snapshot saved before the multi-source feed existed."""
     seen, out = set(), []
+
+    def add(ticker, p, title, publisher, url, published, tone=None, tier=1, sources=None, rank=0):
+        title = (title or "").strip()
+        try:
+            when = datetime.fromisoformat(str(published))
+        except ValueError:
+            return
+        when = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+        if not title or title.lower() in seen or now - when > timedelta(hours=NEWS_HOURS):
+            return
+        seen.add(title.lower())
+        out.append({"ticker": ticker, "title": title, "publisher": publisher, "url": url, "tone": tone,
+                    "published": when.isoformat(timespec="minutes"), "held": not p.get("watchlist"), "tier": tier,
+                    "sources": sources or [], "rank": rank})
+
     for s in snaps:
         p = s.get("payload") or {}
-        for n in (p.get("events") or {}).get("news") or []:
-            try:
-                when = datetime.fromisoformat(str(n["published"]))
-            except (KeyError, ValueError):
-                continue
-            when = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
-            title = (n.get("title") or "").strip()
-            if not title or title.lower() in seen or now - when > timedelta(hours=NEWS_HOURS):
-                continue
-            seen.add(title.lower())
-            out.append({"ticker": s["ticker"], "title": title, "publisher": n.get("publisher"), "url": n.get("url"),
-                        "tone": n.get("tone"), "published": when.isoformat(timespec="minutes"), "held": not p.get("watchlist")})
-    held = sorted((n for n in out if n["held"]), key=lambda n: n["published"], reverse=True)
-    rest = sorted((n for n in out if not n["held"]), key=lambda n: n["published"], reverse=True)
-    return (held + rest)[:10]
+        ev = p.get("events") or {}
+        for w in (ev.get("wire") or {}).get("stories") or []:
+            add(s["ticker"], p, w.get("title"), (w.get("sources") or [""])[0], w.get("url"), w.get("published"),
+                {3: "negative"}.get(w.get("tier")), w.get("tier") or 1, w.get("sources"), w.get("rank") or 0)
+        for n in ev.get("news") or []:
+            add(s["ticker"], p, n.get("title"), n.get("publisher"), n.get("url"), n.get("published"), n.get("tone"))
+    hot = sorted((n for n in out if n["tier"] >= 2), key=lambda n: (-n["tier"], not n["held"], -n["rank"]))
+    rest = sorted((n for n in out if n["tier"] < 2), key=lambda n: n["published"], reverse=True)
+    rest.sort(key=lambda n: not n["held"])                       # newest first, held names ahead (the sort is stable)
+    return (hot + rest)[:10]
 
 
 def headline(r: dict) -> float | None:

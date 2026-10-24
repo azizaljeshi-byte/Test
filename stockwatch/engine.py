@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from . import analogs, catalysts, deepdive, fundamental, momentum, relative, sec, status, street, technical, tradeplan, transitions, zones
+from . import analogs, catalysts, deepdive, fundamental, momentum, newsfeed, relative, sec, status, street, technical, tradeplan, transitions, zones
 from .config import Holding, Portfolio
 from . import data, finnhub
 from .data import SECTOR_ETFS, DataProvider
@@ -238,6 +238,9 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
             raw_events = {**raw_events, "earnings_date": estimate, "earnings_estimated": True}
     events, event_sig = catalysts.analyze(raw_events, owned=not h.is_watchlist, tier=h.tier)
     events["earnings_estimated"] = bool(raw_events.get("earnings_estimated"))
+    # news from several sources, ranked (display and Telegram only: it never feeds `catalysts` or any score)
+    events["wire"] = None if light else _optional(newsfeed.build, h.ticker, f.get("name"), raw_events.get("news"),
+                                                  (raw_sec or {}).get("filings") if raw_sec else None, finnhub.enabled())
 
     # deep research is informational: it adds signals but doesn't move the scores
     raw = {} if light else (_optional(provider.research, h.ticker) or {})

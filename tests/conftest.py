@@ -4,12 +4,14 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _no_second_source_network(monkeypatch):
-    from stockwatch import stooq, tradingview
+    from stockwatch import newsfeed, stooq, tradingview
 
     def blocked(*a, **k):
         raise OSError("network disabled in tests")
     monkeypatch.setattr(tradingview, "_post", blocked)
     monkeypatch.setattr(stooq, "_get", blocked)
+    monkeypatch.setattr(newsfeed, "_get", blocked)
+    newsfeed._cache.clear()
     from stockwatch import data
     data._SECOND.clear()
     data._PRICECHECK.clear()
