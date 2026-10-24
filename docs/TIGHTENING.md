@@ -169,7 +169,41 @@ more attention (sell or buy). A sample was shown; nothing is built.
   when many calm stocks cluster (nudge apart, or tap-to-zoom). A one-line strip version was tried and dropped: too cramped.
 - **Data.** Needs no new data: the gauge position, today's change and the call already exist for every stock.
 
-## 10. To find out first (testing)
+## 10. Fundamentals, earnings and major news on the card (owner, 2026-10-24), for after testing
+Samples shown and agreed; nothing is built.
+- **Fundamentals rating on the closed card.** One word and five pips beside the technical rating: Fundamentals Poor, Weak, Fair,
+  Good or Strong, and Technicals Bad, Weak, Neutral, Good or Strong. Draft score bands (to set in testing): Poor under 25, Weak 25
+  to 44, Fair 45 to 64, Good 65 to 79, Strong 80 and over. Shown as "unknown" with the reason when fewer than 3 measures are
+  readable.
+- **Fundamentals tab behind Details.** The rating and score; a source line (SEC filing type, period and filing date, "based on
+  N of M measures"); the four pillars (Growth, Quality, Balance sheet, Valuation) with a bar and a word; every measure with a
+  B icon, its value, a plain note, a source tag (SEC or Yahoo) and its data status (usable, stale, needs reconciliation,
+  unknown); a four to five quarter revenue chart; and a flags-from-filings line.
+- **Tightening, agreed (owner: "agree with your tightening").** Make SEC the main source for the financial pillars, with Yahoo kept
+  for price-based measures (today SEC is only the fallback, and `docs/SEC_DATA_QUALITY.md` is read-only and not wired in). Then:
+  1. SEC first for growth, margins, cash flow and balance sheet, with the source and filing date on each figure.
+  2. Trends, not only levels (margin rising or falling, growth speeding up or slowing down).
+  3. Cash runway and dilution for loss-making companies, where ROE says little.
+  4. Debt against cash, and interest cover.
+  5. Cash quality: operating cash flow against reported profit.
+  6. Different rules for banks and insurers (several measures do not apply, per the SEC quality work).
+  7. Red flags from filings: restatement (8-K 4.02), auditor change (4.01), late filing, amended 10-K.
+  8. Show how many measures the rating rests on; unknown when too few are reported.
+  9. Show the fair-value range only when at least two methods agree.
+  Scoring changes are a separate pull request and only after testing, per the methodology rule.
+- **Earnings on the card (owner, 2026-10-24).** Two short lines: last quarter's result as BEAT, MISS or IN LINE with the EPS
+  surprise, and next quarter's date with the expected EPS and revenue and the days left. Draft rule (set in testing): beat above
+  +2% surprise, miss below -2%, otherwise in line. Where the revenue expectation or company guidance is not reported by a source,
+  say "not available", never a guess. Actual results come from the company's filing (SEC); expectations are analyst
+  consensus (Yahoo, or Finnhub when Yahoo is blocked).
+- **Earnings tab behind Details.** Next quarter box (date, days left, usual move on report days, expected EPS and revenue,
+  company guidance, analyst count and revisions), then the last four quarters, each as actual vs expected with BEAT or MISS.
+- **Major news on the card (owner, 2026-10-24).** One line with the top ranked story, its tier tag (HOT, IMPORTANT, ROUTINE),
+  headline, age and source, from the multi-source feed in `newsfeed.py`; the full ranked list sits under Major news and releases
+  on Details. Only the top technical and fundamental reads, one earnings pair and one news line show on the closed card, so it
+  stays short; everything else is behind the tap.
+
+## 11. To find out first (testing)
 - How often the checks disagree with the call, and on which stocks.
 - Whether the graded zones (HIGH, MEDIUM, LOW) predict reactions better than the automatic CIS levels.
 - Which of the first live news and TradingView or Stooq reads fail, and why.
