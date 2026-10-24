@@ -47,7 +47,13 @@ per zone instead, from a single legend that is the same on every card (a univers
 The grading in `zones.py` (HIGH 4 or more points, MEDIUM 2 to 3, LOW otherwise) stays underneath; only the words on screen change.
 Keep the reasons line (touches, round number, heavy volume, age) as the proof. Samples of the wording are still to be shown.
 
-## 4. To find out first (testing)
+## 4. Say why a check was skipped (owner, 2026-10-24), small fix for after testing
+The Day Board shows "Price data not re-checked" with no reason. The reason already exists in `stooq.check` ("Stooq could not be
+reached", "Stooq has no daily prices for this ticker", "only N sessions overlap"), but `dayboard._data` drops it. Show the
+reason on the line, and do the same for any other skipped check, per the rule that missing data is unknown and says why.
+A skipped check is not counted, so the count reads "5/5 sure", not "6/6".
+
+## 5. To find out first (testing)
 - How often the checks disagree with the call, and on which stocks.
 - Whether the graded zones (HIGH, MEDIUM, LOW) predict reactions better than the automatic CIS levels.
 - Which of the first live news and TradingView or Stooq reads fail, and why.
