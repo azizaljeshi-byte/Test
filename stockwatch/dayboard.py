@@ -337,8 +337,8 @@ def movers(snaps: list[dict], n: int = 4) -> str:
 
 def events_calendar(snaps: list[dict]) -> str:
     """Upcoming earnings on your list, soonest first (only dates already on the snapshots)."""
-    rows = sorted(((s["payload"].get("events") or {}).get("days_to_earnings"), s) for s in snaps
-                  if (s["payload"].get("events") or {}).get("days_to_earnings") is not None)
+    rows = sorted((((s["payload"].get("events") or {}).get("days_to_earnings"), s) for s in snaps
+                   if (s["payload"].get("events") or {}).get("days_to_earnings") is not None), key=lambda t: t[0])
     rows = [(d, s) for d, s in rows if d >= 0][:5]
     if not rows:
         return ""

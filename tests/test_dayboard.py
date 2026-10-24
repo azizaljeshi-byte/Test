@@ -202,3 +202,12 @@ def test_a_watch_that_is_not_a_held_sell_is_unchanged(monkeypatch):
     assert dayboard.held_sell(s) is False
     a = dayboard.assess(s)
     assert a["sell_side"] is False and a["sure"] is None
+
+
+def test_two_stocks_reporting_the_same_day_do_not_break_the_coming_up_list():
+    a, b = make("HOLD", "pullback"), make("HOLD", "pullback")
+    a["ticker"], b["ticker"] = "AAA", "BBB"
+    for s in (a, b):
+        s["payload"]["events"] = {"days_to_earnings": 4}
+    html = dayboard.events_calendar([a, b])
+    assert "AAA" in html and "BBB" in html
