@@ -105,7 +105,20 @@ and dropped, so none of it is in the code.
 - **The owner finds the current look annoying** and asked for more professional options (design session): the Yahoo-style
   list was the direction chosen so far, with three more directions to compare before anything is built.
 
-## 9. To find out first (testing)
+## 9. Dot map: a chart of where every stock stands (owner, 2026-10-24), design only, for after testing
+The owner asked for a horizontal chart like the old Radar, with stocks moving up and down and bigger dots for stocks that need
+more attention (sell or buy). A sample was shown; nothing is built.
+- **Axes.** Left to right is the gauge: Bad, Weak, Neutral, Good, Strong (the five steps of the gauge), as faint colour bands.
+  Up and down is today's move, with a dashed "flat today" line.
+- **Dots.** Colour is the call (red act, amber watch, green buy, muted blue calm). Size is how much attention it needs: big for
+  act and buy, medium for watch, small for calm. Act and buy dots get a slow pulse ring, off when the phone asks for reduced
+  motion. Big dots carry the ticker inside; small calm ones carry a small ticker above.
+- **Tap.** A dot opens that stock's card (section 7) under the chart, with a dashed ring on the selected dot.
+- **Open choices.** Whether size also reflects position size; where the chart sits (top of Radar, or its own tab); collisions
+  when many calm stocks cluster (nudge apart, or tap-to-zoom). A one-line strip version was tried and dropped: too cramped.
+- **Data.** Needs no new data: the gauge position, today's change and the call already exist for every stock.
+
+## 10. To find out first (testing)
 - How often the checks disagree with the call, and on which stocks.
 - Whether the graded zones (HIGH, MEDIUM, LOW) predict reactions better than the automatic CIS levels.
 - Which of the first live news and TradingView or Stooq reads fail, and why.
