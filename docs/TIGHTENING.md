@@ -31,7 +31,23 @@ Day Board moved it into the opened card. The news feed (`newsfeed.py`) now adds 
 - Any later change to a sell rule is its own pull request and only if the owner asks, after watching how cause and
   outcome line up over a few weeks.
 
-## 3. To find out first (testing)
+## 3. Plain-English legends (owner, 2026-10-24), design for later
+Recorded only. Not built until testing is finished, and best done in the design session.
+
+**Gauge line.** The gauge on each card repeats "BAD" three times (call, gauge word, end label), which is confusing. Replace it
+with a line with a lightning bolt marking where the stock stands. Four samples were shown (A bolt on a gradient line with a
+tag above, B five named steps Bad / Weak / Neutral / Good / Strong with the current one lit and each word shown once, C a
+zig-zag lightning line with a dot, D a fill-from-left power line with the bolt at the tip). My pick is B. The owner has not
+chosen yet. Known sample faults to fix in the build: the tag in A touches the reason text, and the left label in D touches the bolt.
+
+**Zone grades.** Drop the HIGH / MEDIUM / LOW badges on support and resistance zones. Show one plain-English recommendation
+per zone instead, from a single legend that is the same on every card (a universal legend). Wording to draft and test, for example:
+- Support: "Likely to hold: a good place to buy" / "May hold: buy small" / "Weak: don't count on it".
+- Resistance: "Likely to stop a rise: a good place to sell" / "May stop a rise" / "Weak: price may pass through".
+The grading in `zones.py` (HIGH 4 or more points, MEDIUM 2 to 3, LOW otherwise) stays underneath; only the words on screen change.
+Keep the reasons line (touches, round number, heavy volume, age) as the proof. Samples of the wording are still to be shown.
+
+## 4. To find out first (testing)
 - How often the checks disagree with the call, and on which stocks.
 - Whether the graded zones (HIGH, MEDIUM, LOW) predict reactions better than the automatic CIS levels.
 - Which of the first live news and TradingView or Stooq reads fail, and why.
