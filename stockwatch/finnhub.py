@@ -146,3 +146,11 @@ def second_opinion(ticker: str) -> dict | None:
         return None
     return {"source": "Finnhub", "signal": analysis.get("signal"), "buy": count.get("buy"), "neutral": count.get("neutral"),
             "sell": count.get("sell"), "trending": (ta.get("trend") or {}).get("trending"), "levels": levels}
+
+
+def market_news(limit: int = 12) -> list[dict]:
+    """Finnhub's general market headlines (free plan), newest first, in the app's news shape."""
+    rows = _get("/news", category="general") or []
+    return [{"title": r["headline"], "publisher": r.get("source"), "url": r.get("url"),
+             "published": datetime.fromtimestamp(r["datetime"], tz=timezone.utc)}
+            for r in sorted(rows, key=lambda r: r.get("datetime", 0), reverse=True)[:limit] if r.get("headline")]
