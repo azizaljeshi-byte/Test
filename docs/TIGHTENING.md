@@ -53,8 +53,8 @@ reached", "Stooq has no daily prices for this ticker", "only N sessions overlap"
 reason on the line, and do the same for any other skipped check, per the rule that missing data is unknown and says why.
 A skipped check is not counted, so the count reads "5/5 sure", not "6/6".
 
-## 5. A WATCH card with a BAD gauge (owner, 2026-10-24), found on COSM
-COSM shows WATCH (yellow, "be careful") while the gauge reads BAD and the checks list breakdown, falling momentum and a
+## 5. A WATCH card with a BAD gauge (owner, 2026-10-24), found on a sub-dollar stock
+That card shows WATCH (yellow, "be careful") while the gauge reads BAD and the checks list breakdown, falling momentum and a
 TradingView SELL. Cause: the sell call is held back by the "don't rush" rule (`ui.reassess`: the stock bounced +3.2% in the
 last session, so the app waits for the close below the trailing stop before selling), and `dayboard.word` returns WATCH for it.
 The gauge and the checks do not know about that wait, so the card gives two answers, against the rule to never show conflicting
@@ -70,7 +70,29 @@ with no price and no reason. Recorded for the design session after testing. The 
 the cards, and those samples, not the current Day Board, are the starting point. Keep from the Day Board only what he still wants
 (for example the call word, the plain-English zone recommendations and the lightning-line gauge A).
 
-## 7. To find out first (testing)
+## 7. The agreed card design: Yahoo-style list (owner, 2026-10-24), for the design session after testing
+Samples were shown and the owner approved the look. Only the description is recorded here (the sample pages use his real
+tickers, so they stay out of the public repo). This replaces the Day Board list and cards in section 6.
+- **Closed card (a row).** Ticker and company name, a small price chart, price, and a coloured change pill, as on Yahoo
+  Finance. The whole card is tinted by status: red ACT, green BUY, amber WATCH, blue CALM, with a coloured left edge. One call
+  word as a small tag (SELL SOME, SELL BELOW 0.33, WAIT, BUY MORE, HOLD), one plain reason line, and an alerts bell in the
+  corner (filled = alerts on, outline = off). Where the call is WATCH only because a sell is waiting for the close, the tag says
+  what it waits for (section 5).
+- **Opened card (tap the row).** Header with the call, price and reason; the lightning-line gauge (version A: one tag, ends
+  "Weak" and "Strong"); "How sure": the count of agreeing checks, a bar, the six checks with ticks, and the real reason for any
+  skipped check (section 4); support and resistance zones with the plain-English recommendations instead of HIGH / MEDIUM / LOW
+  (section 3); the plan in two lines; the top news item with its tier; the bell for that stock.
+- **Below the list.** "Your top movers" (bars for the day's biggest moves among his stocks) and "Upcoming events", a calendar
+  by date (earnings and similar) where each event is tinted by status and has its own bell.
+- **Two themes.** Dark (matches the app) and light (like Yahoo). The owner can switch between them and wants to be able to
+  change the look as he likes, so keep colours as named variables in one place and let him choose the theme, and later which
+  lines show on the closed card and how the list is sorted. The choice is kept per device, no keys or accounts.
+- **Kept rules.** One answer per card (no conflicting words), missing data shown as unknown with the reason, plain English, short
+  labels, tappable links, phone width (390 px) first, tint plus the call word so colour is never the only signal.
+- **Order of work.** Test the current build first; then build the list and closed card, the opened card, then movers and
+  events, then the theme switch. Display only: no change to scoring, calls, stops or alerts.
+
+## 8. To find out first (testing)
 - How often the checks disagree with the call, and on which stocks.
 - Whether the graded zones (HIGH, MEDIUM, LOW) predict reactions better than the automatic CIS levels.
 - Which of the first live news and TradingView or Stooq reads fail, and why.
