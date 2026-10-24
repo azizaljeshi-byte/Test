@@ -1164,15 +1164,12 @@ def trade_plan(plan: dict, sizing: dict | None, risk_pct: float, portfolio_value
                      + (" — capped by the tier's maximum position size" if sizing["capped"] else "") + ".</p>")
     notes = "".join(f"<p class='note'>⚠ {escape(n)}</p>" for n in plan.get("notes", []))
     hist_html = history_check(plan.get("history")) if not exit_only else ""
-    fwd = plan.get("forward") or []
-    fwd_html = (f'<div class="lab" style="margin-top:.7rem">WHERE THE COMPANY IS HEADING</div>'
-                f'<p style="margin-top:.25rem">{escape(" ".join(fwd))}</p>') if fwd else ""
     exits = "".join(f"<li>{escape(e)}</li>" for e in plan["exits"])
     return (f'<div class="mc-tp"><div class="hd"><div><div class="lab">TRADE PLAN</div>'
             f'<div class="stance" style="color:{color}">{escape(plan["stance"])}</div></div>'
             f'<span class="mc-chip" style="--c:{bias_color}">{bias}</span></div>'
             f'{_ladder(plan)}<div class="mc-kv" style="margin-top:.2rem">{grid}</div>'
-            f'<p>{escape(plan["outlook"])}</p>{fwd_html}{hist_html}{notes}{size_html}'
+            f'<p>{escape(plan["outlook"])}</p>{hist_html}{notes}{size_html}'
             f'<div class="lab" style="margin-top:.7rem">{"WHAT WOULD CHANGE THE PLAN" if plan["stance"] == "NO TRADE" else "WHEN TO SELL"}</div><ol>{exits}</ol>'
             f'<div class="fine">Rule-based levels from price structure and volatility, not a forecast or financial advice. '
             f'Check them against the chart before placing an order.</div></div>')
@@ -1202,11 +1199,41 @@ def history_check(h: dict | None) -> str:
             + f'<p style="font-size:.8rem;color:var(--soft);margin-top:.35rem">{escape(detail)}</p>')
 
 
+OUTLOOK_CSS = """
+.ol-k{font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;color:var(--dz-muted,#8b95a7);margin:16px 0 4px}
+.ol-ln{display:grid;grid-template-columns:40px 1fr 42px 44px;gap:8px;align-items:center;margin-top:8px;font-size:.78rem;color:var(--dz-soft,#aab3c3)}
+.ol-ln b{text-align:right}.ol-ln small{text-align:right;color:var(--dz-muted,#8b95a7)}.ol-ln .up{color:var(--dz-buy,#3fd08d)}.ol-ln .dn{color:var(--dz-act,#ff7b78)}
+.ol-lane{position:relative;height:14px;border-radius:7px;background:var(--dz-line,#243041)}.ol-lane i{position:absolute;top:0;bottom:0;border-radius:7px}
+.ol-lane .good{background:var(--dz-buy,#3fd08d)}.ol-lane .bad{background:var(--dz-act,#ff7b78)}
+.ol-lane u{position:absolute;left:50%;top:-3px;bottom:-3px;width:2px;background:var(--dz-ink,#e9eef5)}
+.ol-chance{display:flex;align-items:center;gap:12px;margin-top:12px;font-size:.8rem;color:var(--dz-soft,#aab3c3)}
+.ol-ring{width:56px;height:56px;border-radius:50%;display:grid;place-items:center;flex:none;background:conic-gradient(var(--dz-buy,#3fd08d) calc(var(--p)*1%),var(--dz-line,#243041) 0)}
+.ol-ring b{width:42px;height:42px;border-radius:50%;background:var(--dz-surface,#121a25);display:grid;place-items:center;font-size:.82rem}
+.ol-eps{display:flex;gap:34px;align-items:flex-end;margin-top:8px;padding-left:8px}.ol-eps div{text-align:center}
+.ol-eps i{display:block;width:44px;border-radius:7px 7px 0 0;margin:0 auto 4px;background:var(--dz-buy,#3fd08d)}.ol-eps i.neg{background:var(--dz-act,#ff7b78)}
+.ol-eps b{display:block}.ol-eps em{font-size:.7rem;color:var(--dz-muted,#8b95a7);font-style:normal}
+.ol-note{display:flex;gap:10px;align-items:center;margin-top:10px;font-size:.82rem;padding:8px 10px;border-radius:10px;
+  background:color-mix(in srgb,var(--dz-calm,#8da2d6) 10%,var(--dz-surface,#121a25));border-left:3px solid var(--dz-calm,#8da2d6)}
+.ol-note i{display:grid;place-items:center;width:18px;height:18px;border-radius:5px;background:var(--dz-calm,#8da2d6);color:#0b1118;font:800 .66rem system-ui;font-style:normal;flex:none}
+.ol-more{margin-top:14px;border-top:1px solid var(--dz-line,#243041);padding-top:10px}
+.ol-more summary{cursor:pointer;font-size:.8rem;font-weight:600;color:var(--dz-calm,#8da2d6)}
+"""
+
+
+def _lane(label: str, value: float, price: float) -> str:
+    chg = value / price - 1
+    w = min(abs(chg), 0.6) / 0.6 * 50
+    return (f'<div class="ol-ln"><span>{label}</span><div class="ol-lane"><i class="{"good" if chg >= 0 else "bad"}" '
+            f'style="left:{50 if chg >= 0 else 50 - w:.1f}%;width:{w:.1f}%"></i><u></u></div>'
+            f'<b class="{"up" if chg >= 0 else "dn"}">{chg * 100:+.0f}%</b><small>${value:,.0f}</small></div>')
+
+
 def outlook(st: dict, price: float) -> str:
-    """Street view, forward estimates, 3-12 month scenarios and the earnings setup."""
+    """Street view, drawn: the rating bar, where analysts see the price, the 12-month bear, base and bull as lanes, the chance
+    it is higher and EPS growth. The full tables sit behind "More numbers"; nothing is dropped."""
     if not st:
         return ""
-    out = ['<div class="mc-tp">']
+    out = [f'<style>{OUTLOOK_CSS}</style><div class="mc-tp">']
     c = st.get("consensus")
     if c:
         out.append(f'<div class="lab">STREET VIEW · {c["analysts"]} ANALYSTS</div>'
@@ -1217,17 +1244,37 @@ def outlook(st: dict, price: float) -> str:
                        f'{"More bullish" if c["change_3m"] < 0 else "More cautious"} than three months ago.</p>')
     tg = st.get("targets") or {}
     if all(tg.get(k) for k in ("low", "median", "high")):
-        out.append('<div class="lab" style="margin-top:.8rem">PRICE TARGETS (12 MONTHS)</div>'
+        out.append('<div class="ol-k">Where analysts see the price in 12 months</div>'
                    + fair_value_bar({"low": tg["low"], "mid": tg["median"], "high": tg["high"]}, price)
                    .replace("fair ", "median "))
+    sc = st.get("scenarios") or []
+    year = next((x for x in sc if x["months"] == 12), sc[-1] if sc else None)
+    if year and price and all(not nan(year.get(k)) for k in ("bear", "base", "bull")):
+        out.append(f'<div class="ol-k">What the next {year["months"]} months could look like</div>'
+                   + _lane("Bear", year["bear"], price) + _lane("Base", year["base"], price) + _lane("Bull", year["bull"], price))
+        if not nan(year.get("p_up")):
+            out.append(f'<div class="ol-chance"><div class="ol-ring" style="--p:{year["p_up"] * 100:.0f}"><b>{year["p_up"]:.0%}</b></div>'
+                       f'<span>chance it is higher in {year["months"]} months</span></div>')
     g = st.get("growth") or {}
+    eps = [(lab, (g.get(k) or {}).get("eps")) for k, lab in (("0y", "this year"), ("+1y", "next year"))]
+    eps = [(lab, v) for lab, v in eps if v is not None and not nan(v)]
+    if eps:
+        top = max(abs(v) for _, v in eps) or 1
+        bars = "".join(f'<div><i class="{"neg" if v < 0 else ""}" style="height:{max(abs(v) / top * 56, 6):.0f}px"></i>'
+                       f'<b style="color:{OPP if v >= 0 else RISK}">{v * 100:+.0f}%</b><em>{lab}</em></div>' for lab, v in eps)
+        out.append(f'<div class="ol-k">Profit growth expected (EPS)</div><div class="ol-eps">{bars}</div>')
+    r = st.get("revisions") or {}
+    if r.get("eps_30d") is not None and not nan(r["eps_30d"]) and abs(r["eps_30d"]) >= 0.001:
+        out.append(f'<div class="ol-note"><i>i</i>Analysts {"raised" if r["eps_30d"] > 0 else "cut"} their estimates a little this month '
+                   f'({pct(r["eps_30d"], digits=1)}).</div>')
+    if st.get("implied_move_1m"):
+        out.append(f'<div class="ol-note"><i>i</i>The options market expects about ±{st["implied_move_1m"] * 100:.0f}% over the next month.</div>')
+    more = []
     names = {"0q": "This quarter", "+1q": "Next quarter", "0y": "This year", "+1y": "Next year"}
     rows = [[names.get(k, k), pct((v or {}).get("eps")), pct((v or {}).get("revenue")),
              str(int(v["analysts"])) if (v or {}).get("analysts") else "—"] for k, v in g.items()]
     if rows:
-        out.append('<div class="lab" style="margin-top:.4rem">EXPECTED GROWTH</div>'
-                   + table(["Period", "EPS growth", "Revenue growth", "Analysts"], rows))
-    r = st.get("revisions") or {}
+        more.append(table(["Period", "EPS growth", "Revenue growth", "Analysts"], rows))
     if r.get("eps_30d") is not None or r.get("up30") is not None:
         bits = []
         if r.get("eps_30d") is not None:
@@ -1236,20 +1283,17 @@ def outlook(st: dict, price: float) -> str:
             bits.append(f"{pct(r['eps_90d'], digits=1)} in 90 days")
         if r.get("up30") is not None:
             bits.append(f"{r['up30']} raised / {r.get('down30') or 0} cut this month")
-        out.append(f'<p style="font-size:.84rem"><b>Estimate revisions:</b> {escape(", ".join(bits))}.</p>')
-    sc = st.get("scenarios") or []
+        more.append(f'<p style="font-size:.84rem"><b>Estimate revisions:</b> {escape(", ".join(bits))}.</p>')
     if sc:
-        out.append('<div class="lab" style="margin-top:.6rem">WHERE IT COULD BE</div>'
-                   + table(["", "Bear", "Base", "Bull", "P(up)"],
-                           [[f"{x['months']}m", num(x["bear"]), num(x["base"]), num(x["bull"]), f"{x['p_up']:.0%}"]
-                            for x in sc])
-                   + f'<p style="font-size:.74rem;color:var(--muted)">Bear and bull are the 16th and 84th percentiles '
-                     f'using {escape(st.get("sigma_source") or "price history")} volatility '
-                     f'({(st.get("sigma") or 0) * 100:.0f}% a year). The base case blends the median target with a '
-                     f'market-average return, because targets tend to run optimistic.</p>')
-    if st.get("implied_move_1m"):
-        out.append(f'<p style="font-size:.84rem"><b>Options market:</b> expects about ±{st["implied_move_1m"] * 100:.0f}% '
-                   f'over the next month.</p>')
+        more.append(table(["", "Bear", "Base", "Bull", "Chance higher"],
+                          [[f"{x['months']}m", f"${x['bear']:,.2f}", f"${x['base']:,.2f}", f"${x['bull']:,.2f}", f"{x['p_up']:.0%}"]
+                           for x in sc])
+                    + f'<p style="font-size:.74rem;color:var(--muted)">Bear and bull are the 16th and 84th percentiles '
+                      f'using {escape(st.get("sigma_source") or "price history")} volatility '
+                      f'({(st.get("sigma") or 0) * 100:.0f}% a year). The base case blends the median target with a '
+                      f'market-average return, because targets tend to run optimistic.</p>')
+    if more:
+        out.append(f'<details class="ol-more"><summary>More numbers</summary>{"".join(more)}</details>')
     e = st.get("earnings_setup")
     if e:
         col = {"favourable": OPP, "unfavourable": RISK}.get(e["verdict"], INFO)

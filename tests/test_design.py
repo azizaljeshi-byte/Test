@@ -110,3 +110,29 @@ def test_two_threads_can_share_one_store_without_losing_rows(tmp_path):
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert not bad
+
+
+ST = {"consensus": {"label": "Buy", "analysts": 33, "buy": 29, "hold": 3, "sell": 1, "score": 1.7, "change_3m": None},
+      "targets": {"low": 86.0, "median": 127.5, "high": 144.0},
+      "growth": {"0q": {"eps": 0.53, "revenue": 0.12, "analysts": 23}, "0y": {"eps": 0.17, "revenue": 0.08, "analysts": 29},
+                 "+1y": {"eps": 0.08, "revenue": 0.04, "analysts": 25}},
+      "revisions": {"eps_30d": 0.002, "eps_90d": 0.017, "up30": 2, "down30": 4},
+      "scenarios": [{"months": 3, "bear": 96.06, "base": 115.27, "bull": 138.34, "p_up": 0.55},
+                    {"months": 12, "bear": 86.07, "base": 123.95, "bull": 178.5, "p_up": 0.6}],
+      "sigma": 0.36, "sigma_source": "options", "implied_move_1m": 0.08}
+
+
+def test_the_outlook_is_drawn_and_keeps_every_number_behind_more_numbers():
+    from stockwatch import ui
+    html = ui.outlook(ST, 112.52)
+    assert "ol-lane" in html and "-24%" in html and "+59%" in html and "60%" in html and "ol-eps" in html
+    assert "More numbers" in html and "$96.06" in html and "Next quarter" not in html and "This quarter" in html
+    assert "options market" in html
+
+
+def test_the_outlook_skips_what_it_cannot_draw_and_never_guesses():
+    from stockwatch import ui
+    html = ui.outlook({"consensus": ST["consensus"]}, 100.0)
+    assert "class=\"ol-lane\"" not in html and "class=\"ol-eps\"" not in html and "More numbers" not in html and "Buy" in html
+
+
