@@ -113,6 +113,11 @@ and dropped, so none of it is in the code.
   volume ratio, RSI, MACD, market and sector moves, the as-of date) are valued and stay in the redesign. They are not removed
   or folded away when the card gets shorter: they move onto the opened card as two "why" blocks in the new look, in plain
   English, and the closed card stays short. Any text trimming in the design session must not lose their reasons.
+- **Two levels, and a Details button (owner, 2026-10-24).** Tapping a card opens it in place (the summary and the two "why"
+  blocks). A "Details" button on the opened card goes to the full Details page for that stock (the tappable link
+  `?view=target&t=TICKER`), which shows everything: scores, the six sections (Overview, Key levels, Analysis & numbers,
+  Scenarios, Past reactions, What changes), the news with every source, and the history. The Details page gets the same look
+  and keeps all of its content; nothing there is removed in the redesign.
 - **News in the design.** Add the news the app already collects (`newsfeed.py`) to the new look: a news line with its tier tag
   (HOT, IMPORTANT, ROUTINE) and sources on the opened card, a "Critical news" strip at the top of Radar, and a marker on the
   dot map for a stock with HOT news. The Day Board never showed the news strip clearly, which is why it was hard to find.
