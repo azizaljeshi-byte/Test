@@ -156,3 +156,40 @@ def test_motion_respects_reduced_motion():
 def test_headline_counts_and_plurals():
     assert "1 needs you" in dayboard.headline(1, 1, 1) and "1 is close" in dayboard.headline(1, 1, 1)
     assert "3 need you" in dayboard.headline(3, 2, 0) and "0 are calm" in dayboard.headline(3, 2, 0)
+
+
+# ---- stage 1 fixes: say why a check was skipped, and a held sell reads as one answer
+
+def test_a_skipped_check_says_why(monkeypatch):
+    s = make("TRIM", "breakdown", pricecheck={"source": "Stooq", "unavailable": "Stooq could not be reached"},
+             second={"source": "TradingView", "unavailable": "TradingView could not be reached"})
+    texts = {c["text"] for c in dayboard.assess(s)["checks"]}
+    assert "Price data skipped: Stooq could not be reached" in texts
+    assert "TradingView: no read (TradingView could not be reached)" in texts
+    quiet = make("TRIM", "breakdown")                    # no price check was asked for
+    assert any("only asked for stocks that are falling" in c["text"] for c in dayboard.assess(quiet)["checks"])
+
+
+def _held(monkeypatch, trail=0.33):
+    s = make("TRIM", "breakdown", mom="falling", second={"source": "TradingView", "signal": "sell"},
+             pricecheck={"source": "Stooq", "agrees": True, "verdict": "matches", "note": "ok"}, rs=-0.15)
+    s["payload"]["technical"]["trailing_stop"] = trail
+    s["payload"]["signals"] = [{"kind": "risk", "severity": 3, "code": "atr_trailing_stop", "message": "below the stop"}]
+    monkeypatch.setattr(dayboard.ui, "reassess", lambda snap: "Up 3.2% in the last session. Re-check at the next close.")
+    return s
+
+
+def test_a_sell_waiting_for_the_close_is_scored_as_a_sell_and_names_its_level(monkeypatch):
+    s = _held(monkeypatch)
+    a = dayboard.assess(s)
+    assert a["word"] == "WATCH" and a["sell_side"] is True
+    assert dayboard.held_sell(s) == 0.33
+    assert a["sure"] is not None and a["sure"][0] >= 5          # the checks that point to selling now count as agreeing
+    assert "WATCH · SELL BELOW 0.33" in dayboard.card(s)
+
+
+def test_a_watch_that_is_not_a_held_sell_is_unchanged(monkeypatch):
+    s = make("HOLD", "testing_support", mom="falling")
+    assert dayboard.held_sell(s) is False
+    a = dayboard.assess(s)
+    assert a["sell_side"] is False and a["sure"] is None

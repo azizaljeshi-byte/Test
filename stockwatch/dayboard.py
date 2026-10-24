@@ -49,6 +49,17 @@ def word(snap: dict) -> str:
     return "WATCH" if r == 2 else "CALM"
 
 
+def held_sell(snap: dict) -> float | None | bool:
+    """A sell that is waiting for the close (`ui.reassess`): the trailing stop to watch, None when there is no level,
+    or False when no sell is being held."""
+    if not ui.reassess(snap):
+        return False
+    p = snap["payload"]
+    trail = (p.get("technical") or {}).get("trailing_stop")
+    tripped = not nan(trail) and any(x.get("code") == "atr_trailing_stop" for x in p.get("signals") or [])
+    return float(trail) if tripped else None
+
+
 def _structure(snap):
     ps = ui.price_status(snap)
     if not ps or ps["code"] == "unknown":
@@ -71,15 +82,19 @@ def _second(snap):
     if not sec:
         return None, "second opinion not asked (the stock is healthy)"
     if sec.get("unavailable") or not sec.get("signal"):
-        return None, f'{sec.get("source", "Second opinion")}: no read'
+        why = sec.get("unavailable")
+        return None, f'{sec.get("source", "Second opinion")}: no read' + (f" ({why})" if why else "")
     state = {"buy": BULL, "sell": BEAR}.get(sec["signal"], NEUTRAL)
     return state, f'{sec.get("source", "Second opinion")}: {sec["signal"].upper()}'
 
 
 def _data(snap):
-    pc = (ui.price_status(snap) or {}).get("pricecheck")
-    if not pc or pc.get("unavailable"):
-        return None, "price data not re-checked"
+    ps = ui.price_status(snap) or {}
+    pc = ps.get("pricecheck")
+    if not pc:
+        return None, "price data not re-checked here (only asked for stocks that are falling)"
+    if pc.get("unavailable"):
+        return None, f'price data skipped: {pc["unavailable"]}'
     return ("ok" if pc.get("agrees") else "bad"), f'Price data: {pc["verdict"]} with {pc["source"]}'
 
 
@@ -117,7 +132,8 @@ def assess(snap: dict) -> dict:
     w = word(snap)
     cs = checks(snap)
     directional = [c["state"] for c in cs if c["state"] in (BULL, NEUTRAL, BEAR)]
-    out = {"word": w, "checks": cs, "score": None, "gauge": None, "gauge_label": None, "sure": None, "grade": None, "why": None,
+    sell_side = w == "ACT" or (w == "WATCH" and held_sell(snap) is not False)
+    out = {"word": w, "sell_side": sell_side, "checks": cs, "score": None, "gauge": None, "gauge_label": None, "sure": None, "grade": None, "why": None,
            "change": _change(snap, w)}
     if w == "UNCLEAR":
         out["why"] = snap["payload"].get("error") or "no usable signal"
@@ -127,11 +143,11 @@ def assess(snap: dict) -> dict:
         return out
     s = sum(directional) / len(directional)
     step = 0 if s <= -0.6 else 1 if s <= -0.2 else 2 if s < 0.2 else 3 if s < 0.6 else 4
-    if (w == "ACT" and step >= 3) or (w == "BUY" and step <= 1):
+    if (sell_side and step >= 3) or (w == "BUY" and step <= 1):
         out["why"] = "the checks point the other way from the call"
         return out
     out["gauge"], out["gauge_label"], out["score"] = step, STEPS[step], round(s, 3)
-    want = BEAR if w == "ACT" else BULL if w == "BUY" else None
+    want = BEAR if sell_side else BULL if w == "BUY" else None
     if want is not None:
         known = [c for c in cs if c["state"] is not None]
         agree = sum(1 for c in known if c["state"] == want or c["state"] == "ok")
@@ -184,7 +200,7 @@ def _checks_html(a: dict) -> str:
         dots = "".join(f'<i class="{"y" if i < n else "n"}"></i>' for i in range(k))
         head = (f'<div class="cf-h"><span>HOW SURE ARE WE THIS IS THE RIGHT MOVE</span><b>{a["grade"]} · {n} of {k} agree</b></div>'
                 f'<div class="dots">{dots}</div>')
-    want = BEAR if a["word"] == "ACT" else BULL
+    want = BEAR if a.get("sell_side") else BULL
     rows = "".join(
         f'<li class="{"y" if (c["state"] == want or c["state"] == "ok") and a["sure"] else "n"}">{escape(c["text"])}</li>'
         for c in a["checks"])
@@ -224,6 +240,9 @@ def _head(snap: dict, a: dict, was: str | None, big: bool) -> str:
         badge = f'<span class="badge">{a["sure"][0]}/{a["sure"][1]} sure</span>'
     new = f'<span class="badge">● NEW · was {escape(was.lower())}</span>' if was else ""
     word_txt = label + (f" · {call}" if call and call != label else "")
+    held = held_sell(snap) if a["word"] == "WATCH" else False
+    if held is not False:
+        word_txt = f"WATCH · SELL BELOW {held:.2f}" if held else "WATCH · SELL IF IT CLOSES WEAK"
     return (f'<div class="top"><div><div class="tk">{escape(snap["ticker"])}</div><div class="nm">{escape(name)} · {own}</div></div>'
             f'<div class="px"><b>{ui.num(price)}</b>{day_html}</div></div>'
             f'<span class="act">{escape(word_txt)}</span>{badge}{new}<p class="why">{escape(_why(snap))}</p>')
