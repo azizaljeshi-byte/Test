@@ -220,10 +220,12 @@ controls()
 # ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
 VIEWS = {"radar": "◉ Radar", "turbo": "⚡ Turbo", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log",
          "fleet": "+ Fleet", "research": "⚗ Research", "briefing": "☀ Briefing"}
+HIDDEN_VIEWS = ("fleet", "research")          # off the tab bar for now (owner); both still open at ?view=fleet and ?view=research
+SHOWN_VIEWS = [v for v in VIEWS if v not in HIDDEN_VIEWS]
 current = st.query_params.get("view", "radar")
 current = current if current in VIEWS else "radar"
-picked = st.segmented_control("View", list(VIEWS), format_func=VIEWS.get, default=current,
-                              label_visibility="collapsed")
+picked = st.segmented_control("View", SHOWN_VIEWS, format_func=VIEWS.get,
+                              default=current if current in SHOWN_VIEWS else None, label_visibility="collapsed")
 view = picked or current
 if view != current:
     st.query_params["view"] = view
@@ -309,7 +311,7 @@ if view == "target":
     snap = extra if extra and ticker == wanted else next(s for s in snaps if s["ticker"] == ticker)
     if ticker not in tickers:
         st.caption("Not in your list. " + ("Add a row to your Google Sheet to track it." if base.sheet_url
-                                           else "Add it on the Fleet tab to track it."))
+                                           else "Add it on the [Fleet page](?view=fleet) to track it."))
     p = snap["payload"]
     t, f, ev = p["technical"], p["fundamental"], p.get("events") or {}
     st.markdown(ui.cards([snap]) + ui.status_note(snap) + ui.flow_note(snap) + ui.reassess_note(snap) + ui.wire_note(snap), unsafe_allow_html=True)
@@ -625,7 +627,7 @@ if view == "turbo":
                         f'</div></a>', unsafe_allow_html=True)
             if sym not in tickers:
                 st.caption("Not in your list. " + ("Add a row to your Google Sheet to track it." if base.sheet_url
-                                                   else "Use the Fleet tab to track it."))
+                                                   else "Use the [Fleet page](?view=fleet) to track it."))
     if st.session_state.get("turbo_recent"):
         st.caption("Recent: " + " · ".join(st.session_state.turbo_recent))
 
