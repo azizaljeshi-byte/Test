@@ -91,14 +91,14 @@ def test_render_groups_stocks_and_escapes_text():
     assert "?view=target&t=A" in html
 
 
-def test_zones_are_shown_with_grades_and_reasons_and_say_why_when_unknown():
+def test_zones_show_reasons_and_say_why_when_unknown():
     z = {"known": True, "close": 100.0, "as_of": "2026-10-22",
          "support": [{"low": 90.0, "high": 91.0, "grade": "HIGH", "touches": 4, "age_days": 10, "points": 5,
                       "reasons": ["4 touches", "200-day average"]}],
          "resistance": [{"low": 110.0, "high": 111.0, "grade": "LOW", "touches": 1, "age_days": 500, "points": 0,
                          "reasons": ["1 touch", "17 months old"]}]}
     html = dayboard.zones_html(make("HOLD", "pullback", zones=z), 100.0)
-    assert "HIGH" in html and "200-day average" in html and "LOW" in html and "17 months old" in html
+    assert "200-day average" in html and "17 months old" in html and "Weak: the price may pass through" in html
     unk = dayboard.zones_html(make("HOLD", "pullback", zones={"known": False, "why": "Only 50 daily bars", "support": [], "resistance": []}), 100.0)
     assert "No read" in unk and "Only 50 daily bars" in unk
 
@@ -107,7 +107,7 @@ def test_old_names_are_not_replaced_underneath():
     assert status.EXIT_ON_BREAKDOWN is False       # the board only re-presents; the ladder and calls are untouched
 
 
-# ---- the gauge board
+# ---- the card list and the map
 
 def board_set():
     bad = make("TRIM", "breakdown", mom="falling", second={"source": "TradingView", "signal": "sell"}, rs=-0.15)
@@ -116,41 +116,50 @@ def board_set():
     return [bad, good]
 
 
-def test_every_stock_sits_under_one_step_and_is_tappable():
-    html = dayboard.board(board_set())
-    assert html.count('class="gchip') == 2
-    assert "BADX" in html and "GOODX" in html and 'for="dbp-BADX"' in html and 'id="dbp-GOODX"' in html
-    assert 'href="?view=target&t=BADX"' in html and "checked" not in html.replace(":checked", "")
+def test_every_stock_has_a_tinted_row_and_a_dot_that_jumps_to_it():
+    html = dayboard.render(board_set())
+    assert html.count('class="rd-row') == 2
+    assert 'id="c-BADX"' in html and 'href="#c-GOODX"' in html and 'href="?view=target&t=BADX"' in html
+    assert "dz-act" in html and "dz-calm" in html
 
 
-def test_the_dial_reads_the_owned_holdings():
-    third = make("HOLD", "pullback", mom="building", rs=0.0)
-    third["ticker"] = "MIDX"
-    watch = make("HOLD", "strong_uptrend", mom="strong", rs=0.3, held=False)
-    watch["ticker"] = "WATCHX"
-    items = [(s, dayboard.assess(s)) for s in board_set() + [third, watch]]
-    mean, read = dayboard.portfolio_read(items)
-    assert mean is not None and read in dayboard.STEPS
-    own_only = [(s, a) for s, a in items if not s["payload"]["watchlist"]]
-    assert dayboard.portfolio_read(own_only) == (mean, read)           # a watchlist name never moves the needle
-
-
-def test_too_few_readable_stocks_says_unclear_and_draws_no_needle():
-    e = ev("HOLD", "HOLD")
-    e.technical = {}
-    html = dayboard.board([snap_of(e)])
-    assert "UNCLEAR" in html and "gneedle" not in html
-
-
-def test_the_unclear_row_lists_stocks_with_no_gauge():
+def test_the_map_places_a_stock_by_its_gauge_and_counts_the_ones_it_cannot_place():
     broken = make("HOLD")
     broken["payload"]["error"] = "boom"
-    html = dayboard.board([broken] + board_set())
-    assert "UNCLEAR · 1" in html
+    html = dayboard.dot_map([broken] + board_set())
+    assert html.count('class="rd-dot') == 2 and "1 not placed" in html
 
 
-def test_motion_respects_reduced_motion():
-    assert "prefers-reduced-motion" in dayboard.CSS
+def test_the_map_names_are_off_until_a_filter_is_picked():
+    css = dayboard.CSS
+    assert "#rdf-act:checked~.rd-scroll .rd-dot.dz-act span{display:block}" in css or "#rdf-act:checked~.rd-scroll .rd-dot.dz-act span" in css
+    assert ".rd-dot span{display:none" in css and "prefers-reduced-motion" in css
+
+
+def test_the_card_shows_ratings_and_plain_english_zones_without_the_old_grades():
+    z = {"known": True, "close": 100.0, "as_of": "2026-10-22",
+         "support": [{"low": 90.0, "high": 91.0, "grade": "HIGH", "touches": 4, "age_days": 10, "points": 5, "reasons": ["4 touches"]}],
+         "resistance": []}
+    html = dayboard.card(make("HOLD", "pullback", zones=z))
+    assert "Fundamentals" in html and "Technical" in html and "Likely to hold: a good place to buy" in html
+    assert ">HIGH<" not in html and ">LOW<" not in html
+
+
+def test_last_quarter_is_beat_miss_or_in_line_and_unknown_says_nothing():
+    s = make("HOLD", "pullback")
+    def q(act, est):
+        s["payload"]["research"] = {"earnings": {"quarters": [{"quarter": "2026-09-30", "eps_actual": act, "eps_estimate": est}]}}
+        return dayboard.last_quarter(s)
+    assert "BEAT" in q(1.10, 1.00) and "MISS" in q(0.90, 1.00) and "IN LINE" in q(1.01, 1.00)
+    assert q(None, 1.0) == "" and q(1.0, 0) == ""
+
+
+def test_the_next_report_line_says_when_the_date_is_an_estimate():
+    s = make("HOLD", "pullback")
+    s["payload"]["events"] = {"days_to_earnings": 9, "earnings_estimated": True}
+    assert "in 9 days" in dayboard.next_report(s) and "estimated" in dayboard.next_report(s)
+    s["payload"]["events"] = {}
+    assert dayboard.next_report(s) == ""
 
 
 def test_headline_counts_and_plurals():

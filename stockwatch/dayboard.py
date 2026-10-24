@@ -1,5 +1,5 @@
-"""The Radar page as a day board: one word and colour per stock, a good/bad gauge, and how many independent checks
-agree with the call. Display only: it reads the call, status, momentum and second opinions already on each snapshot and
+"""The Radar page as a list of tinted cards (red act, green buy, amber watch, blue calm) and a dot map: one word and
+colour per stock, a good/bad gauge, and how many independent checks agree with the call. Display only: it reads the call, status, momentum and second opinions already on each snapshot and
 changes none of them.
 
 Words (from `ui.ring` and the plan's call, never a new rule):
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from html import escape
 
-from . import ui
+from . import design, ui
 from .ui import nan
 
 WORDS = {"ACT": ("ACT", "#ff7a7a", "risk"), "BUY": ("BUY", "#7be3a8", "buy"), "WATCH": ("WATCH", "#ffc267", "warn"),
@@ -182,36 +182,28 @@ def _why(snap: dict) -> str:
     return top["message"] if top else "nothing to do"
 
 
-def gauge_html(a: dict, mini: bool = False) -> str:
-    if a["gauge"] is None:
-        bars = "".join('<i style="background:#555;opacity:.5"></i>' for _ in range(5))
-        note = "" if mini else f'<div class="lab"><b>UNCLEAR</b><span>{escape(a["why"] or "")}</span></div>'
-        return f'<div class="gauge{" mini" if mini else ""}"><div class="bar">{bars}</div>{note}</div>'
-    lab = "" if mini else f'<div class="lab"><span>Bad</span><b>{a["gauge_label"]}</b><span>Strong</span></div>'
-    return (f'<div class="gauge{" mini" if mini else ""}"><div class="bar"><i></i><i></i><i></i><i></i><i></i>'
-            f'<span class="needle" style="left:{NEEDLE[a["gauge"]]}%"></span></div>{lab}</div>')
+SPOT = {"ACT": "act", "BUY": "buy", "WATCH": "watch", "CALM": "calm", "UNCLEAR": "calm"}
+EDGE_WORDS = {"ACT": "Act", "BUY": "Buy", "WATCH": "Watch", "CALM": "Calm", "UNCLEAR": "No read"}
+BEAT_BAND = 0.02          # draft: within 2% of the estimate is "in line" (docs/TIGHTENING.md section 10)
 
 
-def _checks_html(a: dict) -> str:
+def _sure_html(a: dict) -> str:
+    """How sure: one dot per check that could be read; filled when it agrees with the call."""
     known = [c for c in a["checks"] if c["state"] is not None]
+    if not known:
+        return ""
+    want = BEAR if a.get("sell_side") else BULL
     head = ""
     if a["sure"]:
         n, k = a["sure"]
         dots = "".join(f'<i class="{"y" if i < n else "n"}"></i>' for i in range(k))
-        head = (f'<div class="cf-h"><span>HOW SURE ARE WE THIS IS THE RIGHT MOVE</span><b>{a["grade"]} · {n} of {k} agree</b></div>'
-                f'<div class="dots">{dots}</div>')
-    want = BEAR if a.get("sell_side") else BULL
+        head = (f'<div class="rd-h"><span>How sure are we this is the right move</span><b>{n} of {k} agree</b></div>'
+                f'<div class="rd-dots">{dots}</div>')
     rows = "".join(
         f'<li class="{"y" if (c["state"] == want or c["state"] == "ok") and a["sure"] else "n"}">{escape(c["text"])}</li>'
         for c in a["checks"])
-    chg = f'<p class="chg">Would change if {escape(a["change"])}</p>' if a["change"] else ""
-    return f'<div class="conf">{head}<ul class="chk">{rows}</ul>{chg}</div>' if known else ""
-
-
-def _zone(z: dict, kind: str) -> str:
-    return (f'<div class="z {kind}"><span class="nm2">{"Support" if kind == "sup" else "Resistance"}</span>'
-            f'<b>${z["low"]:.2f}' + (f' – {z["high"]:.2f}' if z["high"] != z["low"] else "") + '</b>'
-            f'<em class="g {z["grade"][0].lower()}">{z["grade"]}</em><small>{escape(" · ".join(z["reasons"]))}</small></div>')
+    chg = f'<p class="rd-chg">Would change if {escape(a["change"])}</p>' if a["change"] else ""
+    return f'<div class="rd-box">{head}<ul class="rd-chk">{rows}</ul>{chg}</div>'
 
 
 def zones_html(snap: dict, price) -> str:
@@ -219,33 +211,71 @@ def zones_html(snap: dict, price) -> str:
     if not isinstance(z, dict):
         return ""
     if not z.get("known"):
-        return f'<div class="h5">SUPPORT &amp; RESISTANCE ZONES</div><div class="zn">No read. {escape(z.get("why") or "")}</div>'
+        return f'<div class="rd-h"><span>Where it may stop or turn</span></div><div class="rd-note">No read. {escape(z.get("why") or "")}</div>'
     if not (z["support"] or z["resistance"]):
         return ""
-    now = f'<div class="now"><span>Price now {ui.num(price)}</span></div>' if not nan(price) else ""
-    body = ("".join(_zone(x, "res") for x in reversed(z["resistance"])) + now + "".join(_zone(x, "sup") for x in z["support"]))
-    return f'<div class="h5">SUPPORT &amp; RESISTANCE ZONES</div><div class="ladder">{body}</div>'
+    now = (f'<div class="rd-now"><span>Price now {ui.num(price)}</span></div>' if not nan(price) else "")
+    rows = "".join(design.zone_row("resistance", x["low"], x["high"], x["grade"], x["reasons"]) for x in reversed(z["resistance"]))
+    rows += now + "".join(design.zone_row("support", x["low"], x["high"], x["grade"], x["reasons"]) for x in z["support"])
+    return f'<div class="rd-h"><span>Where it may stop or turn</span></div>{rows}'
 
 
-def _head(snap: dict, a: dict, was: str | None, big: bool) -> str:
-    label, color, cls = WORDS[a["word"]]
-    price, day_html = ui._price(snap)
+def day_move(snap: dict):
+    """Today's move as a fraction (live during regular hours), or None when unknown."""
     p = snap["payload"]
-    name = (p.get("profile") or {}).get("name") or p.get("name") or ""
-    name = "" if name.upper() == snap["ticker"] else name
-    own = "owned" if not p["watchlist"] else "watching"
-    call = ui.action(snap)[0] if a["word"] in ("ACT", "BUY") else ""
-    badge = ""
-    if a["sure"]:
-        badge = f'<span class="badge">{a["sure"][0]}/{a["sure"][1]} sure</span>'
-    new = f'<span class="badge">● NEW · was {escape(was.lower())}</span>' if was else ""
-    word_txt = label + (f" · {call}" if call and call != label else "")
+    q = p.get("quote") or {}
+    day = (p.get("technical") or {}).get("day_change")
+    if q.get("market_state") == "REGULAR" and not nan(q.get("live_change")):
+        day = q["live_change"]
+    return None if nan(day) else float(day)
+
+
+def last_quarter(snap: dict) -> str:
+    """BEAT, MISS or IN LINE for the last reported quarter, from the EPS actual and estimate already on the snapshot."""
+    rows = ((snap["payload"].get("research") or {}).get("earnings") or {}).get("quarters") or []
+    for r in rows[:1]:
+        act, est = r.get("eps_actual"), r.get("eps_estimate")
+        if act is None or est is None or est == 0:
+            return ""
+        sur = (act - est) / abs(est)
+        res = "BEAT" if sur > BEAT_BAND else "MISS" if sur < -BEAT_BAND else "IN LINE"
+        return design.result_line(res, f"EPS {act:.2f} vs {est:.2f} expected ({sur:+.0%})", str(r.get("quarter") or "")[:10])
+    return ""
+
+
+def next_report(snap: dict) -> str:
+    ev = (snap["payload"].get("events") or {})
+    d = ev.get("days_to_earnings")
+    if d is None:
+        return ""
+    when = f"in {d} day{'s' if d != 1 else ''}"
+    return design.next_line("Next report" + (" (estimated date)" if ev.get("earnings_estimated") else ""), when)
+
+
+def top_story(snap: dict) -> str:
+    w = ui.wire_of(snap)
+    stories = [x for x in (w or {}).get("stories") or [] if x.get("tier", 1) >= 2]
+    if not stories:
+        return ""
+    x = max(stories, key=lambda t: t.get("rank", 0))
+    tier = {3: "HOT", 2: "IMPORTANT"}.get(x["tier"], "ROUTINE")
+    return design.news_line(tier, x["title"], ui._age(x["published"]), " · ".join(x.get("sources") or []))
+
+
+def _words(snap: dict, a: dict) -> str:
+    """The text on the call tag: the call, or the held-sell wording for a watch that is waiting for the close."""
+    label = WORDS[a["word"]][0]
     held = held_sell(snap) if a["word"] == "WATCH" else False
     if held is not False:
-        word_txt = f"WATCH · SELL BELOW {held:.2f}" if held else "WATCH · SELL IF IT CLOSES WEAK"
-    return (f'<div class="top"><div><div class="tk">{escape(snap["ticker"])}</div><div class="nm">{escape(name)} · {own}</div></div>'
-            f'<div class="px"><b>{ui.num(price)}</b>{day_html}</div></div>'
-            f'<span class="act">{escape(word_txt)}</span>{badge}{new}<p class="why">{escape(_why(snap))}</p>')
+        return f"WATCH · SELL BELOW {held:.2f}" if held else "WATCH · SELL IF IT CLOSES WEAK"
+    call = ui.action(snap)[0] if a["word"] in ("ACT", "BUY") else ""
+    return label + (f" · {call}" if call and call != label else "")
+
+
+def _ratings(snap: dict, a: dict) -> str:
+    fund = design.fundamentals_rating(snap.get("fundamental_score"))
+    tech = design.technical_rating(a["gauge"])
+    return design.rating("Fundamentals", fund) + design.rating("Technical", tech)
 
 
 def _open(snap: dict, a: dict) -> str:
@@ -257,35 +287,111 @@ def _open(snap: dict, a: dict) -> str:
     except (KeyError, TypeError, ValueError):       # a plan from an older snapshot: leave the line off, never break the page
         plan = ""
     flow = ui.flow_line(snap)
-    parts = [_checks_html(a), zones_html(snap, price)]
+    parts = [f'<div class="rd-rates">{_ratings(snap, a)}</div>',
+             design.gauge_line(a["gauge"], a["gauge_label"] if a["gauge"] is not None else (a["why"] or "No read")),
+             _sure_html(a), zones_html(snap, price)]
     if plan:
-        parts.append(f'<div class="h5">PLAN</div><div class="zn">{escape(plan)}</div>')
+        parts.append(f'<div class="rd-h"><span>Plan</span></div><div class="rd-note">{escape(plan)}</div>')
     if flow:
-        parts.append(f'<div class="h5">FLOW</div><div class="zn">{escape(flow)}</div>')
-    return (f'<div class="open">{"".join(parts)}<div class="foot"><span class="close">▲ Close</span>'
-            f'<a class="go" href="?view=target&t={escape(snap["ticker"])}" target="_self">Open full details →</a></div></div>')
+        parts.append(f'<div class="rd-h"><span>Flow</span></div><div class="rd-note">{escape(flow)}</div>')
+    parts.append(f'<a class="rd-go" href="?view=target&t={escape(snap["ticker"])}" target="_self">Details →</a>')
+    return f'<div class="rd-open">{"".join(parts)}</div>'
 
 
-def card(snap: dict, was: str | None = None, kind: str = "big") -> str:
+def card(snap: dict, was: str | None = None) -> str:
+    """One tinted row. Tap to open it; the Details button goes to the full page."""
     a = assess(snap)
-    _, _, cls = WORDS[a["word"]]
-    if kind == "tile":
-        price, day_html = ui._price(snap)
-        label = WORDS[a["word"]][0]
-        head = (f'<span class="w">{label}</span><div class="tk">{escape(snap["ticker"])}</div>'
-                f'<div class="p">{ui.num(price)}{day_html}</div><div class="t">{escape(_why(snap))}</div>{gauge_html(a, True)}')
-        return f'<details class="mid {cls}"><summary>{head}</summary>{_open(snap, a)}</details>'
-    return (f'<details class="big {cls}"><summary>{_head(snap, a, was, True)}{gauge_html(a)}'
-            f'<div class="more"><span>Tap for the full picture</span><span>▾</span></div></summary>{_open(snap, a)}</details>')
-
-
-def chip(snap: dict) -> str:
+    cls = SPOT[a["word"]]
     price, _ = ui._price(snap)
-    day = (snap["payload"].get("technical") or {}).get("day_change")
-    mv = "" if nan(day) else f'<span>{day:+.1%}</span>'.replace("-", "−")
-    own = "" if snap["payload"]["watchlist"] else '<i class="own"></i>'
-    return (f'<a class="chip" href="?view=target&t={escape(snap["ticker"])}" target="_self">{own}'
-            f'<b>{escape(snap["ticker"])}</b>{mv}</a>')
+    p = snap["payload"]
+    name = (p.get("profile") or {}).get("name") or p.get("name") or ""
+    name = "" if name.upper() == snap["ticker"] else name
+    own = "owned" if not p["watchlist"] else "watching"
+    sure = f'<span class="rd-sure">{a["sure"][0]}/{a["sure"][1]} sure</span>' if a["sure"] else ""
+    new = f'<span class="rd-sure">● new · was {escape(was.lower())}</span>' if was else ""
+    tag = f'<span class="dz-call dz-{cls}">{escape(_words(snap, a))}</span>'
+    lines = last_quarter(snap) + next_report(snap) + top_story(snap)
+    sid = _slug(snap["ticker"])
+    return (f'<details class="rd-row dz-{cls}" id="c-{sid}"><summary>'
+            f'<div class="rd-top"><div><b class="rd-tk">{escape(snap["ticker"])}</b><small>{escape(name)} · {own}</small></div>'
+            f'<div class="rd-px"><b>{ui.num(price)}</b>{design.change_pill(day_move(snap))}</div></div>'
+            f'<div class="rd-mid">{tag}{sure}{new}<span class="rd-bell">{design.bell(True)}</span></div>'
+            f'<p class="rd-why">{escape(_why(snap))}</p></summary>'
+            f'{_open(snap, a)}<div class="rd-lines">{lines}</div></details>')
+
+
+def _slug(t: str) -> str:
+    return "".join(ch if ch.isalnum() else "_" for ch in t)
+
+
+def movers(snaps: list[dict], n: int = 4) -> str:
+    """The biggest moves today, up or down, as tappable chips."""
+    rows = [(abs(m), m, s) for s in snaps if (m := day_move(s)) is not None]
+    rows.sort(key=lambda t: -t[0])
+    if not rows:
+        return ""
+    chips = "".join(f'<a class="rd-mv" href="?view=target&t={escape(s["ticker"])}" target="_self"><b>{escape(s["ticker"])}</b>'
+                    f'{design.change_pill(m)}</a>' for _, m, s in rows[:n])
+    return f'<div class="rd-h"><span>Top movers today</span></div><div class="rd-movers">{chips}</div>'
+
+
+def events_calendar(snaps: list[dict]) -> str:
+    """Upcoming earnings on your list, soonest first (only dates already on the snapshots)."""
+    rows = sorted(((s["payload"].get("events") or {}).get("days_to_earnings"), s) for s in snaps
+                  if (s["payload"].get("events") or {}).get("days_to_earnings") is not None)
+    rows = [(d, s) for d, s in rows if d >= 0][:5]
+    if not rows:
+        return ""
+    body = "".join(
+        f'<a class="rd-ev" href="?view=target&t={escape(s["ticker"])}" target="_self"><b>{escape(s["ticker"])}</b>'
+        f'<span>Reports earnings{" (estimated)" if s["payload"]["events"].get("earnings_estimated") else ""}</span>'
+        f'<small>{"today" if d == 0 else f"in {d} d"}</small></a>' for d, s in rows)
+    return f'<div class="rd-h"><span>Coming up</span></div><div class="rd-evs">{body}</div>'
+
+
+MAP_CAP = 6.0              # a move beyond +/-6% sits at the edge of the map
+
+
+def dot_map(snaps: list[dict]) -> str:
+    """Every stock as a dot. Left to right: how good it looks (Bad to Strong). Up and down: today's move. Bigger dot = needs
+    more attention, colour = the call. Names stay off until a filter (Act, Watch, Buy, Calm) is picked. Zoom with + and -
+    (hidden radios and CSS, no script). Stocks with no gauge reading are counted, not placed."""
+    placed, nogauge = [], 0
+    for s in snaps:
+        a = assess(s)
+        if a["score"] is None:
+            nogauge += 1
+            continue
+        mv = day_move(s)
+        placed.append((s, a, 0.0 if mv is None else mv * 100))
+    dots = []
+    for s, a, mv in placed:
+        cls = SPOT[a["word"]]
+        x = 4 + (a["score"] + 1) / 2 * 92
+        y = 50 - max(-MAP_CAP, min(MAP_CAP, mv)) / MAP_CAP * 44
+        size = {"act": 26, "buy": 26, "watch": 19, "calm": 13}[cls]
+        pulse = " dz-pulse rd-pulse" if cls in ("act", "buy") else ""
+        dots.append(f'<a class="rd-dot dz-{cls}{pulse}" href="#c-{_slug(s["ticker"])}" target="_self" '
+                    f'style="left:{x:.1f}%;top:{y:.1f}%;--sz:{size}px" title="{escape(s["ticker"])}: {EDGE_WORDS[a["word"]].lower()}">'
+                    f'<span>{escape(s["ticker"])}</span></a>')
+    filt = [("all", "All"), ("act", "Act"), ("watch", "Watch"), ("buy", "Buy"), ("calm", "Calm")]
+    radios = "".join(f'<input type="radio" name="rd-f" id="rdf-{k}" class="rd-r"{" checked" if k == "all" else ""}>' for k, _ in filt)
+    labels = "".join(f'<label for="rdf-{k}">{t}</label>' for k, t in filt)
+    zoom_r = "".join(f'<input type="radio" name="rd-z" id="rdz-{i}" class="rd-r"{" checked" if i == 1 else ""}>' for i in (1, 2, 3))
+    zoom_l = '<label for="rdz-3" class="rd-zin" title="Zoom in">+</label><label for="rdz-1" class="rd-zout" title="Zoom out">−</label>'
+    note = f'<div class="rd-note">{nogauge} not placed: not enough checks could be read.</div>' if nogauge else ""
+    return (f'<div class="rd-mapwrap">{radios}{zoom_r}<div class="rd-h"><span>Map of your list</span></div>'
+            f'<div class="rd-filters">{labels}<span class="rd-zoom">{zoom_l}</span></div>'
+            f'<div class="rd-scroll"><div class="rd-map"><i class="rd-axis"></i><b class="rd-l1">Bad</b><b class="rd-l2">Strong</b>'
+            f'<b class="rd-l3">Up today</b><b class="rd-l4">Down today</b>{"".join(dots)}</div></div>'
+            f'<div class="rd-note">Further right = looks better. Higher = up more today. Bigger dot = needs more attention. '
+            f'Tap a dot to jump to its card.</div>{note}</div>')
+
+
+def headline(n_need: int, n_close: int, n_calm: int) -> str:
+    return (f'<h1 class="rd-h1"><em class="dz-act">{n_need} need{"s" if n_need == 1 else ""} you</em>, '
+            f'<em class="dz-watch">{n_close} {"is" if n_close == 1 else "are"} close</em> '
+            f'and <em class="dz-calm">{n_calm} {"is" if n_calm == 1 else "are"} calm</em>.</h1>')
 
 
 def render(snaps: list[dict], changed: dict[str, str] | None = None, brief: str = "") -> str:
@@ -294,186 +400,85 @@ def render(snaps: list[dict], changed: dict[str, str] | None = None, brief: str 
     for s in sorted(snaps, key=ui._ring_sort):
         w = word(s)
         (need if w in ("ACT", "BUY") else calm if w == "CALM" else close).append(s)
-    parts = [f'<style>{CSS}</style><div class="db">', headline(len(need), len(close), len(calm)), board(sorted(snaps, key=ui._ring_sort))]
+    parts = [f'<style>{CSS}</style><div class="rd">', headline(len(need), len(close), len(calm)), movers(snaps)]
+    parts.append(dot_map(snaps))
     if brief:
-        parts.append(f'<details class="brief"><summary>Today\'s brief</summary>{brief}</details>')
-    if need:
-        parts.append(f'<div class="sec"><span class="dot" style="background:#ff7a7a"></span>Needs you today <small>{len(need)}</small></div>')
-        parts += [card(s, changed.get(s["ticker"])) for s in need]
-    if close:
-        parts.append(f'<div class="sec"><span class="dot" style="background:#ffc267"></span>Getting close <small>{len(close)}</small></div>')
-        parts.append('<div class="grid">' + "".join(card(s, changed.get(s["ticker"]), "tile") for s in close) + '</div>')
-    if calm:
-        parts.append(f'<div class="sec"><span class="dot" style="background:#8ab4ff"></span>All calm <small>{len(calm)} · nothing to do</small></div>')
-        parts.append('<div class="chips">' + "".join(chip(s) for s in calm) + '</div>')
+        parts.append(f'<details class="rd-brief"><summary>Today\'s brief</summary>{brief}</details>')
+    for title, group, cls in (("Needs you today", need, "act"), ("Getting close", close, "watch"), ("All calm", calm, "calm")):
+        if group:
+            parts.append(f'<div class="rd-sec"><i class="dz-{cls}"></i>{title} <small>{len(group)}</small></div>')
+            parts += [card(s, changed.get(s["ticker"])) for s in group]
     if not (need or close or calm):
-        parts.append('<div class="zn">No stocks with this status right now.</div>')
+        parts.append('<div class="rd-note">No stocks with this status right now.</div>')
+    parts.append(events_calendar(snaps))
     parts.append(KEY + "</div>")
     return "".join(parts)
 
 
-def _slug(t: str) -> str:
-    return "".join(ch if ch.isalnum() else "_" for ch in t)
-
-
-def _summary_panel(s: dict, a: dict, sid: str) -> tuple[str, str]:
-    """(css rule, html) for the quick-look panel under a map; shown when its radio is checked."""
-    label, color, _ = WORDS[a["word"]]
-    price, day_html = ui._price(s)
-    sure_txt = f' · {a["sure"][0]}/{a["sure"][1]} sure' if a["sure"] else ""
-    html = (f'<div class="pvc" id="dbc-{sid}" style="--c:{color}"><div class="top"><div><div class="tk">{escape(s["ticker"])}</div>'
-            f'<span class="act">{label}</span><span class="nm">{escape(a["gauge_label"] or "unclear")}{sure_txt}</span></div>'
-            f'<div class="px"><b>{ui.num(price)}</b>{day_html}</div></div><p class="why">{escape(_why(s))}</p>'
-            f'{gauge_html(a, True)}<div class="foot"><label for="dbp-none">✕ Close</label>'
-            f'<a class="go" href="?view=target&t={escape(s["ticker"])}" target="_self">Open full details →</a></div></div>')
-    rule = (f'#dbp-{sid}:checked~.pvs #dbc-{sid}{{display:block}}'
-            f'#dbp-{sid}:checked~.gboard [for=dbp-{sid}]{{z-index:5;filter:brightness(1.25);outline:2px solid #fff;outline-offset:2px}}')
-    return rule, html
-
-
-def _wrap(inner: str, rules: list[str], radios: list[str], panels: list[str]) -> str:
-    return (f'<div class="pulsewrap"><style>{"".join(rules)}</style>'
-            '<input type="radio" name="db-pv" id="dbp-none" class="pvr" aria-label="Close summary">' + "".join(radios) + inner +
-            f'<div class="pvs"><div class="hint">Tap one for a quick look.</div>{"".join(panels)}</div></div>')
-
-
-def portfolio_read(items: list[tuple[dict, dict]]) -> tuple[float | None, str]:
-    """Where the holdings stand: the average gauge score of the stocks you own (all stocks when none are owned)."""
-    own = [a["score"] for s, a in items if a["score"] is not None and not s["payload"]["watchlist"]]
-    sc = own or [a["score"] for s, a in items if a["score"] is not None]
-    if len(sc) < MIN_KNOWN:
-        return None, "UNCLEAR"
-    m = sum(sc) / len(sc)
-    step = 0 if m <= -0.6 else 1 if m <= -0.2 else 2 if m < 0.2 else 3 if m < 0.6 else 4
-    return m, STEPS[step]
-
-
-def board(snaps: list[dict]) -> str:
-    """The gauge board: the same needle gauge as each card, for the whole portfolio, with every stock sitting under the step
-    it reached. Big dial = your holdings overall; five columns = Bad, Weak, Neutral, Good, Strong; a chip's colour is its call
-    (red act, green buy, amber watch, blue calm), a pulsing edge means act or buy, a filled chip is owned. Tap a chip for
-    its summary under the board (hidden radios and CSS, no script)."""
-    items = [(s, assess(s)) for s in snaps]
-    mean, read = portfolio_read(items)
-    cols = {i: [] for i in range(5)}
-    unclear = []
-    for s, a in sorted(items, key=lambda i: (ui._ring_sort(i[0]))):
-        (cols[a["gauge"]] if a["gauge"] is not None else unclear).append((s, a))
-    chips_for = lambda group: "".join(_chip_bead(s, a) for s, a in group)
-    radios, rules, panels = [], [], []
-    for s, a in items:
-        sid = _slug(s["ticker"])
-        radios.append(f'<input type="radio" name="db-pv" id="dbp-{sid}" class="pvr" aria-label="Show {escape(s["ticker"])}">')
-        rule, html = _summary_panel(s, a, sid)
-        rules.append(rule)
-        panels.append(html)
-    color = {"BAD": "#ff7a7a", "WEAK": "#ffa566", "NEUTRAL": "#d6d2c4", "GOOD": "#a6e08a", "STRONG": "#4fd88f", "UNCLEAR": "#8d8a84"}[read]
-    ang = -90 + 90 * (1 + mean) if mean is not None else None
-    needle = f'<span class="gneedle" style="--to:{ang:.0f}deg"></span><span class="ghub"></span>' if ang is not None else ""
-    heads = "".join(f'<div class="gcol"><div class="gh">{STEPS[i].title()}<small>{len(cols[i])}</small></div>{chips_for(cols[i])}</div>' for i in range(5))
-    unk = (f'<div class="gunk"><span>UNCLEAR · {len(unclear)}</span>{chips_for(unclear)}</div>' if unclear else "")
-    inner = (f'<div class="gboard"><div class="gdial"><div class="garc"></div>{needle}'
-             f'<div class="gread" style="--c:{color}"><small>YOUR HOLDINGS</small><b>{read}</b></div></div>'
-             f'<div class="gcols">{heads}</div>{unk}</div>'
-             '<div class="pkey"><span>Needle: your holdings overall</span><span>Each chip sits under how its stock looks now</span>'
-             '<span><b class="k hot"></b>Pulsing: act or buy</span><span><b class="k own"></b>Filled: owned</span></div>')
-    return _wrap(inner, rules, radios, panels)
-
-
-def _chip_bead(s: dict, a: dict) -> str:
-    sid = _slug(s["ticker"])
-    label, color, cls = WORDS[a["word"]]
-    own = not s["payload"]["watchlist"]
-    return (f'<label class="gchip {cls}{" own" if own else ""}{" hot" if a["word"] in ("ACT", "BUY") else ""}" for="dbp-{sid}" '
-            f'style="--c:{color}" title="{escape(s["ticker"])}: {label.lower()}">{escape(s["ticker"])}</label>')
-
-
-def headline(n_need: int, n_close: int, n_calm: int) -> str:
-    return (f'<h1><em class="e1">{n_need} need{"s" if n_need == 1 else ""} you</em>, <em class="e2">{n_close} {"is" if n_close == 1 else "are"} close</em> '
-            f'and <em class="e3">{n_calm} {"is" if n_calm == 1 else "are"} calm</em>.</h1>')
-
-
-KEY = ('<div class="key"><b>Quick key</b>'
-       '<div><span class="w2" style="background:#ff7a7a">ACT</span>Do something now (sell or sell some)</div>'
-       '<div><span class="w2" style="background:#7be3a8">BUY</span>Buy or buy more, price in the entry zone</div>'
-       '<div><span class="w2" style="background:#ffc267">WATCH</span>Something is close. Not yet.</div>'
-       '<div><span class="w2" style="background:#8ab4ff">CALM</span>Nothing to do</div>'
-       '<div><span class="w2" style="background:#8d8a84">UNCLEAR</span>Not enough data, or the checks disagree</div>'
-       '<div class="soft">Needle: how good or bad it looks now. "5/6 sure": how many checks agree with the call. '
-       'Zone grades: HIGH = many reasons agree, MEDIUM = two, LOW = weak. Display only; it changes no call or alert.</div></div>')
+KEY = ('<div class="rd-key"><b>Quick key</b>'
+       '<div><span class="dz-call dz-act">ACT</span>Do something now (sell or sell some)</div>'
+       '<div><span class="dz-call dz-buy">BUY</span>Buy or buy more, price in the entry zone</div>'
+       '<div><span class="dz-call dz-watch">WATCH</span>Something is close. Not yet.</div>'
+       '<div><span class="dz-call dz-calm">CALM</span>Nothing to do</div>'
+       '<div class="rd-note">"5/6 sure": how many checks agree with the call. The line with the bolt: how good or bad the stock '
+       'looks now. Display only; it changes no call or alert.</div></div>')
 
 CSS = """
-.db .gboard{background:#12151d;border:1px solid var(--line);border-radius:22px;padding:14px 8px 10px}
-.db .gdial{position:relative;width:86%;margin:0 auto 3.3rem;aspect-ratio:2/1.08}
-.db .garc{position:absolute;left:0;right:0;top:0;bottom:8%;border-radius:999px 999px 0 0;overflow:hidden;
-  background:conic-gradient(from -90deg at 50% 100%,#ff6b6b 0 36deg,#ffa566 36deg 72deg,#d6d2c4 72deg 108deg,#a6e08a 108deg 144deg,#4fd88f 144deg 180deg,transparent 180deg);
-  -webkit-mask:radial-gradient(circle at 50% 100%,transparent 58%,#000 59%);mask:radial-gradient(circle at 50% 100%,transparent 58%,#000 59%);opacity:.85}
-.db .gneedle{position:absolute;left:50%;bottom:8%;width:4px;height:48%;border-radius:4px;background:#fff;transform-origin:50% 100%;transform:translateX(-50%) rotate(var(--to));animation:gsweep 1.5s cubic-bezier(.3,1.35,.5,1) both;box-shadow:0 0 8px rgba(255,255,255,.5)}
-.db .ghub{position:absolute;left:50%;bottom:8%;width:16px;height:16px;margin:0 0 -8px -8px;border-radius:50%;background:#fff}
-@keyframes gsweep{from{transform:translateX(-50%) rotate(-90deg)}}
-.db .gread{position:absolute;left:0;right:0;top:100%;margin-top:.25rem;text-align:center}.db .gread small{display:block;font-size:.55rem;letter-spacing:.12em;color:var(--mut)}.db .gread b{font:700 1.15rem/1.1 Georgia,serif;color:var(--c);letter-spacing:.05em}
-.db .gcols{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-top:.9rem;align-items:start}
-.db .gcol{display:flex;flex-direction:column;gap:4px;min-width:0;border-top:3px solid var(--line);padding-top:4px}
-.db .gcol:nth-child(1){border-color:#ff6b6b}.db .gcol:nth-child(2){border-color:#ffa566}.db .gcol:nth-child(3){border-color:#d6d2c4}.db .gcol:nth-child(4){border-color:#a6e08a}.db .gcol:nth-child(5){border-color:#4fd88f}
-.db .gh{font-size:.56rem;letter-spacing:.06em;text-transform:uppercase;color:var(--soft);text-align:center;margin-bottom:2px}.db .gh small{display:block;font-size:.7rem;color:var(--ink);letter-spacing:0}
-.db .gchip{display:block;text-align:center;font-size:.6rem;font-weight:800;letter-spacing:.01em;padding:.28rem 0;border-radius:9px;color:var(--ink);cursor:pointer;
-  border:1.5px solid color-mix(in srgb,var(--c) 70%,transparent);background:#171b25;position:relative;animation:pop .45s cubic-bezier(.2,1.3,.4,1) both}
-.db .gchip.own{background:color-mix(in srgb,var(--c) 30%,#12151d)}
-.db .gchip.hot{border-color:var(--c);box-shadow:0 0 0 0 var(--c);animation:pop .45s cubic-bezier(.2,1.3,.4,1) both,glow 1.8s ease-out infinite}
-@keyframes glow{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--c) 70%,transparent)}100%{box-shadow:0 0 0 7px transparent}}
-.db .gunk{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:.7rem;font-size:.56rem;color:var(--mut);letter-spacing:.08em}.db .gunk .gchip{padding:.28rem .6rem}
-@media (prefers-reduced-motion:reduce){.db .gneedle,.db .gchip,.db .gchip.hot{animation:none}}
-.db .pulsewrap{position:relative;margin-bottom:.4rem}.db .pvr{position:absolute;opacity:0;pointer-events:none}
-.db .pkey{display:flex;gap:.2rem .9rem;flex-wrap:wrap;font-size:.64rem;color:var(--mut);margin:.5rem .2rem}.db .pkey .k{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:.3rem;border:2px solid var(--soft);vertical-align:-1px}
-.db .pkey .k.own{background:var(--soft)}.db .pkey .k.hot{border-color:var(--risk);box-shadow:0 0 0 3px rgba(255,122,122,.25)}.db .pkey .k.ring{border-color:var(--buy);border-right-color:rgba(255,255,255,.2)}
-.db .pvs .hint{font-size:.74rem;color:var(--mut);text-align:center;padding:.3rem}.db .pvc{display:none;background:var(--card);border:1px solid var(--line);border-left:5px solid var(--c);border-radius:16px;padding:.8rem;animation:rise .25s ease-out}
-.db .pvc~.hint{display:none}
-@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-.db .pvc .act{margin-top:.5rem;background:var(--c)}.db .pvc .nm{margin-left:.5rem}.db .pvc .px small{color:var(--c)}.db .pvc .foot label{cursor:pointer}
-@keyframes pop{from{opacity:0;transform:scale(.7)}to{opacity:1;transform:none}}
-.db{--ink:#f4f1ea;--soft:#b6b2a8;--mut:#7d7a72;--card:#181b25;--line:#272b38;--buy:#7be3a8;--risk:#ff7a7a;--warn:#ffc267;--calm:#8ab4ff;color:var(--ink)}
-.db h1{font:700 1.6rem/1.2 Georgia,"Iowan Old Style",serif !important;margin:.2rem 0 .8rem !important;letter-spacing:-.01em;color:var(--ink)}
-.db h1 em{font-style:normal;padding:0 .25em;border-radius:6px}.db .e1{background:#41201f;color:var(--risk)}.db .e2{background:#3b2d14;color:var(--warn)}.db .e3{background:#1b2540;color:var(--calm)}
-.db .ribbon{display:flex;gap:3px;height:12px;border-radius:99px;overflow:hidden;margin-bottom:.35rem}.db .ribbon i{display:block}
-.db .rl{display:flex;gap:3px;font-size:.7rem;color:var(--mut);margin-bottom:1.1rem}.db .rl span:last-child{text-align:right}
-.db .brief{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:.6rem .8rem;margin-bottom:.4rem}.db .brief summary{font-size:.82rem;color:var(--soft)}
-.db .sec{display:flex;align-items:center;gap:.5rem;font-weight:700;font-size:.95rem;margin:1.2rem 0 .6rem}.db .sec small{font-weight:400;color:var(--mut)}.db .dot{width:10px;height:10px;border-radius:50%}
-.db details>summary{list-style:none;cursor:pointer}.db details>summary::-webkit-details-marker{display:none}
-.db .big{border-radius:22px;padding:15px;margin-bottom:10px;background:var(--bg2);border:1px solid var(--bd)}
-.db .big.risk{--bg2:#41201f;--bd:#6b2f2d;--c:var(--risk)}.db .big.buy{--bg2:#17382b;--bd:#2b6a50;--c:var(--buy)}.db .big.warn{--bg2:#3b2d14;--bd:#6b5322;--c:var(--warn)}.db .big.calm{--bg2:#1b2540;--bd:#2c3a66;--c:var(--calm)}.db .big.mute{--bg2:#23252d;--bd:#3a3d48;--c:#8d8a84}
-.db .top{display:flex;justify-content:space-between;align-items:flex-start}.db .tk{font:700 1.3rem/1 Georgia,serif;color:var(--ink)}.db .nm{font-size:.74rem;color:var(--soft);margin-top:.2rem}
-.db .px{text-align:right}.db .px b{display:block;font:700 1.55rem/1 ui-monospace,Menlo,monospace;color:var(--ink)}.db .px small{font-size:.82rem;color:var(--c);font-weight:600}
-.db .act{display:inline-block;margin-top:.8rem;background:var(--c);color:#111;font-weight:800;font-size:.78rem;letter-spacing:.05em;padding:.3rem .7rem;border-radius:99px}
-.db .badge{display:inline-block;margin-left:.5rem;font-size:.7rem;color:var(--ink);border:1px solid rgba(255,255,255,.3);border-radius:99px;padding:.18rem .55rem;vertical-align:middle}
-.db .why{margin:.6rem 0 0;color:var(--ink);font-size:.88rem}
-.db .gauge{margin-top:.8rem}.db .gauge .bar{position:relative;display:flex;gap:3px;height:9px}.db .gauge .bar i{flex:1;border-radius:9px;opacity:.4}
-.db .gauge .bar i:nth-child(1){background:#ff6b6b}.db .gauge .bar i:nth-child(2){background:#ffa566}.db .gauge .bar i:nth-child(3){background:#d6d2c4}.db .gauge .bar i:nth-child(4){background:#a6e08a}.db .gauge .bar i:nth-child(5){background:#4fd88f}
-.db .needle{position:absolute;top:-5px;width:4px;height:19px;border-radius:3px;background:#fff;box-shadow:0 0 0 2px rgba(0,0,0,.45);transform:translateX(-50%)}
-.db .gauge .lab{display:flex;justify-content:space-between;font-size:.66rem;color:var(--soft);margin-top:.35rem;gap:.5rem}.db .gauge .lab b{color:var(--ink)}
-.db .mini{margin-top:.5rem}.db .mini .bar{height:6px}.db .mini .needle{height:14px;top:-4px;width:3px}
-.db .more{display:flex;justify-content:space-between;margin-top:.8rem;font-size:.78rem;color:var(--soft)}
-.db .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.db .grid details[open]{grid-column:1/-1}
-.db .mid{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:12px;border-top:4px solid var(--c)}
-.db .mid.warn{--c:var(--warn)}.db .mid.mute{--c:#8d8a84}.db .mid.calm{--c:var(--calm)}.db .mid.risk{--c:var(--risk)}.db .mid.buy{--c:var(--buy)}
-.db .mid .tk{font-size:1.1rem}.db .mid .p{font:600 1.05rem ui-monospace,monospace;margin-top:.4rem;color:var(--ink)}.db .mid .p small{font-size:.76rem;color:var(--c);margin-left:.3rem}
-.db .mid .t{font-size:.72rem;color:var(--soft);margin-top:.4rem}
-.db .mid .w{display:inline-block;background:var(--c);color:#111;font-weight:800;font-size:.66rem;letter-spacing:.05em;padding:.15rem .5rem;border-radius:99px;margin-bottom:.4rem}
-.db .chips{display:flex;flex-wrap:wrap;gap:7px}.db .chip{background:var(--card);border:1px solid var(--line);border-radius:99px;padding:.35rem .7rem;font-size:.82rem;display:flex;gap:.4rem;align-items:center;text-decoration:none;color:var(--ink)}
-.db .chip span{font-size:.74rem;color:var(--mut)}.db .chip .own{width:7px;height:7px;border-radius:50%;background:var(--buy)}
-.db .open{margin-top:.9rem;border-top:1px dashed rgba(255,255,255,.2);padding-top:.8rem;color:var(--ink)}
-.db .conf{background:rgba(0,0,0,.28);border-radius:16px;padding:.7rem .8rem;margin-bottom:.9rem}
-.db .cf-h{display:flex;justify-content:space-between;gap:.5rem;font-size:.62rem;letter-spacing:.07em;color:var(--soft)}.db .cf-h b{color:var(--ink);font-size:.78rem;white-space:nowrap;letter-spacing:0}
-.db .dots{display:flex;gap:4px;margin:.5rem 0}.db .dots i{flex:1;height:7px;border-radius:9px}.db .dots .y{background:var(--buy)}.db .dots .n{background:rgba(255,255,255,.18)}
-.db .chk{list-style:none;margin:0;padding:0;font-size:.8rem}.db .chk li{padding:.18rem 0 .18rem 1.3rem;position:relative}.db .chk li:before{position:absolute;left:0;font-weight:800}
-.db .chk .y:before{content:"✓";color:var(--buy)}.db .chk .n:before{content:"–";color:var(--mut)}.db .chk .n{color:var(--soft)}
-.db .chg{margin:.5rem 0 0;font-size:.76rem;color:var(--warn)}
-.db .h5{font-size:.64rem;letter-spacing:.08em;color:var(--soft);margin:.6rem 0 .5rem}.db .zn{font-size:.82rem;color:var(--ink)}
-.db .ladder{display:flex;flex-direction:column;gap:6px}
-.db .z{display:grid;grid-template-columns:1fr auto;background:rgba(0,0,0,.25);border-radius:12px;padding:.5rem .7rem;border-left:4px solid}.db .z.res{border-color:var(--risk)}.db .z.sup{border-color:var(--buy)}
-.db .z .nm2{font-size:.68rem;color:var(--soft)}.db .z b{font:700 .95rem ui-monospace,monospace}.db .z em{grid-column:2;grid-row:1/3;align-self:center;font-style:normal;font-size:.64rem;font-weight:800;padding:.2rem .5rem;border-radius:99px;color:#111}
-.db .z small{grid-column:1/3;font-size:.7rem;color:var(--soft);margin-top:.15rem}.db .g.h{background:var(--buy)}.db .g.m{background:var(--warn)}.db .g.l{background:#8d8a84}
-.db .now{text-align:center;font-size:.72rem;position:relative}.db .now:before{content:"";position:absolute;left:0;right:0;top:50%;border-top:1px dashed rgba(255,255,255,.35)}.db .now span{position:relative;background:var(--bg2,#181b25);padding:0 .6rem}
-.db .foot{display:flex;justify-content:space-between;margin-top:.9rem;font-size:.8rem;color:var(--soft)}.db .go{color:var(--ink);font-weight:700;text-decoration:none}
-.db .key{margin-top:1.4rem;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:.8rem 1rem;font-size:.8rem;display:grid;gap:.35rem}.db .key div{display:flex;gap:.6rem;align-items:center}
-.db .key .w2{min-width:4rem;text-align:center;font-weight:800;font-size:.68rem;padding:.15rem .4rem;border-radius:99px;color:#111}.db .key .soft{color:var(--soft);display:block}
+.rd{color:var(--dz-ink)}
+.rd-h1{font:700 1.45rem/1.25 system-ui,sans-serif !important;margin:.2rem 0 .8rem !important;color:var(--dz-ink)}
+.rd-h1 em{white-space:nowrap;font-style:normal;padding:0 .3em;border-radius:7px;color:var(--dz-c);background:color-mix(in srgb,var(--dz-c) 16%,transparent)}
+.rd-h{font-size:.68rem;letter-spacing:.07em;text-transform:uppercase;color:var(--dz-muted);margin:14px 2px 8px;display:flex;justify-content:space-between;gap:8px}
+.rd-h b{color:var(--dz-ink);text-transform:none;letter-spacing:0;font-size:.78rem}
+.rd-note{font-size:.78rem;color:var(--dz-muted);margin:6px 2px}
+.rd-movers{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
+.rd-mv,.rd-ev{display:flex;align-items:center;gap:8px;text-decoration:none;color:var(--dz-ink);background:var(--dz-surface);border:1px solid var(--dz-line);border-radius:12px;padding:8px 11px}
+.rd-mv{flex:none}.rd-evs{display:grid;gap:6px}.rd-ev span{flex:1;color:var(--dz-soft);font-size:.82rem}.rd-ev small{color:var(--dz-muted)}
+.rd-sec{display:flex;align-items:center;gap:8px;font-weight:700;font-size:.95rem;margin:20px 2px 10px}
+.rd-sec i{width:10px;height:10px;border-radius:50%;background:var(--dz-c)}.rd-sec small{font-weight:400;color:var(--dz-muted)}
+.rd-row{margin-bottom:9px;border-radius:14px;border:1px solid color-mix(in srgb,var(--dz-c) 30%,var(--dz-line));border-left:5px solid var(--dz-c);
+  background:color-mix(in srgb,var(--dz-c) 9%,var(--dz-surface));padding:12px 13px}
+.rd-row:target{box-shadow:0 0 0 2px var(--dz-c)}
+.rd-row>summary{list-style:none;cursor:pointer}.rd-row>summary::-webkit-details-marker{display:none}
+.rd-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.rd-tk{font-size:1.15rem;display:block}.rd-top small{display:block;color:var(--dz-muted);font-size:.74rem;margin-top:2px}
+.rd-px{text-align:right}.rd-px b{display:block;font-size:1.15rem;font-variant-numeric:tabular-nums;margin-bottom:3px}
+.rd-mid{display:flex;align-items:center;gap:8px;margin-top:9px;flex-wrap:wrap}
+.rd-bell{margin-left:auto}.rd-sure{font-size:.72rem;color:var(--dz-muted)}
+.rd-why{margin:8px 0 0;font-size:.88rem;color:var(--dz-soft)}
+.rd-open{margin-top:12px;border-top:1px solid var(--dz-line);padding-top:10px}
+.rd-rates{margin-bottom:4px}
+.rd-box{background:color-mix(in srgb,var(--dz-ink) 5%,transparent);border-radius:12px;padding:10px 12px;margin:10px 0}
+.rd-dots{display:flex;gap:4px;margin:7px 0}.rd-dots i{flex:1;height:6px;border-radius:9px;background:var(--dz-line)}.rd-dots .y{background:var(--dz-buy)}
+.rd-chk{list-style:none;margin:0;padding:0;font-size:.82rem}.rd-chk li{padding:3px 0 3px 20px;position:relative}
+.rd-chk li:before{position:absolute;left:0;font-weight:800}.rd-chk .y:before{content:"✓";color:var(--dz-buy)}
+.rd-chk .n:before{content:"–";color:var(--dz-muted)}.rd-chk .n{color:var(--dz-soft)}
+.rd-chg{margin:7px 0 0;font-size:.78rem;color:var(--dz-watch)}
+.rd-now{text-align:center;font-size:.74rem;color:var(--dz-muted);margin:2px 0 8px}
+.rd-go{display:block;text-align:center;margin-top:12px;padding:10px;border-radius:11px;background:var(--dz-ink);color:var(--dz-bg);font-weight:700;text-decoration:none}
+.rd-lines{margin-top:2px}
+.rd-brief{background:var(--dz-surface);border:1px solid var(--dz-line);border-radius:12px;padding:9px 12px;margin:10px 0}
+.rd-key{margin-top:22px;background:var(--dz-surface);border:1px solid var(--dz-line);border-radius:14px;padding:12px 14px;font-size:.8rem;display:grid;gap:7px}
+.rd-key div{display:flex;gap:10px;align-items:center}.rd-key .rd-note{display:block}
+.rd-r{position:absolute;opacity:0;pointer-events:none}
+.rd-filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.rd-filters label,.rd-zoom label{cursor:pointer;color:var(--dz-soft) !important;font-size:.78rem;font-weight:600;padding:5px 12px;border-radius:99px;background:var(--dz-surface);border:1px solid var(--dz-line);color:var(--dz-soft)}
+.rd-zoom{display:flex;gap:6px;margin-left:auto}.rd-zoom label{width:30px;text-align:center;padding:5px 0}
+#rdf-all:checked~.rd-filters [for=rdf-all],#rdf-act:checked~.rd-filters [for=rdf-act],#rdf-watch:checked~.rd-filters [for=rdf-watch],
+#rdf-buy:checked~.rd-filters [for=rdf-buy],#rdf-calm:checked~.rd-filters [for=rdf-calm]{background:var(--dz-ink) !important;color:var(--dz-bg) !important;border-color:var(--dz-ink)}
+.rd-scroll{overflow:auto;border-radius:14px;border:1px solid var(--dz-line);background:var(--dz-surface)}
+.rd-map{position:relative;height:300px;min-width:100%;width:100%}
+#rdz-2:checked~.rd-scroll .rd-map{width:170%;height:420px}#rdz-3:checked~.rd-scroll .rd-map{width:260%;height:560px}
+.rd-axis{position:absolute;left:0;right:0;top:50%;border-top:1px dashed var(--dz-line)}
+.rd-map>b{position:absolute;font-size:.64rem;font-weight:600;color:var(--dz-muted);letter-spacing:.04em}
+.rd-l1{left:8px;bottom:6px}.rd-l2{right:8px;bottom:6px}.rd-l3{left:8px;top:6px}.rd-l4{left:8px;top:50%;margin-top:4px}
+.rd-dot{position:absolute;width:var(--sz);height:var(--sz);margin:calc(var(--sz)/-2) 0 0 calc(var(--sz)/-2);border-radius:50%;
+  background:var(--dz-c);border:2px solid var(--dz-surface);text-decoration:none;transition:opacity .2s}
+.rd-dot span{display:none;position:absolute;left:50%;top:100%;transform:translateX(-50%);font-size:.62rem;font-weight:800;color:var(--dz-ink);white-space:nowrap}
+.rd-pulse{animation:rdp 1.8s ease-out infinite}
+@keyframes rdp{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--dz-c) 60%,transparent)}100%{box-shadow:0 0 0 10px transparent}}
+#rdf-act:checked~.rd-scroll .rd-dot:not(.dz-act),#rdf-watch:checked~.rd-scroll .rd-dot:not(.dz-watch),
+#rdf-buy:checked~.rd-scroll .rd-dot:not(.dz-buy),#rdf-calm:checked~.rd-scroll .rd-dot:not(.dz-calm){opacity:.12;pointer-events:none}
+#rdf-act:checked~.rd-scroll .rd-dot.dz-act span,#rdf-watch:checked~.rd-scroll .rd-dot.dz-watch span,
+#rdf-buy:checked~.rd-scroll .rd-dot.dz-buy span,#rdf-calm:checked~.rd-scroll .rd-dot.dz-calm span,#rdz-3:checked~.rd-scroll .rd-dot span{display:block}
+@media (prefers-reduced-motion:reduce){.rd-pulse,.rd-dot{animation:none !important;transition:none}}
 """
