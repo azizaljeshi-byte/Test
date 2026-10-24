@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import briefing, dayboard, design, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import briefing, dayboard, design, details, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -326,6 +326,7 @@ if view == "target":
                                            else "Add it on the [Fleet page](?view=fleet) to track it."))
     p = snap["payload"]
     t, f, ev = p["technical"], p["fundamental"], p.get("events") or {}
+    st.markdown(details.decision(snap), unsafe_allow_html=True)
     st.markdown(ui.cards([snap]) + ui.status_note(snap) + ui.flow_note(snap) + ui.reassess_note(snap) + ui.wire_note(snap), unsafe_allow_html=True)
     industry = (p.get("profile") or {}).get("industry")
     if industry:
@@ -333,7 +334,7 @@ if view == "target":
     note = next((h.notes for h in portfolio.holdings if h.ticker == ticker and h.notes), None)
     if note:
         st.markdown(f'<div class="mc-log"><small>YOUR NOTE</small><br>{escape(note)}</div>', unsafe_allow_html=True)
-    st.markdown(ui.brief(briefing.stock(snap, prevs.get(ticker))), unsafe_allow_html=True)
+    st.markdown(details.brief_html(briefing.stock(snap, prevs.get(ticker))), unsafe_allow_html=True)
     research = p.get("research") or {}
     today_news = [n for n in ev.get("news") or []
                   if (datetime.now(NY) - datetime.fromisoformat(n["published"])).total_seconds() <= 36 * 3600]
