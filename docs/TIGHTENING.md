@@ -53,7 +53,17 @@ reached", "Stooq has no daily prices for this ticker", "only N sessions overlap"
 reason on the line, and do the same for any other skipped check, per the rule that missing data is unknown and says why.
 A skipped check is not counted, so the count reads "5/5 sure", not "6/6".
 
-## 5. To find out first (testing)
+## 5. A WATCH card with a BAD gauge (owner, 2026-10-24), found on COSM
+COSM shows WATCH (yellow, "be careful") while the gauge reads BAD and the checks list breakdown, falling momentum and a
+TradingView SELL. Cause: the sell call is held back by the "don't rush" rule (`ui.reassess`: the stock bounced +3.2% in the
+last session, so the app waits for the close below the trailing stop before selling), and `dayboard.word` returns WATCH for it.
+The gauge and the checks do not know about that wait, so the card gives two answers, against the rule to never show conflicting
+answers. The checks also show dashes for all six because they are scored against a WATCH call.
+Proposed, for after testing: when the word is WATCH only because a sell is waiting for the close, say so in the word
+("WATCH · SELL IF IT CLOSES BELOW 0.33"), keep the gauge as is, and score the checks against the held sell so they show ticks.
+No change to the sell rule itself.
+
+## 6. To find out first (testing)
 - How often the checks disagree with the call, and on which stocks.
 - Whether the graded zones (HIGH, MEDIUM, LOW) predict reactions better than the automatic CIS levels.
 - Which of the first live news and TradingView or Stooq reads fail, and why.
