@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -35,11 +36,48 @@ CREATE TABLE IF NOT EXISTS ticker_overrides (
 """
 
 
+class _Rows:
+    """The rows of one finished query, so a cursor is never shared between threads."""
+
+    def __init__(self, rows: list):
+        self._rows = rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self) -> list:
+        return list(self._rows)
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _LockedConnection:
+    """One SQLite connection shared by the page and the tracker thread. Each call holds a lock and reads its rows before
+    letting go, because two threads sharing a connection can make a query return no row at all."""
+
+    def __init__(self, path):
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+
+    def execute(self, sql: str, params=()):
+        with self._lock:
+            return _Rows(self._conn.execute(sql, params).fetchall())
+
+    def executescript(self, sql: str) -> None:
+        with self._lock:
+            self._conn.executescript(sql)
+
+    def commit(self) -> None:
+        with self._lock:
+            self._conn.commit()
+
+
 class Store:
     def __init__(self, path: str | Path = DEFAULT_DB):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
+        self.conn = _LockedConnection(path)
         self.conn.executescript(SCHEMA)
 
     def save_snapshot(self, e: Evaluation) -> None:

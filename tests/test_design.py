@@ -87,3 +87,26 @@ def test_the_theme_choice_is_kept_in_the_store(tmp_path):
     s.set_setting("theme", "light")
     s.set_setting("theme", "dark")
     assert Store(tmp_path / "t.db").get_setting("theme") == "dark"
+
+
+def test_two_threads_can_share_one_store_without_losing_rows(tmp_path):
+    import threading
+    from stockwatch.store import Store
+    s = Store(tmp_path / "t.db")
+    bad = []
+
+    def write():
+        for i in range(1500):
+            s.set_setting("k", str(i))
+
+    def read():
+        for _ in range(1500):
+            try:
+                s.watermark()
+            except TypeError as e:
+                bad.append(e)
+
+    ts = [threading.Thread(target=write), threading.Thread(target=read), threading.Thread(target=read)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert not bad
