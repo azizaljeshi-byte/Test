@@ -63,7 +63,14 @@ Proposed, for after testing: when the word is WATCH only because a sell is waiti
 ("WATCH · SELL IF IT CLOSES BELOW 0.33"), keep the gauge as is, and score the checks against the held sell so they show ticks.
 No change to the sell rule itself.
 
-## 6. To find out first (testing)
+## 6. Go back toward the previous list design (owner, 2026-10-24), for the design session
+After using the deployed Day Board, the owner finds the previous design (the Radar rows, `ui.radar` and `ui.rows`, still in the
+code but unused) better for information and for listing the stocks. The "All calm" chips show only a ticker and a percentage,
+with no price and no reason. Recorded for the design session after testing. The owner will send samples of how he likes to see
+the cards, and those samples, not the current Day Board, are the starting point. Keep from the Day Board only what he still wants
+(for example the call word, the plain-English zone recommendations and the lightning-line gauge A).
+
+## 7. To find out first (testing)
 - How often the checks disagree with the call, and on which stocks.
 - Whether the graded zones (HIGH, MEDIUM, LOW) predict reactions better than the automatic CIS levels.
 - Which of the first live news and TradingView or Stooq reads fail, and why.
