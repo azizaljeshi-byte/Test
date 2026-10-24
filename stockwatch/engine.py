@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from . import analogs, catalysts, deepdive, fundamental, momentum, relative, sec, status, street, technical, tradeplan, transitions
+from . import analogs, catalysts, deepdive, fundamental, momentum, relative, sec, status, street, technical, tradeplan, transitions, zones
 from .config import Holding, Portfolio
 from . import data, finnhub
 from .data import SECTOR_ETFS, DataProvider
@@ -221,6 +221,7 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
     tech["price_status"] = _optional(status.assess, hist, now, live[0] if live else None, not h.is_watchlist)
     # how the move is happening (momentum and whether it is an event, the market, selling pressure or drift); display only
     tech["momentum"] = _optional(momentum.assess, hist, market_hist, sector_hist, now)
+    tech["zones"] = _optional(zones.assess, hist, now)       # graded support and resistance zones; display only
     ps = tech["price_status"]
     if not light and isinstance(ps, dict) and ps.get("code") in status.BEARISH:
         # a second source's technical read, only where it matters (a weak or broken stock), to keep the requests few
