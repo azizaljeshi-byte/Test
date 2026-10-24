@@ -211,3 +211,22 @@ def test_two_stocks_reporting_the_same_day_do_not_break_the_coming_up_list():
         s["payload"]["events"] = {"days_to_earnings": 4}
     html = dayboard.events_calendar([a, b])
     assert "AAA" in html and "BBB" in html
+
+
+def test_the_bell_shows_only_when_earnings_are_within_a_week():
+    s = make("HOLD", "pullback")
+    s["payload"]["events"] = {"days_to_earnings": 5}
+    assert "dz-bell" in dayboard.card(s)
+    s["payload"]["events"] = {"days_to_earnings": 12}
+    assert "dz-bell" not in dayboard.card(s)
+    s["payload"]["events"] = {}
+    assert "dz-bell" not in dayboard.card(s)
+
+
+def test_the_card_shows_the_after_hours_price_or_that_there_were_no_trades():
+    s = make("HOLD", "pullback")
+    s["payload"]["quote"] = {"market_state": "POST", "ext_price": 101.5, "ext_change": 0.015, "ext_session": "post"}
+    html = dayboard.card(s)
+    assert "AH" in html and "101.50" in html
+    s["payload"]["quote"] = {"market_state": "POST", "ext_price": float("nan")}
+    assert "AH no trades yet" in dayboard.card(s)

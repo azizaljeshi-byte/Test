@@ -262,6 +262,25 @@ def top_story(snap: dict) -> str:
     return design.news_line(tier, x["title"], ui._age(x["published"]), " · ".join(x.get("sources") or []))
 
 
+def extra_price(snap: dict) -> str:
+    """The quieter line under the price: LIVE time, and the pre-market or after-hours trade (or that there were none yet)."""
+    pp = ui.price_parts(snap)
+    bits = []
+    if pp["live"]:
+        bits.append(f'<span class="rd-live">● LIVE {pp["live"]}</span>')
+    if pp["ext"]:
+        label, price, change = pp["ext"]
+        bits.append(f'<span>{escape(label)} <b>{price:.2f}</b> {design.change_pill(change)}</span>')
+    if pp["note"]:
+        bits.append(f'<span>{escape(pp["note"])}</span>')
+    return f'<div class="rd-ext">{"".join(bits)}</div>' if bits else ""
+
+
+def earnings_soon(snap: dict, days: int = 7) -> bool:
+    d = (snap["payload"].get("events") or {}).get("days_to_earnings")
+    return d is not None and 0 <= d <= days
+
+
 def _words(snap: dict, a: dict) -> str:
     """The text on the call tag: the call, or the held-sell wording for a watch that is waiting for the close."""
     label = WORDS[a["word"]][0]
@@ -310,12 +329,13 @@ def card(snap: dict, was: str | None = None) -> str:
     sure = f'<span class="rd-sure">{a["sure"][0]}/{a["sure"][1]} sure</span>' if a["sure"] else ""
     new = f'<span class="rd-sure">● new · was {escape(was.lower())}</span>' if was else ""
     tag = f'<span class="dz-call dz-{cls}">{escape(_words(snap, a))}</span>'
+    bell = f'<span class="rd-bell">{design.bell(True, "Earnings this week")}</span>' if earnings_soon(snap) else ""
     lines = last_quarter(snap) + next_report(snap) + top_story(snap)
     sid = _slug(snap["ticker"])
     return (f'<details class="rd-row dz-{cls}" id="c-{sid}"><summary>'
             f'<div class="rd-top"><div><b class="rd-tk">{escape(snap["ticker"])}</b><small>{escape(name)} · {own}</small></div>'
-            f'<div class="rd-px"><b>{ui.num(price)}</b>{design.change_pill(day_move(snap))}</div></div>'
-            f'<div class="rd-mid">{tag}{sure}{new}<span class="rd-bell">{design.bell(True)}</span></div>'
+            f'<div class="rd-px"><b>{ui.num(price)}</b>{design.change_pill(day_move(snap))}{extra_price(snap)}</div></div>'
+            f'<div class="rd-mid">{tag}{sure}{new}{bell}</div>'
             f'<p class="rd-why">{escape(_why(snap))}</p></summary>'
             f'{_open(snap, a)}<div class="rd-lines">{lines}</div></details>')
 
@@ -420,7 +440,7 @@ KEY = ('<div class="rd-key"><b>Quick key</b>'
        '<div><span class="dz-call dz-buy">BUY</span>Buy or buy more, price in the entry zone</div>'
        '<div><span class="dz-call dz-watch">WATCH</span>Something is close. Not yet.</div>'
        '<div><span class="dz-call dz-calm">CALM</span>Nothing to do</div>'
-       '<div class="rd-note">"5/6 sure": how many checks agree with the call. The line with the bolt: how good or bad the stock '
+       '<div class="rd-note">"5/6 sure": how many checks agree with the call. The bell: earnings are due within a week. The line with the bolt: how good or bad the stock '
        'looks now. Display only; it changes no call or alert.</div></div>')
 
 CSS = """
@@ -443,7 +463,8 @@ CSS = """
 .rd-tk{font-size:1.15rem;display:block}.rd-top small{display:block;color:var(--dz-muted);font-size:.74rem;margin-top:2px}
 .rd-px{text-align:right}.rd-px b{display:block;font-size:1.15rem;font-variant-numeric:tabular-nums;margin-bottom:3px}
 .rd-mid{display:flex;align-items:center;gap:8px;margin-top:9px;flex-wrap:wrap}
-.rd-bell{margin-left:auto}.rd-sure{font-size:.72rem;color:var(--dz-muted)}
+.rd-bell{margin-left:auto}.rd-ext{margin-top:5px;font-size:.72rem;color:var(--dz-muted);display:grid;gap:3px;justify-items:end}
+.rd-ext span{display:flex;gap:5px;align-items:center;justify-content:flex-end;white-space:nowrap}.rd-ext b{color:var(--dz-ink);font-size:.8rem;margin:0}.rd-ext .dz-chg{font-size:.68rem}.rd-live{color:var(--dz-buy)}.rd-sure{font-size:.72rem;color:var(--dz-muted)}
 .rd-why{margin:8px 0 0;font-size:.88rem;color:var(--dz-soft)}
 .rd-open{margin-top:12px;border-top:1px solid var(--dz-line);padding-top:10px}
 .rd-rates{margin-bottom:4px}
