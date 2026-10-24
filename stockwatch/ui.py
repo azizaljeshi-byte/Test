@@ -1127,3 +1127,87 @@ def flag(status: str, text: str, color: str | None = None) -> str:
     """A research status line: the status in its color, then the plain-English reason (already escaped)."""
     c = color or RESEARCH_STATUS.get(status, MUTED)
     return f'<div class="mc-flag" style="--c:{c}"><b>{escape(status)}</b> · {text}</div>'
+
+
+# ---------------------------------------------------------------- pre-market briefing
+def _cap(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+def _tone(v) -> str:
+    return MUTED if v is None else (OPP if v >= 0 else RISK)
+
+
+def _brief_move(r: dict) -> tuple[float | None, list[str]]:
+    """The headline move for a market row and the pieces behind it: futures, then now, then the last session."""
+    fut = (r.get("future") or {}).get("now")
+    head = fut if fut is not None else (r.get("now") if r.get("now") is not None else r.get("prior"))
+    bits = []
+    if r.get("prior") is not None:
+        bits.append(f'last session {pct(r["prior"], digits=1)}')
+    if fut is not None and r.get("now") is not None:
+        bits.append(f'ETF {pct(r["now"], digits=1)}')
+    return head, bits
+
+
+def _brief_tile(r: dict, value: str | None = None, extra: str = "") -> tuple[str, str, str, str]:
+    head, bits = _brief_move(r)
+    if not r.get("known") and head is None:
+        return r["label"], "n/a", "no price", MUTED
+    detail = " · ".join(bits + ([extra] if extra else []))
+    return r["label"], value if value is not None else pct(head, digits=1), escape(detail), _tone(head)
+
+
+def _macro_tile(r: dict) -> tuple[str, str, str, str]:
+    if not r.get("known"):
+        return r["label"], "n/a", "no price", MUTED
+    last, prior = r["last"], r.get("prior")
+    if r["kind"] == "yield":
+        level = last / 10 if last > 20 else last                     # Yahoo has quoted ^TNX both as 4.25 and as 42.5
+        bps = None if prior is None else (level - level / (1 + prior)) * 100
+        move = None if bps is None else bps
+        return (r["label"], f"{level:.2f}%", escape("last session " + ("n/a" if move is None else f"{move:+.0f} bp")),
+                _tone(None if move is None else -move))              # rising yields read as pressure (red)
+    shown = f"{last:,.2f}" if last < 1000 else f"{last:,.0f}"
+    head = r.get("now") if r.get("now") is not None else prior
+    detail = f'last session {pct(prior, digits=1)}' if prior is not None else ""
+    if r.get("now") is not None and prior is not None:
+        detail += f' · now {pct(r["now"], digits=1)}'
+    inverse = r["symbol"] == "^VIX"                                    # a rising VIX is bad news
+    return r["label"], shown, escape(detail), _tone(None if head is None else (-head if inverse else head))
+
+
+def briefing_sections(b: dict, tickers=()) -> list[tuple[str, str]]:
+    """(title, html) for each part of the briefing, in reading order."""
+    out: list[tuple[str, str]] = []
+    out.append(("Where the market stands", tiles([_brief_tile(r) for r in b["indexes"]])))
+    out.append(("Macro", tiles([_macro_tile(r) for r in b["macro"]])))
+    out.append(("Sectors", tiles([_brief_tile(r, extra=("yours: " + ", ".join(r["names"])) if r.get("names") else "")
+                                  for r in sorted(b["sectors"], key=lambda r: -(_brief_move(r)[0] or -9))])))
+    ex = b.get("exposure") or []
+    if ex:
+        out.append(("Your exposure by industry", tiles([(g["sector"], f'{g["pct"] * 100:.0f}%',
+                                                        link_tickers(", ".join(g["names"][:8]), tickers), INFO) for g in ex])))
+    mv = b.get("movers") or {}
+    for title, key in (("Biggest moves last session", "prior"), ("Biggest moves now (pre-market, after-hours, live)", "now")):
+        rows = mv.get(key) or []
+        body = tiles([(m["ticker"], pct(m["pct"], digits=1), "owned" if m["held"] else "watchlist", _tone(m["pct"]))
+                      for m in rows[:6]]) if rows else '<div class="mc-d">No major moves (3% or more) among your tracked names.</div>'
+        out.append((title, body))
+    news = []
+    for n in b.get("holdings_news") or []:
+        tone = {"positive": OPP, "negative": RISK}.get(n.get("tone"), MUTED)
+        title = escape(n["title"])
+        link = f'<a href="{escape(n["url"])}" target="_blank" rel="noopener">{title}</a>' if n.get("url") else title
+        news.append(f'<div class="mc-ev" style="--c:{tone}"><div class="t"><a href="?view=target&t={escape(n["ticker"])}" '
+                    f'target="_self">{escape(n["ticker"])}</a> · {escape(n.get("publisher") or "")}</div>'
+                    f'<div style="font-size:.84rem;line-height:1.45;margin-top:.15rem;color:var(--ink)">{link}</div></div>')
+    out.append(("News on your names", "".join(news) or '<div class="mc-d">No fresh headlines on your tracked names.</div>'))
+    mkt = []
+    for n in b.get("market_news") or []:
+        title = escape(n["title"])
+        link = f'<a href="{escape(n["url"])}" target="_blank" rel="noopener">{title}</a>' if n.get("url") else title
+        mkt.append(f'<div class="mc-ev" style="--c:{INFO}"><div class="t">{escape(n.get("publisher") or "")}</div>'
+                   f'<div style="font-size:.84rem;line-height:1.45;margin-top:.15rem;color:var(--ink)">{link}</div></div>')
+    out.append(("Market headlines", "".join(mkt) or f'<div class="mc-d">{escape(_cap(b.get("market_news_why") or "none right now"))}.</div>'))
+    return out

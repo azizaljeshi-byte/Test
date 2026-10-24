@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import briefing, finnhub, live, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import briefing, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -219,7 +219,7 @@ controls()
 
 # ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
 VIEWS = {"radar": "◉ Radar", "turbo": "⚡ Turbo", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log",
-         "fleet": "+ Fleet", "research": "⚗ Research"}
+         "fleet": "+ Fleet", "research": "⚗ Research", "briefing": "☀ Briefing"}
 current = st.query_params.get("view", "radar")
 current = current if current in VIEWS else "radar"
 picked = st.segmented_control("View", list(VIEWS), format_func=VIEWS.get, default=current,
@@ -559,6 +559,31 @@ if view == "market":
         st.markdown(f'<div class="mc-cards">{"".join(ui.market_card(r, r["ticker"] in new_setups) for r in rows)}</div>'
                     if rows else '<div class="mc-d">No buy setups in the last scan. Try "All finalists".</div>',
                     unsafe_allow_html=True)
+
+# ---------------------------------------------------------------- briefing: the US pre-market read
+if view == "briefing":
+    @st.fragment(run_every="4s")
+    def _briefing_view():
+        cur = premarket.current()
+        b = cur["data"]
+        if b is None and not cur["running"] and cur["error"] is None:
+            premarket.request(data, [s for s in store.latest_snapshots() if s["ticker"] in tickers])
+        st.markdown('<div class="mc-section">US pre-market briefing</div>', unsafe_allow_html=True)
+        st.button("↻ Refresh now", on_click=lambda: premarket.request(
+            data, [s for s in store.latest_snapshots() if s["ticker"] in tickers], force=True), disabled=cur["running"])
+        if cur["error"]:
+            st.caption(f"⚠ The last build failed: {cur['error']}")
+        if b is None:
+            st.caption("Building the briefing from market prices. This page fills in by itself.")
+            return
+        mins = (cur["age"] or 0) // 60
+        st.caption(f"{ui.SESSION_LABEL[b['session']]} · built {b['as_of'][11:16]} UTC ({mins} min ago) · {b['takeaway']}")
+        for note in b["missing"]:
+            st.caption(f"⚠ Missing: {note}")
+        for title, html in ui.briefing_sections(b, tickers):
+            st.markdown(f'<div class="mc-section">{title}</div>{html}', unsafe_allow_html=True)
+        st.caption(" ".join(b["limits"]))
+    _briefing_view()
 
 # ---------------------------------------------------------------- turbo: quick decision on any ticker
 if view == "turbo":
