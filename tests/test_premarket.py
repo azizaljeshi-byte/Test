@@ -165,7 +165,7 @@ def built(**kw):
 
 def test_the_sections_come_in_reading_order_with_numbers():
     sections = ui.briefing_sections(built(), {"NVDA"})
-    assert [t for t, _ in sections] == ["Where the market stands", "Macro", "Sectors", "Your exposure by industry",
+    assert [t for t, _ in sections] == ["", "Where the market stands", "Macro", "Sectors · strongest first", "Your exposure by industry",
                                         "Biggest moves last session", "Biggest moves now (pre-market, after-hours, live)",
                                         "News on your names", "Market headlines"]
     html = "".join(h for _, h in sections)
@@ -191,11 +191,40 @@ def test_unpriced_rows_say_n_a_and_empty_parts_say_so():
     assert "n/a" in html and "No major moves" in html and "No fresh headlines" in html
 
 
-def test_sectors_are_sorted_strongest_first():
-    hist = {s: daily([100, 100, 100, 100 + i]) for i, s in enumerate(premarket.all_symbols())}
-    sec = dict(ui.briefing_sections(premarket.build(FakeProvider(hist), [], PRE, news_fn=lambda: []), set()))["Sectors"]
-    order = [sec.index(name) for name in ("Real estate", "Materials")]
-    assert order == sorted(order) or True       # sorted by move, strongest first: no assumption on which ETF came last
+def test_sectors_are_sorted_strongest_first_in_the_heat_map():
+    syms = premarket.all_symbols()
+    hist = {sym: daily([100, 100, 100, 100 + i]) for i, sym in enumerate(syms)}
+    heat = dict(ui.briefing_sections(premarket.build(FakeProvider(hist), [], PRE, news_fn=lambda: []), set()))["Sectors · strongest first"]
+    order = [sym for _, sym in premarket.SECTORS]
+    expected = sorted(order, key=lambda sym: -syms.index(sym))
+    positions = [heat.index(f"· {sym}</div>") for sym in expected]
+    assert positions == sorted(positions)
+
+
+def test_the_hero_says_how_the_market_is_leaning():
+    up = premarket.build(FakeProvider(hist_for(premarket.all_symbols()), {"ES=F": {"ext_change": 0.006}, "NQ=F": {"ext_change": 0.008}}), [], PRE, news_fn=lambda: [])
+    assert up["mood"]["word"] == "GREEN OPEN" and up["mood"]["tone"] == "up"
+    down = premarket.build(FakeProvider(hist_for(premarket.all_symbols(), (100, 100, 110, 100)), {}), [], PRE, news_fn=lambda: [])
+    assert down["mood"]["word"] == "RED OPEN"
+    assert premarket.mood([], "PRE")["word"] == "NO READ"
+    assert premarket.mood(up["indexes"], "REGULAR")["word"] == "TRADING UP" and premarket.mood(up["indexes"], "CLOSED")["word"] == "CLOSED UP"
+    hero = ui.briefing_sections(up, set())[0][1]
+    assert "GREEN OPEN" in hero and "bf-flow" in hero and "pre-market" in hero
+
+
+def test_sparklines_and_donut_draw_only_with_enough_data():
+    assert ui.spark([1, 2, 3], ui.OPP) == "" and ui.spark(None, ui.OPP) == ""
+    assert "<polyline" in ui.spark([1, 2, 3, 4, 5, float("nan"), 6], ui.OPP)
+    ring = ui.donut([(0.75, ui.OPP), (0.25, ui.INFO)], "2", "industries")
+    assert ring.count("<circle") == 3 and ">2<" in ring
+    long = premarket.build(FakeProvider(hist_for(premarket.all_symbols(), [100] * 12 + [110])), [], PRE, news_fn=lambda: [])
+    assert "<polyline" in dict(ui.briefing_sections(long, set()))["Where the market stands"]
+    assert "<polyline" not in dict(ui.briefing_sections(built(), set()))["Where the market stands"]       # 4 bars: too few to draw
+
+
+def test_the_mover_bars_point_the_right_way():
+    html = ui._mover_bars([{"ticker": "UP", "pct": 0.1, "held": True}, {"ticker": "DN", "pct": -0.1, "held": False}])
+    assert "left:50%;width:50.0%" in html and "left:0.0%;width:50.0%" in html
 
 
 # ---- background cache

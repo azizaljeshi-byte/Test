@@ -2,6 +2,11 @@
 
 `stockwatch/premarket.py`, shown in the **☀ Briefing** tab. Display only: nothing here changes a score, status, call or alert.
 
+## Look
+A hero banner with one mood word (GREEN OPEN / RED OPEN / TRADING UP / CLOSED DOWN ...), a flow strip (Macro → Sectors → Movers → Your names), swipeable index cards with 30-day sparklines, macro mini-cards with sparklines, a sector heat-map tinted by size of move, an exposure donut, and diverging bars for movers.
+
+The stock rows on the Radar list were redesigned in the same pass: the price is big on the right with a coloured change pill under it, after-hours / live sit on their own quiet line, and plan, levels, flow and Finnhub are grouped in one tidy block.
+
 ## What it shows
 - Where the market stands: S&P 500, Nasdaq 100, Dow, Russell 2000 (the ETFs SPY, QQQ, DIA, IWM) with the futures move (ES, NQ, YM, RTY) when there is one, and the last session.
 - Macro: VIX, US 10Y yield, dollar (DXY), oil (WTI), gold, Bitcoin. A rising VIX or yield is coloured as pressure.

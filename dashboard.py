@@ -577,11 +577,11 @@ if view == "briefing":
             st.caption("Building the briefing from market prices. This page fills in by itself.")
             return
         mins = (cur["age"] or 0) // 60
-        st.caption(f"{ui.SESSION_LABEL[b['session']]} · built {b['as_of'][11:16]} UTC ({mins} min ago) · {b['takeaway']}")
+        st.caption(f"{ui.SESSION_LABEL[b['session']]} · built {b['as_of'][11:16]} UTC ({mins} min ago)")
         for note in b["missing"]:
             st.caption(f"⚠ Missing: {note}")
         for title, html in ui.briefing_sections(b, tickers):
-            st.markdown(f'<div class="mc-section">{title}</div>{html}', unsafe_allow_html=True)
+            st.markdown((f'<div class="mc-section">{title}</div>' if title else "") + html, unsafe_allow_html=True)
         st.caption(" ".join(b["limits"]))
     _briefing_view()
 

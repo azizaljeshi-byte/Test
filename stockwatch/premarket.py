@@ -83,6 +83,9 @@ def row(label: str, symbol: str, hist: dict, quotes: dict, now: datetime, kind: 
     if future:
         out["future"] = {"symbol": future, "now": live_change(quotes.get(future))}
     out["known"] = last is not None
+    df = hist.get(symbol)
+    closes = df["Close"].astype(float).dropna() if df is not None and "Close" in df else []
+    out["spark"] = [round(float(x), 4) for x in list(closes)[-30:]] if len(closes) >= 5 else []
     return out
 
 
@@ -142,6 +145,25 @@ def holdings_news(snaps: list[dict], now: datetime) -> list[dict]:
     return (held + rest)[:10]
 
 
+def headline(r: dict) -> float | None:
+    """The move to lead with: futures, then the live or extended move, then the last session."""
+    fut = (r.get("future") or {}).get("now")
+    return fut if fut is not None else (r["now"] if r.get("now") is not None else r.get("prior"))
+
+
+def mood(indexes: list[dict], session: str) -> dict:
+    """One word for the hero: how the big indexes are leaning. Only SPY and QQQ vote; no price, no word."""
+    moves = [m for m in (headline(r) for r in indexes if r["symbol"] in ("SPY", "QQQ")) if m is not None]
+    if not moves:
+        return {"word": "NO READ", "tone": "flat", "move": None}
+    avg = sum(moves) / len(moves)
+    tone = "up" if avg >= 0.003 else "down" if avg <= -0.003 else "flat"
+    words = {"PRE": {"up": "GREEN OPEN", "down": "RED OPEN", "flat": "FLAT OPEN"},
+             "REGULAR": {"up": "TRADING UP", "down": "TRADING DOWN", "flat": "TRADING FLAT"}}
+    word = words.get(session, {"up": "CLOSED UP", "down": "CLOSED DOWN", "flat": "CLOSED FLAT"})[tone]
+    return {"word": word, "tone": tone, "move": avg}
+
+
 def takeaway(indexes: list[dict], macro: list[dict]) -> str:
     def move(r):
         c = r["future"]["now"] if r.get("future") and r["future"]["now"] is not None else r["now"]
@@ -194,7 +216,7 @@ def build(provider, snaps: list[dict], now: datetime | None = None, news_fn=None
         except Exception as e:
             log.info("briefing market news failed: %s", e)
             news_why = "Finnhub didn't return market headlines"
-    return {"as_of": now.isoformat(timespec="minutes"), "session": data.us_session(now), "takeaway": takeaway(indexes, macro),
+    return {"as_of": now.isoformat(timespec="minutes"), "session": data.us_session(now), "takeaway": takeaway(indexes, macro), "mood": mood(indexes, data.us_session(now)),
             "indexes": indexes, "macro": macro, "sectors": sectors, "exposure": exposure(snaps), "movers": movers(snaps),
             "holdings_news": holdings_news(snaps, now), "market_news": market_news, "market_news_why": news_why,
             "missing": missing,
