@@ -111,8 +111,9 @@ def second_opinion(code: str | None, raw: dict | None, close: float | None = Non
 
 def second_unavailable(key_set: bool) -> dict:
     """Why there is no second opinion, so the screen says it instead of staying silent."""
-    return {"source": "Finnhub", "unavailable": "no FINNHUB_API_KEY is set on the app" if not key_set
-            else "Finnhub answered nothing for this stock (its technical endpoints may need a paid plan)"}
+    return {"source": "TradingView / Finnhub",
+            "unavailable": "TradingView answered nothing for this stock" + (
+                ", and Finnhub's technical endpoints may need a paid plan" if key_set else ", and no FINNHUB_API_KEY is set")}
 
 
 def rank(code: str | None) -> int | None:

@@ -836,6 +836,16 @@ def second_note(ps: dict | None) -> str:
     return head + (" · its " + ", ".join(lv) if lv else "") + ". A second opinion only; it changes no call."
 
 
+def pricecheck_note(ps: dict | None) -> str:
+    """One line on the Stooq re-check of the closes behind the status, or nothing when it did not run."""
+    pc = (ps or {}).get("pricecheck")
+    if not pc:
+        return ""
+    if pc.get("unavailable"):
+        return f'Price check ({pc["source"]}): no read. {pc["unavailable"][0].upper()}{pc["unavailable"][1:]}.'
+    return f'Price check ({pc["source"]}): {pc["verdict"]}. {pc["note"]}'
+
+
 def status_note(snap: dict) -> str:
     """The Details page's statement: where the price stands, what to do, and the levels behind it."""
     ps = price_status(snap)
@@ -859,6 +869,9 @@ def status_note(snap: dict) -> str:
     second = second_note(ps)
     if second:
         parts.append(f'<div style="font-size:.78rem;margin-top:.3rem;color:var(--ink)">{escape(second)}</div>')
+    check = pricecheck_note(ps)
+    if check:
+        parts.append(f'<div style="font-size:.78rem;margin-top:.3rem;color:{WARN if (ps.get("pricecheck") or {}).get("agrees") is False else "var(--ink)"}">{escape(check)}</div>')
     return f'<div class="mc-ev" style="--c:{color}">{"".join(parts)}</div>'
 
 

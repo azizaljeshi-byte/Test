@@ -214,7 +214,8 @@ def test_the_engine_records_why_when_finnhub_gives_nothing(monkeypatch):
 
 def test_details_says_no_read_with_the_reason():
     line = ui.second_note({"second": status.second_unavailable(False)})
-    assert line == "Finnhub: no read. No FINNHUB_API_KEY is set on the app."
+    assert line == ("TradingView / Finnhub: no read. TradingView answered nothing for this stock, "
+                    "and no FINNHUB_API_KEY is set.")
 
 
 def snap_second(sec):
