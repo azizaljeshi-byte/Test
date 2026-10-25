@@ -48,7 +48,8 @@ def test_no_order_advice_unless_the_verdict_is_buy():
 
 
 def test_shares_are_whole_and_a_too_small_account_says_so():
-    s = make("NOW", "pullback", mom="strong")
+    import copy
+    s = copy.deepcopy(make("NOW", "pullback", mom="strong"))
     s["payload"]["plan"].update(entry=147.29, risk_per_share=47.21, stop=100.08)
     small = guide.buy_tab(s, 2517, 1.0, 15)
     assert "too small" in small and "47.21" in small and "<b>1</b>" not in small
@@ -58,7 +59,8 @@ def test_shares_are_whole_and_a_too_small_account_says_so():
 
 
 def test_a_price_already_below_the_chart_floor_says_the_exit_was_hit():
-    s = make("NOW", "pullback", mom="strong")
+    import copy
+    s = copy.deepcopy(make("NOW", "pullback", mom="strong"))          # the sample's inner dicts are shared between tests
     s["payload"]["plan"].update(entry=147.29, risk_per_share=47.21, stop=100.08)
     s["payload"]["technical"]["price_status"]["levels"] = {"support_low": 178.59}
     s["payload"]["quote"] = {}
