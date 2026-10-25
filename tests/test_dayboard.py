@@ -245,3 +245,14 @@ def test_buy_the_checks_argue_against_shows_one_answer(monkeypatch):
     ok = [{"state": dayboard.BULL, "text": t} for t in "abcd"]
     monkeypatch.setattr(dayboard, "checks", lambda s: ok)
     assert dayboard.assess(snap)["word"] == "BUY"
+
+def test_today_card_rows_and_chips():
+    lines = ["Market backdrop is supportive (risk-on).", "Needs attention now: DIS, GLW.", "In a buy zone: AAPL.",
+             "Reporting this week: GLW (3d), NVDA (5d).", "Big out-of-hours moves: TSLA -4.2% AH, AMD +3.1% pre.",
+             "Strongest: AAPL, MSFT. Weakest: DIS, GLW.", "Something new."]
+    html = dayboard.today_card(lines, ["DIS"], "Friday 23 Oct")
+    assert 'class="rd-today"' in html and "Friday 23 Oct" in html
+    assert html.count('class="rd-bc act"') == 2 and html.count('class="rd-bc buy"') == 3
+    assert "view=target&t=GLW" in html and "<small>3d</small>" in html
+    assert 'class="rd-bc dn"' in html and "-4.2% AH" in html and "Note" in html
+    assert dayboard.today_card([], [], "") == ""

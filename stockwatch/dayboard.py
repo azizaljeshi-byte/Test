@@ -424,6 +424,69 @@ def headline(n_need: int, n_close: int, n_calm: int) -> str:
             f'and <em class="dz-calm">{n_calm} {"is" if n_calm == 1 else "are"} calm</em>.</h1>')
 
 
+TODAY_ICON = {"good": "▲", "bad": "▼", "careful": "!", "info": "i"}
+
+
+def _chip(t: str, cls: str, extra: str = "") -> str:
+    return (f'<a class="rd-bc {cls}" href="?view=target&t={escape(t)}" target="_self">{escape(t)}'
+            f'{f"<small>{escape(extra)}</small>" if extra else ""}</a>')
+
+
+def _row(kind: str, title: str, text: str = "", chips: str = "") -> str:
+    return (f'<div class="rd-br"><i class="dz-ic dz-k-{kind}">{TODAY_ICON[kind]}</i><div><b>{escape(title)}</b>'
+            f'{f"<p>{text}</p>" if text else ""}{f"<div class=rd-cs>{chips}</div>" if chips else ""}</div></div>')
+
+
+def today_card(lines: list[str], tickers=(), when: str = "") -> str:
+    """The mission brief as an always-open card: one row per kind of line, an icon on each, tickers as tappable chips.
+    It reads the lines `briefing.portfolio` already writes (nothing new is computed) and falls back to a plain row for any
+    line it does not know."""
+    import re
+    rows = []
+    for line in lines:
+        m = re.match(r"(Market backdrop is) (.*)", line)
+        if m:
+            kind = "good" if "supportive" in line else "bad" if "hostile" in line else "careful"
+            rows.append(_row(kind, "Market", escape("The backdrop is " + m.group(2))))
+            continue
+        m = re.match(r"Needs attention now: (.*)\.$", line)
+        if m:
+            ts = [x.strip() for x in m.group(1).split(",")]
+            rows.append(_row("bad", "Needs you today", f"{len(ts)} stock{'s' if len(ts) != 1 else ''}", "".join(_chip(t, "act") for t in ts)))
+            continue
+        m = re.match(r"In a buy zone: (.*)\.$", line)
+        if m:
+            ts = [x.strip() for x in m.group(1).split(",")]
+            rows.append(_row("good", "In a buy zone", f"{len(ts)} stock{'s' if len(ts) != 1 else ''}", "".join(_chip(t, "buy") for t in ts)))
+            continue
+        m = re.match(r"Reporting this week: (.*)\.$", line)
+        if m:
+            chips = "".join(_chip(a, "cal", b) for a, b in re.findall(r"([A-Z][A-Z0-9.\-]*) \((\d+d)\)", m.group(1)))
+            rows.append(_row("careful", "Reporting this week", "", chips))
+            continue
+        m = re.match(r"Big out-of-hours moves: (.*)\.$", line)
+        if m:
+            found = re.findall(r"([A-Z][A-Z0-9.\-]*) ([+-][\d.]+)% (pre|AH)", m.group(1))
+            chips = "".join(_chip(t, "dn" if float(c) < 0 else "up", f"{float(c):+.1f}% {w}") for t, c, w in found)
+            rows.append(_row("info", "Out of hours", "Big moves", chips))
+            continue
+        m = re.match(r"Strongest: (.*?)\. Weakest: (.*)\.$", line)
+        if m:
+            def group(label, txt, cls):
+                return f'<span class="rd-lb">{label}</span>' + "".join(_chip(x.strip(), cls) for x in txt.split(","))
+            rows.append(_row("info", "Strongest and weakest", "", group("Strongest", m.group(1), "buy") + group("Weakest", m.group(2), "dn")))
+            continue
+        m = re.match(r"Changed since last sweep: (.*)\.$", line)
+        if m:
+            rows.append(_row("careful", "Changed since the last sweep", ui.link_tickers(m.group(1), tickers)))
+            continue
+        rows.append(_row("info", "Note", ui.link_tickers(line, tickers)))
+    if not rows:
+        return ""
+    sub = f"<small>{escape(when)}</small>" if when else ""
+    return f'<div class="rd-today"><div class="rd-th"><span>Today</span>{sub}</div>{"".join(rows)}</div>'
+
+
 def render(snaps: list[dict], changed: dict[str, str] | None = None, brief: str = "") -> str:
     changed = changed or {}
     need, close, calm = [], [], []
@@ -433,7 +496,7 @@ def render(snaps: list[dict], changed: dict[str, str] | None = None, brief: str 
     parts = [f'<style>{CSS}</style><div class="rd">', headline(len(need), len(close), len(calm)), movers(snaps)]
     parts.append(dot_map(snaps))
     if brief:
-        parts.append(f'<details class="rd-brief"><summary>Today\'s brief</summary>{brief}</details>')
+        parts.append(brief)
     for title, group, cls in (("Needs you today", need, "act"), ("Getting close", close, "watch"), ("All calm", calm, "calm")):
         if group:
             parts.append(f'<div class="rd-sec"><i class="dz-{cls}"></i>{title} <small>{len(group)}</small></div>')
@@ -487,7 +550,17 @@ CSS = """
 .rd-now{text-align:center;font-size:.74rem;color:var(--dz-muted);margin:2px 0 8px}
 .rd-go{display:block;text-align:center;margin-top:12px;padding:10px;border-radius:11px;background:var(--dz-ink);color:var(--dz-bg);font-weight:700;text-decoration:none}
 .rd-lines{margin-top:2px}
-.rd-brief{background:var(--dz-surface);border:1px solid var(--dz-line);border-radius:12px;padding:9px 12px;margin:10px 0}
+.rd-today{background:var(--dz-surface);border:1px solid var(--dz-line);border-radius:16px;padding:14px;border-top:3px solid var(--dz-ink);margin:14px 0}
+.rd-th{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}.rd-th span{font-size:1.15rem;font-weight:800}
+.rd-th small{color:var(--dz-muted);font-size:.72rem}
+.rd-br{display:flex;gap:10px;padding:11px 0;border-top:1px solid var(--dz-line)}.rd-br:first-of-type{border-top:0}.rd-br>div{flex:1;min-width:0}
+.rd-br b{font-size:.74rem;text-transform:uppercase;letter-spacing:.06em;color:var(--dz-soft)}
+.rd-br p{margin:4px 0 0;font-size:.86rem;line-height:1.4;color:var(--dz-ink)}.rd-br p a{color:var(--dz-calm)}
+.rd-cs{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px;align-items:center}
+.rd-bc{display:inline-flex;gap:5px;align-items:center;font-size:.76rem;font-weight:800;padding:4px 9px;border-radius:99px;text-decoration:none;color:var(--dz-ink);
+  border:1px solid color-mix(in srgb,var(--dz-c) 55%,transparent);background:color-mix(in srgb,var(--dz-c) 14%,transparent)}
+.rd-bc small{font-weight:600;color:var(--dz-muted)}.rd-bc.act,.rd-bc.dn{--dz-c:var(--dz-act)}.rd-bc.buy,.rd-bc.up{--dz-c:var(--dz-buy)}.rd-bc.cal{--dz-c:var(--dz-watch)}
+.rd-bc.dn small{color:var(--dz-act)}.rd-bc.up small{color:var(--dz-buy)}.rd-lb{font-size:.68rem;color:var(--dz-muted)}
 .rd-key{margin-top:22px;background:var(--dz-surface);border:1px solid var(--dz-line);border-radius:14px;padding:12px 14px;font-size:.8rem;display:grid;gap:7px}
 .rd-key div{display:flex;gap:10px;align-items:center}.rd-key .rd-note{display:block}
 .rd-r{position:absolute;opacity:0;pointer-events:none}
