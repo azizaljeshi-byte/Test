@@ -63,11 +63,12 @@ def _open(book: Book, snap: dict, price: float, now: datetime, d: dict) -> dict 
     trade = {"id": book.next_id, "ticker": snap["ticker"], "opened": _ts(now), "entry": price, "shares": shares, "size": round(cost, 2),
              "stop": plan["stop"], "target1": t, "reason": d["reason"], "status": "OPEN", "closed": None, "exit": None,
              "exit_reason": None, "result": 0.0, "r": None, "worst": 0.0, "best": 0.0, "risk": round(shares * (price - plan["stop"]), 2),
-             "sold": 0, "proceeds": 0.0}
+             "sold": 0, "proceeds": 0.0, "stretched": False, "at_target": None}
     book.next_id += 1
     book.trades.append(trade)
     book.positions[snap["ticker"]] = {"trade": trade["id"], "shares": shares, "entry": price, "stop": plan["stop"], "stage": "full",
-                                      "t1_done": False, "below_since": None, "opened": now.isoformat()}
+                                      "t1_done": False, "below_since": None, "opened": now.isoformat(),
+                                      "stop0": plan["stop"], "stretch": False, "weak_since": None}
     return trade
 
 
@@ -103,7 +104,8 @@ def step(book: Book, snaps: dict, prices: dict, now: datetime, cfg: decision.Con
             trade["worst"], trade["best"] = min(trade["worst"], round(move, 2)), max(trade["best"], round(move, 2))
         pos_view = None
         if pos:
-            pos_view = {**pos, "below_since": datetime.fromisoformat(pos["below_since"]) if pos.get("below_since") else None}
+            pos_view = {**pos, "below_since": datetime.fromisoformat(pos["below_since"]) if pos.get("below_since") else None,
+                        "weak_since": datetime.fromisoformat(pos["weak_since"]) if pos.get("weak_since") else None}
         d = decision.decide(snap, pos_view, price, now, cfg)
         a = d["action"]
         if d.get("blocked"):
@@ -114,6 +116,19 @@ def step(book: Book, snaps: dict, prices: dict, now: datetime, cfg: decision.Con
                 pos["below_since"] = now.isoformat()
             if d.get("clear_below"):
                 pos["below_since"] = None
+            if d.get("mark_weak") and not pos.get("weak_since"):
+                pos["weak_since"] = now.isoformat()
+            if d.get("clear_weak"):
+                pos["weak_since"] = None
+            if d.get("set_stop") is not None:
+                pos["stop"] = max(pos["stop"], d["set_stop"])
+            if d.get("start_stretch"):
+                pos["stretch"] = True
+                trade = next(t for t in book.trades if t["id"] == pos["trade"])
+                trade["stretched"] = True
+                # what selling every share at the first target would have made, to compare with how the stretch ends
+                trade["at_target"] = round(((trade["target1"] or price) - trade["entry"]) * trade["shares"], 2)
+                done.append({"ticker": ticker, "action": "STRETCH", "price": price, "reason": d["reason"], "time": _ts(now)})
         if a == "ENTER" and not pos and price:
             t = _open(book, snap, price, now, d)
             if t:
@@ -123,6 +138,8 @@ def step(book: Book, snaps: dict, prices: dict, now: datetime, cfg: decision.Con
             if d.get("move_stop_to_entry") and ticker in book.positions:
                 book.positions[ticker]["stop"] = max(book.positions[ticker]["stop"], book.positions[ticker]["entry"])
                 book.positions[ticker]["t1_done"] = True
+            if d.get("end_stretch") and ticker in book.positions:
+                book.positions[ticker]["stretch"] = False
             done.append({"ticker": ticker, "action": a, "price": price, "reason": d["reason"], "time": _ts(now)})
     book.log = (book.log + done)[-200:]
     return done
@@ -137,6 +154,9 @@ def report(book: Book, prices: dict | None = None) -> dict:
     out = {"opened": len(book.trades), "closed": len(closed), "open": len(book.positions), "wins": len(wins),
            "losses": len(closed) - len(wins), "win_rate": len(wins) / len(closed) if closed else None, "avg_r": avg_r,
            "result": round(sum(t["result"] for t in closed), 2), "equity": round(book.equity(prices or {}), 2), "blocked": len(book.blocked)}
+    st = [t for t in closed if t.get("stretched") and t.get("at_target") is not None]
+    out["stretched"] = len([t for t in book.trades if t.get("stretched")])
+    out["stretch_gain"] = round(sum(t["result"] - t["at_target"] for t in st), 2) if st else None
     if len(closed) < MIN_TRADES_TO_JUDGE:
         out["verdict"] = f"Too few trades to judge ({len(closed)} of {MIN_TRADES_TO_JUDGE} needed)."
     elif avg_r is not None and avg_r > 0.2:

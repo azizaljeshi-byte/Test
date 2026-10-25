@@ -79,8 +79,65 @@ def test_a_gap_far_through_the_stop_sells_at_once_and_a_first_hour_breach_waits(
 
 def test_the_first_target_sells_a_third_and_moves_the_stop_to_the_entry():
     s = buy_snap()
-    d = decision.decide(s, held(), 108.5, at(13, 0))
+    mixed = make("NOW", "strong_uptrend", mom="stabilising")             # not strong: the old rule
+    mixed["ticker"] = "AAA"
+    mixed["payload"]["plan"].update(entry=99.5, risk_per_share=4.5)
+    d = decision.decide(mixed, held(), 108.5, at(13, 0))
     assert d["action"] == "SELL_PART" and abs(d["fraction"] - 1 / 3) < 1e-9 and d["move_stop_to_entry"]
+    assert decision.decide(s, held(), 108.5, at(13, 0), decision.Config(stretch=False))["action"] == "SELL_PART"
+
+
+def stretching(**kw):
+    return held(**{"stretch": True, "stop0": 95.0, "weak_since": None, **kw})
+
+
+def test_a_strong_trend_at_the_first_target_stretches_instead_of_selling():
+    s = buy_snap()
+    s["payload"]["technical"]["price_status"]["levels"] = {"support_low": 104.0}
+    d = decision.decide(s, held(), 108.5, at(13, 0))
+    assert d["action"] == "HOLD" and d["start_stretch"] and d["set_stop"] == 104.0
+    s["payload"]["technical"]["price_status"]["levels"] = {"support_low": 98.0}
+    assert decision.decide(s, held(), 108.5, at(13, 0))["set_stop"] == 99.5            # never below the entry
+
+
+def test_a_stretch_trails_the_stop_up_and_never_down():
+    s = buy_snap()
+    s["payload"]["technical"]["price_status"]["levels"] = {"support_low": 106.0}
+    d = decision.decide(s, stretching(stop=104.0), 112.0, at(13, 0))
+    assert d["action"] == "HOLD" and d["set_stop"] == 106.0
+    s["payload"]["technical"]["price_status"]["levels"] = {"support_low": 101.0}
+    assert "set_stop" not in decision.decide(s, stretching(stop=104.0), 112.0, at(13, 5))
+
+
+def test_a_stretch_sells_a_third_at_the_cap_and_everything_when_the_trend_stays_turned():
+    s = buy_snap()
+    d = decision.decide(s, stretching(stop=104.0), 114.5, at(13, 0))                    # 99.5 + 3 x 4.5 = 113
+    assert d["action"] == "SELL_PART" and d["end_stretch"] and abs(d["fraction"] - 1 / 3) < 1e-9
+    bad = make("NOW", "strong_uptrend", mom="falling")
+    bad["ticker"] = "AAA"
+    bad["payload"]["plan"].update(entry=99.5, risk_per_share=4.5)
+    d = decision.decide(bad, stretching(stop=99.5), 108.0, at(13, 0))
+    assert d["action"] == "ALERT" and d["mark_weak"]
+    assert decision.decide(bad, stretching(stop=99.5, weak_since=at(12, 50)), 108.0, at(13, 0))["action"] == "ALERT"   # 10 of 30
+    assert decision.decide(bad, stretching(stop=99.5, weak_since=at(12, 20)), 108.0, at(13, 0))["action"] == "SELL_ALL"
+    d = decision.decide(s, stretching(stop=99.5, weak_since=at(12, 50)), 108.0, at(13, 0))     # it recovered
+    assert d["action"] == "HOLD" and d["clear_weak"]
+
+
+def test_a_stretched_trade_is_journalled_and_compared_with_selling_at_the_target():
+    s = buy_snap()
+    s["payload"]["technical"]["price_status"]["levels"] = {"support_low": 104.0}
+    book = paper.Book()
+    paper.step(book, {"AAA": s}, {"AAA": 99.5}, at(11, 30))
+    done = paper.step(book, {"AAA": s}, {"AAA": 108.5}, at(13, 0))
+    pos = book.positions["AAA"]
+    assert done[0]["action"] == "STRETCH" and pos["stretch"] and pos["stop"] == 104.0 and pos["shares"] == book.trades[0]["shares"]
+    paper.step(book, {"AAA": s}, {"AAA": 103.0}, at(13, 5))                              # falls through the trailed stop
+    paper.step(book, {"AAA": s}, {"AAA": 103.0}, at(13, 40))
+    t = book.trades[0]
+    assert t["status"] == "CLOSED" and t["stretched"] and t["at_target"] > t["result"]
+    r = paper.report(book)
+    assert r["stretched"] == 1 and r["stretch_gain"] < 0
 
 
 def test_a_day_on_the_book_buys_sells_and_journals_with_r():
@@ -90,7 +147,7 @@ def test_a_day_on_the_book_buys_sells_and_journals_with_r():
     assert [x["action"] for x in done] == ["ENTER"] and "AAA" in book.positions
     pos = book.positions["AAA"]
     assert pos["shares"] * 99.5 <= 0.15 * 50000 + 100 and book.cash < 50000          # capped by the 15% limit
-    paper.step(book, {"AAA": s}, {"AAA": 108.5}, at(13, 0))                         # a third at the target, stop to entry
+    paper.step(book, {"AAA": s}, {"AAA": 108.5}, at(13, 0), decision.Config(stretch=False))   # a third at the target, stop to entry
     assert book.positions["AAA"]["stop"] == 99.5 and book.positions["AAA"]["t1_done"]
     paper.step(book, {"AAA": s}, {"AAA": 97.0}, at(15, 45))                         # warning exit: half of what is left
     big = {**s, "payload": {**s["payload"], "plan": {**s["payload"]["plan"], "stop": 99.5}}}
