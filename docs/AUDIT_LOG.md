@@ -11,7 +11,7 @@ Status words: **checked** (code read, lead is true), **not checked** (not looked
 | # | Lead | Where | Status | Plain meaning |
 |---|---|---|---|---|
 | A1 | A watchlist stock with a serious risk (bankruptcy, restated accounts) can still show BUY SETUP, because the entry check runs before the risk check | `engine._verdict` | **checked** | Risk should win over opportunity. |
-| A2 | A SELL turns into REASSESS on any rebound of 3% or more, even when the cause is serious (not just a price signal) | `ui.reassess` | **checked**, decision | Only a price-only sell should be allowed to wait. Alerts and cards must agree. |
+| A2 | A SELL turns into REASSESS on any rebound of 3% or more, even when the cause is serious (not just a price signal) | `ui.reassess` | **by design, keep as is** (owner, 25 Oct 2026) | The owner asked for this: never say sell into a bounce. Left unchanged. If it is ever revisited, the only question is whether a serious non-price cause (bankruptcy, restated accounts) should be exempt. |
 | A3 | The second-source checks (TradingView, Finnhub, Stooq) only run when the chart already looks bad, so on a bullish buy the gate never sees them and passes | `engine.evaluate`, `status.entry_blockers` | **checked**, decision | Our own entry gate 5 is mostly asleep on healthy buys. Fail-open or fail-closed is the owner's call. |
 | A4 | A quote marked "live" is not checked for age, and the paper account trusts it | `ui._now`, `paper_live.tick` | not checked | Could let paper trade on an old price. Cheap to fix. Paper only. |
 | A5 | Target 1 falls back to "2 times the risk" when nothing real fits, so reward against risk looks fine by construction | `tradeplan.build` | **checked** | Should say "illustrative", not show as evidence. |
@@ -52,7 +52,7 @@ Leads 1 to 4 match A2, A3, A5 and B10. Lead 5 matches C3. Lead 6 matches B6, C4.
 
 ## Order we suggest (small pull requests)
 
-1. A1, then A2, with a table of cases and tests.
+1. A1 first, with a table of cases and tests. A2 stays as the owner wants it.
 2. A4 (paper), A5 (label), B3, B6.
 3. A3 once the owner picks fail-open or fail-closed.
 4. B1 and B2 as a methodology decision with the owner.
