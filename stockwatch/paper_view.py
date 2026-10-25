@@ -65,7 +65,7 @@ def html(st: dict, prices: dict | None = None, now: datetime | None = None) -> s
         span = (t["target1"] or t["entry"]) - t["stop"]
         spot = max(0, min(100, ((px or t["entry"]) - t["stop"]) / span * 100)) if span else 50
         opens.append(
-            f'<div class="pp-t"><div class="pp-th"><b>{escape(t["ticker"])}</b><span class="pp-tag o">OPEN</span></div>'
+            f'<div class="pp-t"><div class="pp-th"><b>{escape(t["ticker"])}</b>{'<span class="pp-tag o">STRETCHING</span> ' if pos.get("stretch") else ""}<span class="pp-tag o">OPEN</span></div>'
             f'<div class="pp-m">Bought {escape(t["opened"])} · {pos.get("shares", t["shares"])} sh @ {_usd(t["entry"])}</div>'
             f'<div class="pp-bar"><i style="left:{spot:.0f}%"></i></div>'
             f'<div class="pp-lb"><span>Stop {_usd(pos.get("stop", t["stop"]))}</span>'
@@ -78,6 +78,8 @@ def html(st: dict, prices: dict | None = None, now: datetime | None = None) -> s
         f'<span class="{"up" if t["result"] > 0 else "dn"}"><b>{_signed(t["result"])} · {_r(t["r"])}</b></span></div>' for t in closed)
     blocked = "".join(f'<div class="pp-row"><span><b>{escape(b["ticker"])}</b> <small>{escape(b["time"])}</small><br><small>{escape(b["reason"])}</small></span>'
                       f'<span>{_usd(b["price"])}</span></div>' for b in reversed(book.blocked[-8:]))
+    sg = rep["stretch_gain"]
+    stretch_line = "" if sg is None else f" · versus selling all at the first target: {_signed(sg)}"
     wr = "—" if rep["win_rate"] is None else f'{rep["win_rate"] * 100:.0f}%'
     return (f'<style>{CSS}</style><div class="pp"><div class="pp-c"><div class="pp-h">Paper trading</div>'
             f'<div class="pp-m">A fake account follows the rules. Nothing here is real money.</div>{msg}'
@@ -89,6 +91,7 @@ def html(st: dict, prices: dict | None = None, now: datetime | None = None) -> s
             f'<div class="pp-c"><div class="pp-h">Report</div><div class="pp-k2"><div><small>Closed</small><b>{rep["closed"]}</b></div>'
             f'<div><small>Win rate</small><b>{wr}</b></div><div><small>Average R</small><b>{_r(rep["avg_r"])}</b></div>'
             f'<div><small>Buys held back</small><b>{rep["blocked"]}</b></div></div>'
+            f'<div class="pp-m">Stretched trades: {rep["stretched"]}{stretch_line}</div>'
             f'<div class="pp-v">{escape(rep["verdict"])}</div>'
             f'<div class="pp-hd">Buys the entry gates held back</div>{blocked or "<div class=pp-m>None yet.</div>"}</div></div>')
 
