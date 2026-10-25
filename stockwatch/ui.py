@@ -547,7 +547,7 @@ def ring(snap: dict) -> tuple[int, str]:
         return 1, "support broke: exit the trade"
     if side == "risk" and stance == "REDUCE / EXIT":
         return 1, "the plan says reduce or exit"
-    if side == "opp" and status.blocks_buy(price_status(snap)):
+    if side == "opp" and status.blocks_buy(price_status(snap), p.get("technical")):
         return 2, "support broke: don't add yet"
     buying = side == "opp" and stance in ("BUY NOW", "BUY ON PULLBACK", "BUY THE BREAKOUT", "ADD")
     lo, hi = plan.get("entry_low"), plan.get("entry_high")
@@ -702,7 +702,7 @@ def _action(snap: dict) -> tuple[str, str, str]:
     if p.get("error") or snap["verdict"] == "ERROR":
         return "NO SIGNAL", "?", MUTED
     # the same reconciliation the Telegram decision-change alerts use
-    stance = effective_stance(snap["verdict"], p.get("plan"), p["watchlist"], price_status(snap))
+    stance = effective_stance(snap["verdict"], p.get("plan"), p["watchlist"], price_status(snap), p.get("technical"))
     return ACTIONS.get(stance, (stance, "●", INFO))
 
 

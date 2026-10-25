@@ -213,17 +213,24 @@ def exit_on_breakdown(plan: dict | None, price_status: dict | None, watchlist: b
                        f"picture says. Rebuild only once price recovers above {lv['support_high']:.2f}."}
 
 
-def hold_off_buying(plan: dict | None, price_status: dict | None, watchlist: bool) -> dict | None:
-    """The plan follows the call: a confirmed breakdown under a buy or add plan turns it into hold (wait, on a
-    watchlist name), so no screen shows 'buy more' next to 'breakdown'. Entry, stop and targets stay for reference."""
-    if not plan or plan.get("stance") not in status.BUY_STANCES or not status.blocks_buy(price_status):
+def hold_off_buying(plan: dict | None, price_status: dict | None, watchlist: bool, technical: dict | None = None) -> dict | None:
+    """The plan follows the call: a confirmed breakdown, or a failed entry gate (`status.entry_blockers`), under a buy or add
+    plan turns it into hold (wait, on a watchlist name), so no screen shows 'buy more' next to bad evidence. Entry, stop
+    and targets stay for reference."""
+    if not plan or plan.get("stance") not in status.BUY_STANCES or not status.blocks_buy(price_status, technical):
         return plan
-    lv = price_status["levels"]
+    lv = price_status.get("levels") or {}
+    stance = "WAIT FOR CONFIRMATION" if watchlist else "HOLD"
+    if price_status.get("code") not in status.EXIT_CODES:
+        why = "; ".join(status.entry_blockers(price_status, technical))
+        return {**plan, "stance": stance, "status_exit": f"don't buy yet · {why}",
+                "trigger": "every entry check agrees: the chart holds, momentum is not falling and no other source says sell",
+                "notes": list(plan.get("notes", [])) + [f"Buy held back: {why}."]}
     low = lv.get("support_low")
     short = f"don't add yet · closed below support {low:.2f}" if low else "don't add yet · support broke"
     trigger = f"a close back above the support zone ({lv['support_high']:.2f}) with the risk signals clear" \
         if lv.get("support_high") else "price recovers above support"
-    return {**plan, "stance": "WAIT FOR CONFIRMATION" if watchlist else "HOLD", "status_exit": short, "trigger": trigger,
+    return {**plan, "stance": stance, "status_exit": short, "trigger": trigger,
             "notes": list(plan.get("notes", [])) + [
                 "Support broke on a completed close, so adding is on hold. Automatic levels, not reviewed: check the chart."]}
 
