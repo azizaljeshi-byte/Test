@@ -45,3 +45,22 @@ def test_no_order_advice_unless_the_verdict_is_buy():
     bad = full(make("NOW", "strong_uptrend", mom="falling"))
     html = guide.buy_tab(bad, 50000, 1.0, 15)
     assert "limit order" not in html and "planning only" in html
+
+
+def test_shares_are_whole_and_a_too_small_account_says_so():
+    s = make("NOW", "pullback", mom="strong")
+    s["payload"]["plan"].update(entry=147.29, risk_per_share=47.21, stop=100.08)
+    small = guide.buy_tab(s, 2517, 1.0, 15)
+    assert "too small" in small and "47.21" in small and "<b>1</b>" not in small
+    big = guide.buy_tab(s, 50000, 1.0, 15)
+    assert "too small" not in big and "lose about" in big
+    assert "$472.10" in big                                              # 10 whole shares at 47.21
+
+
+def test_a_price_already_below_the_chart_floor_says_the_exit_was_hit():
+    s = make("NOW", "pullback", mom="strong")
+    s["payload"]["plan"].update(entry=147.29, risk_per_share=47.21, stop=100.08)
+    s["payload"]["technical"]["price_status"]["levels"] = {"support_low": 178.59}
+    s["payload"]["quote"] = {}
+    s["price"] = 147.0
+    assert "already below the chart floor" in guide.buy_tab(s, 50000, 1.0, 15)

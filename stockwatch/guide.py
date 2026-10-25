@@ -124,11 +124,18 @@ def buy_tab(snap: dict, account: float, risk_pct: float, max_pct: float) -> str:
         steps.append(_step(2, "Entry: where to buy", "<p>No entry zone for this stock yet.</p>"))
     sizing = tradeplan.size(plan, account, risk_pct, max_pct) if plan and account else None
     if sizing:
-        cap = (f" That is over the {max_pct:.0f}% limit for this tier, so it is capped at <b>{sizing['shares']:.0f} shares</b> "
-               f"({_usd(sizing['value'])}).") if sizing["capped"] else f" About <b>{_usd(sizing['value'])}</b>."
+        rps, ent = plan["risk_per_share"], plan["entry"]
+        n = int(sizing["shares"])                                  # whole shares only: a fraction cannot be bought
+        if n >= 1:
+            cap = (f" That is over the {max_pct:.0f}% limit for this tier, so it is capped at <b>{n} shares</b>.") if sizing["capped"] else ""
+            note = (f"<p>If the stop is hit you lose about <b>{_usd(n * rps)}</b> ({n * rps / account * 100:.1f}% of the account). "
+                    f"The position costs about <b>{_usd(n * ent)}</b>.{cap}</p>")
+        else:
+            note = (f"<p>Your account is too small to size this within your limit. One share costs about <b>{_usd(ent)}</b> and "
+                    f"risks <b>{_usd(rps)}</b> at the stop ({rps / account * 100:.1f}% of the account), more than your "
+                    f"{risk_pct:g}% limit of {_usd(sizing['budget'])}. Skip it, or accept a bigger loss on purpose.</p>")
         body = ('<div class="tg-r">' + _cell("Account", _usd(account)) + _cell(f"Risk ({risk_pct:g}%)", _usd(sizing["budget"]))
-                + _cell("Per share", _usd(plan["risk_per_share"])) + _cell("Shares", f'{sizing["shares"]:.0f}') + "</div>"
-                + f"<p>If the stop is hit you lose about <b>{_usd(sizing['risk'])}</b>.{cap}</p>")
+                + _cell("Per share", _usd(rps)) + _cell("Shares", f"{n}") + "</div>" + note)
     else:
         body = "<p>Type your account size under the guide to see the number of shares.</p>"
     steps.append(_step(3, "Capital: how much to put in", body))
@@ -141,7 +148,13 @@ def buy_tab(snap: dict, account: float, risk_pct: float, max_pct: float) -> str:
         if t1:
             cells += _cell("Target 1", f'{t1["price"]:.2f}', f'{(t1["price"] / entry - 1) * 100:+.1f}%', "g")
         rr = plan.get("rr")
-        exit_txt = f" A daily close below <b>{lv['support_low']:.2f}</b> is the chart exit." if lv.get("support_low") else ""
+        floor = lv.get("support_low")
+        if not floor:
+            exit_txt = ""
+        elif _ok(price) and price < floor:
+            exit_txt = f" The price is already below the chart floor (<b>{floor:.2f}</b>), so that exit has been hit."
+        else:
+            exit_txt = f" A daily close below <b>{floor:.2f}</b> is the chart exit."
         weak = " That is below 2 to 1: consider a smaller size." if _ok(rr) and rr < 2 else ""
         steps.append(_step(4, "Stop: where you are wrong", f'<div class="tg-r">{cells}</div>'
                            f'<p>Place the stop order right after the buy.{exit_txt}'
