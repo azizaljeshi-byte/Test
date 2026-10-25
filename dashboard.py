@@ -350,8 +350,9 @@ if view == "target":
         st.markdown(ui.trade_plan(plan, sizing, risk_pct, portfolio_value), unsafe_allow_html=True)
         st.select_slider("Risk per trade (% of portfolio lost if the stop is hit)", [0.25, 0.5, 1.0, 1.5, 2.0],
                          value=risk_pct, key="risk_pct")
+        st.session_state.setdefault("account_size", int(portfolio_value) if portfolio_value else 10000)   # set once, so a typed number sticks
         account = st.number_input("Your account size in $ (include cash; used by the trade guide)", min_value=0, step=1000,
-                                  value=int(portfolio_value) if portfolio_value else 10000, key="account_size")
+                                  key="account_size")
         st.markdown(guide.card(snap, float(account), risk_pct, portfolio.rules(snap["tier"]).max_position_pct), unsafe_allow_html=True)
 
     if cis_decision.mode() == "shadow":
