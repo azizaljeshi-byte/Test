@@ -304,7 +304,7 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
                                     tech, plan_fs)
             plan = tradeplan.reconcile(plan, signals)
             plan = tradeplan.exit_on_breakdown(plan, tech.get("price_status"), h.is_watchlist)
-            plan = tradeplan.hold_off_buying(plan, tech.get("price_status"), h.is_watchlist)
+            plan = tradeplan.hold_off_buying(plan, tech.get("price_status"), h.is_watchlist, tech)
         ev.plan = plan
     except Exception as e:
         log.warning("trade plan failed for %s: %s", h.ticker, e)

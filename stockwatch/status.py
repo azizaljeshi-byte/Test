@@ -71,11 +71,40 @@ def forces_exit(price_status: dict | None, watchlist: bool) -> bool:
 BUY_STANCES = ("BUY NOW", "BUY ON PULLBACK", "BUY THE BREAKOUT", "ADD")
 
 
-def blocks_buy(price_status: dict | None) -> bool:
-    """True when a CONFIRMED breakdown (a completed close below support) sits under a buy or add call. Always on:
-    unlike the exit switch it sells nothing, it only stops the app saying 'buy more' and 'breakdown' about the same
-    stock at once. Unknown or missing status never blocks anything."""
-    return isinstance(price_status, dict) and price_status.get("code") in EXIT_CODES
+ENTRY_GATES = True        # owner, 2026-10-25: tighten buys so fewer turn into losses (docs/TIGHTENING.md section 1). False = old rule.
+GATE_BAD_CHART = ("weakening", "testing_support")
+GATE_BAD_MOMENTUM = ("falling", "weak", "fading")
+
+
+def entry_blockers(price_status: dict | None, technical: dict | None = None) -> list[str]:
+    """Plain-English reasons a buy or add should wait. A buy shows only when this is empty.
+    Gates: 1 chart structure, 2 momentum, 5 independent check (TradingView or Finnhub not SELL, price data not disagreeing).
+    A read that is missing is unknown and never blocks (the screen says it was not read)."""
+    out: list[str] = []
+    if not ENTRY_GATES or not isinstance(price_status, dict):
+        return out
+    code = price_status.get("code")
+    if code in GATE_BAD_CHART:
+        out.append(f"the chart reads {LABEL.get(code, code).lower()}")
+    mo = (technical or {}).get("momentum")
+    if isinstance(mo, dict) and mo.get("known") and mo.get("momentum") in GATE_BAD_MOMENTUM:
+        out.append(f"momentum is {mo['momentum']}")
+    sec = price_status.get("second")
+    if isinstance(sec, dict) and sec.get("signal") == "sell":
+        out.append(f"{sec.get('source', 'the second opinion')} says SELL")
+    pc = price_status.get("pricecheck")
+    if isinstance(pc, dict) and not pc.get("unavailable") and pc.get("agrees") is False:
+        out.append("the price data from another source disagrees")
+    return out
+
+
+def blocks_buy(price_status: dict | None, technical: dict | None = None) -> bool:
+    """True when a buy or add should not show: a CONFIRMED breakdown (a completed close below support), or, with the
+    entry gates on, any `entry_blockers` reason. Always on: it sells nothing, it only stops the app saying 'buy more'
+    next to bad evidence. Unknown or missing status never blocks anything."""
+    if not isinstance(price_status, dict):
+        return False
+    return price_status.get("code") in EXIT_CODES or bool(entry_blockers(price_status, technical))
 
 
 BEARISH = ("weakening", "testing_support", "breakdown", "deep_breakdown")

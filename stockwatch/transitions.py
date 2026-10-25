@@ -39,7 +39,8 @@ RISK_VERDICTS = {"RISK - REVIEW", "TRIM / REVIEW", "AVOID"}
 ICON = {"BUY": "🟢", "ADD": "🟢", "DIP": "🟢", "WAIT": "⚪", "HOLD": "🔵", "TRIM": "🟠", "SELL": "🔴", "PASS": "⚫"}
 
 
-def effective_stance(verdict: str, plan: dict | None, watchlist: bool, price_status: dict | None = None) -> str:
+def effective_stance(verdict: str, plan: dict | None, watchlist: bool, price_status: dict | None = None,
+                    technical: dict | None = None) -> str:
     """The plan's stance, or the verdict's when there's no plan. Nothing to sell on a watchlist name.
 
     A confirmed breakdown (`status.forces_exit`: a completed close below support, on a held stock) turns the call
@@ -50,7 +51,7 @@ def effective_stance(verdict: str, plan: dict | None, watchlist: bool, price_sta
     stance = (plan or {}).get("stance") or VERDICT_STANCE.get(verdict, "HOLD" if not watchlist else "WAIT FOR CONFIRMATION")
     if watchlist and stance in ("TRIM", "TRIM / PROTECT", "REDUCE / EXIT", "HOLD"):
         stance = "NO TRADE" if stance != "HOLD" else "WAIT FOR CONFIRMATION"
-    if stance in status.BUY_STANCES and status.blocks_buy(price_status):     # never 'buy more' over a broken support
+    if stance in status.BUY_STANCES and status.blocks_buy(price_status, technical):     # never 'buy more' over a broken support or a failed entry gate
         stance = "WAIT FOR CONFIRMATION" if watchlist else "HOLD"
     return stance
 
@@ -71,7 +72,7 @@ def reading(e, stale: bool) -> tuple[dict | None, str]:
         return None, "no trade plan"
     ps = (e.technical or {}).get("price_status")
     forced = status.forces_exit(ps, e.watchlist)
-    stance = effective_stance(e.verdict, e.plan, e.watchlist, ps)
+    stance = effective_stance(e.verdict, e.plan, e.watchlist, ps, e.technical)
     cls = STANCE_CLASS.get(stance)
     if cls is None:
         return None, "unknown stance"

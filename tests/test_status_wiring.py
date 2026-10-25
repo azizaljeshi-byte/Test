@@ -287,9 +287,9 @@ def test_the_engine_leaves_the_plan_alone_while_the_switch_is_off(monkeypatch):
 ADD_PLAN = dict(plan_of("NOW"), stance="ADD")
 
 
-@pytest.mark.parametrize("code,blocks", [("breakdown", True), ("deep_breakdown", True), ("testing_support", False),
-                                         ("weakening", False), ("record_high", False), ("unknown", False)])
-def test_only_a_confirmed_breakdown_blocks_buying(code, blocks):
+@pytest.mark.parametrize("code,blocks", [("breakdown", True), ("deep_breakdown", True), ("testing_support", True),
+                                         ("weakening", True), ("record_high", False), ("unknown", False)])
+def test_a_breakdown_or_a_bad_chart_blocks_buying(code, blocks):
     assert status.blocks_buy(ps(code)) is blocks
     assert status.blocks_buy(None) is False and status.blocks_buy({}) is False
 
@@ -304,9 +304,28 @@ def test_a_buy_over_a_breakdown_becomes_hold_or_wait(stance):
     assert tradeplan.hold_off_buying(plan, ps("deep_breakdown"), True)["stance"] == "WAIT FOR CONFIRMATION"
 
 
-def test_testing_support_keeps_the_buy_because_buying_at_support_is_coherent():
-    assert tradeplan.hold_off_buying(ADD_PLAN, ps("testing_support"), False) is ADD_PLAN
-    assert transitions.effective_stance("OPPORTUNITY - ADD", ADD_PLAN, False, ps("testing_support")) == "ADD"
+def test_testing_support_no_longer_keeps_the_buy_entry_gates_owner_2026_10_25():
+    held = tradeplan.hold_off_buying(ADD_PLAN, ps("testing_support"), False)
+    assert held["stance"] == "HOLD" and "testing support" in held["status_exit"] and "Buy held back" in held["notes"][-1]
+    assert transitions.effective_stance("OPPORTUNITY - ADD", ADD_PLAN, False, ps("testing_support")) == "HOLD"
+    assert tradeplan.hold_off_buying(ADD_PLAN, ps("testing_support"), True)["stance"] == "WAIT FOR CONFIRMATION"
+
+
+def test_each_entry_gate_blocks_and_a_missing_read_never_does():
+    good = ps("strong_uptrend")
+    assert status.entry_blockers(good, {"momentum": {"known": True, "momentum": "strong"}}) == []
+    assert status.entry_blockers(good, {"momentum": {"known": True, "momentum": "falling"}}) == ["momentum is falling"]
+    assert status.entry_blockers(good, {"momentum": {"known": False}}) == []                  # not read: unknown, not a no
+    assert status.entry_blockers(good, None) == []
+    assert status.entry_blockers({**good, "second": {"source": "TradingView", "signal": "sell"}}) == ["TradingView says SELL"]
+    assert status.entry_blockers({**good, "second": {"source": "TradingView", "unavailable": "x"}}) == []
+    assert status.entry_blockers({**good, "pricecheck": {"agrees": False}}) == ["the price data from another source disagrees"]
+    assert status.entry_blockers({**good, "pricecheck": {"unavailable": "x", "agrees": False}}) == []
+    assert status.entry_blockers(None) == []
+    mom = {"momentum": {"known": True, "momentum": "falling"}}
+    assert tradeplan.hold_off_buying(ADD_PLAN, good, False, mom)["stance"] == "HOLD"
+    assert transitions.effective_stance("OPPORTUNITY - ADD", ADD_PLAN, False, good, mom) == "HOLD"
+    assert transitions.effective_stance("OPPORTUNITY - ADD", ADD_PLAN, False, good, {}) == "ADD"
 
 
 def test_other_plans_are_left_alone():
@@ -332,7 +351,7 @@ def test_the_row_shows_hold_and_breakdown_not_buy_more_and_breakdown():
     plain = ev("HOOD", "NOW")
     plain.technical = {"price_status": ps("testing_support")}
     plain.plan = dict(ADD_PLAN)
-    assert "BUY MORE" in ui.row(snap_of(plain)) and "TESTING SUPPORT" in ui.row(snap_of(plain))
+    assert "BUY MORE" not in ui.row(snap_of(plain)) and "TESTING SUPPORT" in ui.row(snap_of(plain))
 
 
 def test_telegram_sees_hold_not_buy_when_support_has_broken():

@@ -71,7 +71,7 @@ def test_a_buy_the_checks_argue_against_becomes_watch_not_two_answers():
     assert dayboard.assess(s)["gauge"] in (3, 4)
     bad = make("NOW", "pullback", mom="falling", second={"source": "TradingView", "signal": "sell"}, rs=-0.2)
     a = dayboard.assess(bad)
-    assert a["word"] == "WATCH" and a["held_buy"] and a["gauge"] in (0, 1) and "held back" in a["why"]
+    assert a["word"] == "WATCH" and a["gauge"] in (0, 1)       # the entry gates now stop the buy upstream
     assert dayboard.word(make("NOW", "breakdown")) != "BUY"        # a confirmed breakdown already stops a buy call
 
 
