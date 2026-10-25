@@ -217,6 +217,13 @@ methodology change, after testing on real tickers and the owner's go-ahead.
   caught by the 106.48 stop. Both are shown, each with its job.
 - **No decision without fresh data.** A missing check says which one and shows "no decision", never a guess (and never a score of 0).
 - **Nothing hidden.** Every check and level stays on the page, split into evidence that agrees and evidence that disagrees.
+- **Owner decision, 2026-10-25, on when an exit acts:** not on the first dip. A price that falls through a level in the morning
+  and recovers (CRWV the week before: down about 6% at the open, closed about 2% down, an 8% swing in hours) must not cause a
+  sell. So: the warning exit is judged on the close (decide near 3:45 pm New York); during the day a breach raises an alert only;
+  a separate wider hard stop acts intraday only when the breach is confirmed (still below after a hold time, and not in the first
+  hour of the session), except for a gap far through it. Numbers to settle in testing: the opening blackout, the confirmation
+  hold, the size of the "far through" gap. Paper trading (section 14) should run close-only against confirmed-intraday and
+  compare. Sell all or half at the warning exit is still open.
 - **Owner to decide in testing:** at the warning exit, sell all or sell half; whether the warning exit acts after the close only or
   also during the day.
 - **Where the company is heading, drawn not written (owner, 2026-10-24): version C, small tiles.** Five tiles instead of the
