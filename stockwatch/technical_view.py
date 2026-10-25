@@ -111,8 +111,9 @@ def indicators(h: pd.DataFrame) -> list[dict]:
     wr = float((-100 * (hh - c) / (hh - ll).replace(0, np.nan)).iloc[-1])
     add("Williams %R (14)", wr, osc(wr, -80, -20), "under -80 Buy, over -20 Sell")
     tp = (h["High"] + h["Low"] + c) / 3
-    dev = (tp - tp.rolling(14).mean()).abs().rolling(14).mean()
-    cci = float(((tp - tp.rolling(14).mean()) / (0.015 * dev.replace(0, np.nan))).iloc[-1])
+    sma = tp.rolling(14).mean()
+    dev = tp.rolling(14).apply(lambda w: np.abs(w - w.mean()).mean(), raw=True)     # mean deviation around the window's own average
+    cci = float(((tp - sma) / (0.015 * dev.replace(0, np.nan))).iloc[-1])
     add("CCI (14)", cci, osc(cci, -100, 100), "under -100 Buy, over 100 Sell")
     atr = float(ta.atr(h).iloc[-1])
     rows.append({"name": "ATR (14)", "value": f"{atr:.2f} ({atr / price * 100:.1f}%)",
