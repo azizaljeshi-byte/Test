@@ -133,7 +133,7 @@ def assess(snap: dict) -> dict:
     cs = checks(snap)
     directional = [c["state"] for c in cs if c["state"] in (BULL, NEUTRAL, BEAR)]
     sell_side = w == "ACT" or (w == "WATCH" and held_sell(snap) is not False)
-    out = {"word": w, "sell_side": sell_side, "checks": cs, "score": None, "gauge": None, "gauge_label": None, "sure": None, "grade": None, "why": None,
+    out = {"word": w, "sell_side": sell_side, "checks": cs, "score": None, "gauge": None, "gauge_label": None, "sure": None, "grade": None, "why": None, "held_buy": False,
            "change": _change(snap, w)}
     if w == "UNCLEAR":
         out["why"] = snap["payload"].get("error") or "no usable signal"
@@ -143,7 +143,13 @@ def assess(snap: dict) -> dict:
         return out
     s = sum(directional) / len(directional)
     step = 0 if s <= -0.6 else 1 if s <= -0.2 else 2 if s < 0.2 else 3 if s < 0.6 else 4
-    if (sell_side and step >= 3) or (w == "BUY" and step <= 1):
+    if w == "BUY" and step <= 1:
+        # A buy the checks argue against: show one answer, not two. The plan's call is untouched; the card says WATCH.
+        w = out["word"] = "WATCH"
+        out["held_buy"] = True
+        out["why"] = "most checks lean negative, so the buy is held back"
+        out["change"] = None
+    elif sell_side and step >= 3:
         out["why"] = "the checks point the other way from the call"
         return out
     out["gauge"], out["gauge_label"], out["score"] = step, STEPS[step], round(s, 3)
@@ -168,7 +174,9 @@ def _change(snap: dict, w: str) -> str | None:
 
 # ---------------------------------------------------------------- rendering
 
-def _why(snap: dict) -> str:
+def _why(snap: dict, a: dict | None = None) -> str:
+    if a and a.get("held_buy"):
+        return "in the entry zone, but most checks lean negative: wait before adding"
     p = snap["payload"]
     if p.get("error"):
         return f'signal lost: {p["error"][:90]}'
@@ -284,6 +292,8 @@ def earnings_soon(snap: dict, days: int = 7) -> bool:
 def _words(snap: dict, a: dict) -> str:
     """The text on the call tag: the call, or the held-sell wording for a watch that is waiting for the close."""
     label = WORDS[a["word"]][0]
+    if a.get("held_buy"):
+        return "WATCH · BUY HELD BACK"
     held = held_sell(snap) if a["word"] == "WATCH" else False
     if held is not False:
         return f"WATCH · SELL BELOW {held:.2f}" if held else "WATCH · SELL IF IT CLOSES WEAK"
@@ -336,7 +346,7 @@ def card(snap: dict, was: str | None = None) -> str:
             f'<div class="rd-top"><div><b class="rd-tk">{escape(snap["ticker"])}</b><small>{escape(name)} · {own}</small></div>'
             f'<div class="rd-px"><b>{ui.num(price)}</b>{design.change_pill(day_move(snap))}{extra_price(snap)}</div></div>'
             f'<div class="rd-mid">{tag}{sure}{new}{bell}</div>'
-            f'<p class="rd-why">{escape(_why(snap))}</p></summary>'
+            f'<p class="rd-why">{escape(_why(snap, a))}</p></summary>'
             f'{_open(snap, a)}<div class="rd-lines">{lines}</div></details>')
 
 

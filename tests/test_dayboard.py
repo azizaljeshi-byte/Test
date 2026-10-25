@@ -66,12 +66,12 @@ def test_too_few_readable_checks_shows_no_gauge_and_says_why():
     assert a["gauge"] is None and "checks could be read" in a["why"]
 
 
-def test_a_gauge_pointing_the_other_way_from_the_call_shows_unclear_not_two_answers():
+def test_a_buy_the_checks_argue_against_becomes_watch_not_two_answers():
     s = make("NOW", "strong_uptrend", mom="strong", second={"source": "TradingView", "signal": "buy"}, rs=0.2)
     assert dayboard.assess(s)["gauge"] in (3, 4)
     bad = make("NOW", "pullback", mom="falling", second={"source": "TradingView", "signal": "sell"}, rs=-0.2)
     a = dayboard.assess(bad)
-    assert a["word"] == "BUY" and a["gauge"] is None and "other way" in a["why"]
+    assert a["word"] == "WATCH" and a["held_buy"] and a["gauge"] in (0, 1) and "held back" in a["why"]
     assert dayboard.word(make("NOW", "breakdown")) != "BUY"        # a confirmed breakdown already stops a buy call
 
 
@@ -231,6 +231,20 @@ def test_the_card_shows_the_after_hours_price_or_that_there_were_no_trades():
     s["payload"]["quote"] = {"market_state": "POST", "ext_price": float("nan")}
     assert "AH no trades yet" in dayboard.card(s)
 
+
+def test_buy_the_checks_argue_against_shows_one_answer(monkeypatch):
+    snap = {"ticker": "INTC", "verdict": "BUY", "payload": {}}
+    monkeypatch.setattr(dayboard, "word", lambda s: "BUY")
+    bear = [{"state": dayboard.BEAR, "text": t} for t in ("a", "b", "c")] + [{"state": dayboard.BULL, "text": "d"}]
+    monkeypatch.setattr(dayboard, "checks", lambda s: bear)
+    monkeypatch.setattr(dayboard, "held_sell", lambda s: False)
+    a = dayboard.assess(snap)
+    assert a["word"] == "WATCH" and a["held_buy"] and a["gauge"] is not None and a["sure"] is None
+    assert dayboard._words(snap, a) == "WATCH · BUY HELD BACK"
+    assert "wait before adding" in dayboard._why(snap, a)
+    ok = [{"state": dayboard.BULL, "text": t} for t in "abcd"]
+    monkeypatch.setattr(dayboard, "checks", lambda s: ok)
+    assert dayboard.assess(snap)["word"] == "BUY"
 
 def test_today_card_rows_and_chips():
     lines = ["Market backdrop is supportive (risk-on).", "Needs attention now: DIS, GLW.", "In a buy zone: AAPL.",
