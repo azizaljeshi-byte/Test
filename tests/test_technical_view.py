@@ -47,3 +47,15 @@ def test_the_page_renders_every_section_and_escapes():
     html = tv.html(tv.evidence(bars(300)))
     for text in ("Technical evidence", "Pivot points", "Fibonacci", "Moving averages", "Indicators", "Does not change the call".lower()):
         assert text in html or text in html.lower()
+
+
+def test_cci_uses_the_mean_deviation_around_the_current_window():
+    rng = np.random.default_rng(3)
+    n = 120
+    c = pd.Series(30 * np.exp(np.cumsum(rng.normal(0, 0.04, n))), index=pd.bdate_range("2025-01-01", periods=n))
+    h = pd.DataFrame({"Close": c, "High": c * 1.01, "Low": c * 0.99})
+    tp = (h.High + h.Low + h.Close) / 3
+    w = tp.iloc[-14:]
+    expected = (w.iloc[-1] - w.mean()) / (0.015 * np.abs(w - w.mean()).mean())
+    got = float(next(r["value"] for r in tv.indicators(h) if r["name"] == "CCI (14)"))
+    assert abs(got - expected) < 0.01
