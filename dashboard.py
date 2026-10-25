@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import paper_live, paper_view, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -231,7 +231,7 @@ controls()
 
 # ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
 VIEWS = {"radar": "◉ Radar", "turbo": "⚡ Turbo", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log",
-         "fleet": "+ Fleet", "research": "⚗ Research", "briefing": "☀ Briefing"}
+         "fleet": "+ Fleet", "research": "⚗ Research", "briefing": "☀ Briefing", "paper": "◈ Paper"}
 HIDDEN_VIEWS = ("fleet", "research")          # off the tab bar for now (owner); both still open at ?view=fleet and ?view=research
 SHOWN_VIEWS = [v for v in VIEWS if v not in HIDDEN_VIEWS]
 current = st.query_params.get("view", "radar")
@@ -658,6 +658,18 @@ if view == "turbo":
         st.caption("Recent: " + " · ".join(st.session_state.turbo_recent))
 
 # ---------------------------------------------------------------- alert log
+if view == "paper":
+    pst = paper_live.status(store)
+    ppx = {}
+    for t in (pst["state"] or {}).get("tickers", []):
+        sn = store.snapshot(t)
+        if sn:
+            px, _, _live = ui._now(sn)
+            if px == px and px is not None:
+                ppx[t] = float(px)
+    st.markdown(paper_view.html(pst, ppx), unsafe_allow_html=True)
+    st.caption("Fills are simulated at the latest price the tracker holds, so they are approximate. The app only trades while it is awake.")
+
 if view == "log":
     alerts = [a for a in store.recent_alerts(150) if a["ticker"] in tickers or a["source"] == "S&P scan"]
     if not alerts:

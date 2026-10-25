@@ -129,6 +129,13 @@ class Tracker:
         while self.running:
             try:
                 self.step(store)
+                if time.time() - getattr(self, "_paper_at", 0.0) >= 20:
+                    self._paper_at = time.time()
+                    try:
+                        from . import paper_live
+                        paper_live.tick(store)     # the paper-trading test: its own account, never a real order
+                    except Exception:
+                        log.exception("paper trading step failed")
                 self.maybe_market_scan(store)
                 self.last_error = None
             except Exception as e:   # keep tracking through a bad sweep
