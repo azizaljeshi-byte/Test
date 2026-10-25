@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from datetime import datetime
 
@@ -18,6 +19,16 @@ log = logging.getLogger("stockwatch.paper")
 BOOK_KEY, STATE_KEY = "paper_book", "paper_state"
 LIST_TTL, PUSH_MIN_SECONDS = 600, 60
 _cache: dict = {"list": None, "at": 0.0, "error": None}
+
+
+def paper_config() -> decision.Config:
+    """The paper account's rules. The opening blackout is 0 for now so the test sees the open too (owner, 2026-10-25);
+    set STOCKWATCH_PAPER_BLACKOUT_MIN=60 to bring the first-hour wait back. Paper only: live cards do not use this."""
+    try:
+        mins = int(os.getenv("STOCKWATCH_PAPER_BLACKOUT_MIN", "0"))
+    except ValueError:
+        mins = 0
+    return decision.Config(blackout_min=max(0, mins))
 
 
 def load_book(store) -> paper.Book:
@@ -76,7 +87,7 @@ def tick(store, now: datetime | None = None, force_session: bool = False) -> dic
         snaps[t], prices[t] = s, float(price)
     book = load_book(store)
     before = json.dumps(book.to_dict(), default=str, sort_keys=True)
-    done = paper.step(book, snaps, prices, now, decision.Config())
+    done = paper.step(book, snaps, prices, now, paper_config())
     state["did"] = done
     after = json.dumps(book.to_dict(), default=str, sort_keys=True)
     if after != before or not store.get_setting(BOOK_KEY):

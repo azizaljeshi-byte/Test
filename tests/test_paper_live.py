@@ -82,3 +82,13 @@ def test_an_empty_test_list_says_why(env):
     assert "first paper cycle" in paper_view.html(paper_live.status(env))
     env.set_setting(paper_live.STATE_KEY, json.dumps({"tickers": [], "skipped": {}, "note": ""}))
     assert "no rows with Paper = yes" in paper_view.html(paper_live.status(env))
+
+
+def test_the_paper_account_can_enter_at_the_open_and_the_wait_can_be_restored(env, monkeypatch):
+    monkeypatch.setattr(paper_live, "us_session", lambda: "REGULAR")
+    monkeypatch.setenv("STOCKWATCH_PAPER_BLACKOUT_MIN", "60")
+    paper_live.tick(env, datetime(2026, 10, 26, 9, 45, tzinfo=NY))
+    assert paper_live.status(env)["book"].trades == []
+    monkeypatch.delenv("STOCKWATCH_PAPER_BLACKOUT_MIN")
+    paper_live.tick(env, datetime(2026, 10, 26, 9, 46, tzinfo=NY))
+    assert [t["ticker"] for t in paper_live.status(env)["book"].trades] == ["AAA"]
