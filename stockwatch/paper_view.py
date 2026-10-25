@@ -30,6 +30,14 @@ def setup_note(cfg: dict) -> str:
     return ""
 
 
+def empty_reason(st: dict) -> str:
+    """Why the test list is empty, in plain words."""
+    state = st.get("state")
+    if state is None:
+        return "The tracker has not run its first paper cycle since the app started. Wait a minute and reload."
+    return "The list was read but has no rows with Paper = yes (check the Ticker and Paper headers in the Test list tab)."
+
+
 def html(st: dict, prices: dict | None = None, now: datetime | None = None) -> str:
     book: paper.Book = st["book"]
     state = st.get("state") or {}
@@ -75,7 +83,7 @@ def html(st: dict, prices: dict | None = None, now: datetime | None = None) -> s
             f'<div class="pp-m">A fake account follows the rules. Nothing here is real money.</div>{msg}'
             f'<div class="pp-k"><div><small>Account</small><b>{_usd(eq)}</b></div><div><small>Since start</small>'
             f'<b class="{"up" if eq >= day_start else "dn"}">{_signed(eq - day_start)}</b></div><div><small>Open</small><b>{rep["open"]} trades</b></div></div>'
-            f'<div class="pp-hd">Test list · {len(state.get("tickers", []))} stocks</div><div class="pp-chs">{chips or "<small>none yet</small>"}</div>{skipped}</div>'
+            f'<div class="pp-hd">Test list · {len(state.get("tickers", []))} stocks</div><div class="pp-chs">{chips or "<small>" + empty_reason(st) + "</small>"}</div>{skipped}</div>'
             f'<div class="pp-c"><div class="pp-h">Open now</div>{"".join(opens) or "<div class=pp-m>No open trades.</div>"}</div>'
             f'<div class="pp-c"><div class="pp-h">Closed</div>{rows or "<div class=pp-m>No closed trades yet.</div>"}</div>'
             f'<div class="pp-c"><div class="pp-h">Report</div><div class="pp-k2"><div><small>Closed</small><b>{rep["closed"]}</b></div>'

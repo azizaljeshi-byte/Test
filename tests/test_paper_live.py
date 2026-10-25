@@ -76,3 +76,9 @@ def test_the_paper_tab_renders_with_and_without_trades(env, monkeypatch):
     paper_live.tick(env, datetime(2026, 10, 26, 11, 30, tzinfo=NY))
     html = paper_view.html(paper_live.status(env), {"AAA": 100.0})
     assert "AAA" in html and "OPEN" in html and "NOPE" in html
+
+
+def test_an_empty_test_list_says_why(env):
+    assert "first paper cycle" in paper_view.html(paper_live.status(env))
+    env.set_setting(paper_live.STATE_KEY, json.dumps({"tickers": [], "skipped": {}, "note": ""}))
+    assert "no rows with Paper = yes" in paper_view.html(paper_live.status(env))
