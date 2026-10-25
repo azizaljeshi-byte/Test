@@ -226,6 +226,15 @@ methodology change, after testing on real tickers and the owner's go-ahead.
 - **Display first:** until this is built, stage 4 of the design shows the Details page with the decision on top and every source
   under it, labelled, and changes no call.
 
+## 13. Trade guide on Details: buy and sell, step by step (owner, 2026-10-25), mostly display, for stage 4g
+
+Ask: "I decided to buy, two hours into Monday's session. How do I find the entry, the capital and the stop? Add something on Details that guides me through the steps." Also for selling.
+
+Sample shown (made-up NVDA numbers). Buy: 1 check (gates with a tick or cross, and a verdict of Buy, Wait or Don't), 2 entry (the zone against the live price, limit order, don't chase above the zone), 3 size (account value, risk per trade, per-share risk, shares, capped by the tier limit), 4 stop (stop, chart exit, Target 1, reward against risk). Sell: why, how much (all, half or a third), when (after the close vs now), where (limit, and the level to buy back above).
+
+Built from what exists: `tradeplan.size()` (risk per trade over risk per share, capped by tier max), the entry zone, stop, targets, the held-buy and exit rules, `ui.reassess`. Display only.
+Open choices: the account value (holdings are not committed, so type it once and keep it in the store settings, or take it from the owner's holdings file); the gate list (reuse the six checks plus earnings and market backdrop); the "decide 15 minutes before the close" wording for held sells. Anything that changes a rule (new gates, sell vs half at the warning) belongs with section 12 and needs the owner's go-ahead.
+
 ## 11. To find out first (testing)
 - How often the checks disagree with the call, and on which stocks.
 - Whether the graded zones (HIGH, MEDIUM, LOW) predict reactions better than the automatic CIS levels.
