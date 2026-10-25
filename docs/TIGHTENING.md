@@ -235,6 +235,17 @@ Sample shown (made-up NVDA numbers). Buy: 1 check (gates with a tick or cross, a
 Built from what exists: `tradeplan.size()` (risk per trade over risk per share, capped by tier max), the entry zone, stop, targets, the held-buy and exit rules, `ui.reassess`. Display only.
 Open choices: the account value (holdings are not committed, so type it once and keep it in the store settings, or take it from the owner's holdings file); the gate list (reuse the six checks plus earnings and market backdrop); the "decide 15 minutes before the close" wording for held sells. Anything that changes a rule (new gates, sell vs half at the warning) belongs with section 12 and needs the owner's go-ahead.
 
+## 14. Paper trading on its own tab (owner, 2026-10-25), a separate tab first, then onto each stock
+
+Ask: let the system test itself in real time on a few stocks, journal every trade, run an end-of-day report on whether the rules hold up, and add stocks to the test list from the Google Sheet. Not active on the stock Details page until the test succeeds.
+- **Storage first:** Streamlit Cloud wipes the database on every reboot, so the journal lives in a tab of the owner's Google Sheet (never committed). The test list is read from the same Sheet (tickers marked "paper").
+- **Engine (tracker thread, never the page):** a BUY or ADD that passes every entry gate opens a paper trade at the live price on a fake account sized with `tradeplan.size`; stop and targets copied at entry; exits by the existing rules (stop, a third at Target 1 then trail, close exit, time stop).
+- **Journal:** entry reason and the checks that agreed, exit reason, result in $ and R, duration, worst dip.
+- **End-of-day report (4:15 pm New York) and weekly:** win rate, average R, which gates preceded wins and losses, and the buys the gates blocked with what those stocks did next. It suggests keep, loosen or tighten; it never changes a rule. "Too few trades to judge" until 30.
+- **Limits:** prices are polled every few minutes, so fills and stops are approximate.
+- **Later:** a "this setup, last N trades" line on Details.
+Sample shown with made-up numbers (NVDA, JPM, XOM, LLY, COST).
+
 ## 11. To find out first (testing)
 - How often the checks disagree with the call, and on which stocks.
 - Whether the graded zones (HIGH, MEDIUM, LOW) predict reactions better than the automatic CIS levels.
