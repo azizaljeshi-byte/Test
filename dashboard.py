@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -409,6 +409,12 @@ if view == "target":
         st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
     except Exception as e:
         st.warning(f"Chart offline: {e}")
+
+    try:
+        st.markdown(technical_view.html(technical_view.evidence(_history_now(ticker), datetime.now(NY).date(),
+                                                                us_session() != "CLOSED")), unsafe_allow_html=True)
+    except Exception as e:
+        st.caption(f"Technical evidence offline: {e}")
 
     st.markdown('<div class="mc-section">Signals</div>', unsafe_allow_html=True)
     st.markdown("".join(f'<div class="mc-log">{ui.signal_glyph(s["kind"])}{"!" * s["severity"]} {escape(s["message"])} '
