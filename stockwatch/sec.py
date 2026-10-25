@@ -392,6 +392,11 @@ def fetch_facts(ticker: str) -> dict:
     shares = ((company.get("facts") or {}).get("dei") or {}).get("EntityCommonStockSharesOutstanding") or {}
     sv = (shares.get("units") or {}).get("shares") or []
     out["shares"] = float(max(sv, key=lambda v: (v["end"], v.get("filed", "")))["val"]) if sv else None
+    try:
+        from . import debtcash
+        out["debt_cash"] = debtcash.sec_block(company, _facts, _latest_instant, _ttm, {**CONCEPTS, **INSTANT})
+    except Exception as e:        # the debt and cash card is extra: never let it break the fundamentals
+        log.info("debt and cash block failed for %s: %s", ticker, e)
     return out
 
 

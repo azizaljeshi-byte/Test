@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from . import analogs, catalysts, deepdive, fundamental, momentum, newsfeed, relative, sec, status, street, technical, tradeplan, transitions, zones
+from . import analogs, catalysts, debtcash, deepdive, fundamental, momentum, newsfeed, relative, sec, status, street, technical, tradeplan, transitions, zones
 from .config import Holding, Portfolio
 from . import data, finnhub
 from .data import SECTOR_ETFS, DataProvider
@@ -272,6 +272,13 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
             deep_sig += sec_sig
         except Exception as e:
             log.warning("SEC analysis failed for %s: %s", h.ticker, e)
+
+    try:         # debt and cash for the Details card (display only; the company-facts file is cached for a day)
+        if not light:
+            research["debt_cash"] = debtcash.build(f, _optional(provider.sec_facts, h.ticker)
+                                                   if hasattr(provider, "sec_facts") else None)
+    except Exception as e:
+        log.info("debt and cash failed for %s: %s", h.ticker, e)
 
     # too few fundamental measures (usually a blocked Yahoo request) means "unknown", not "bad"
     fund["available"] = (fund.get("coverage") or 0) >= MIN_FUND_COVERAGE

@@ -134,6 +134,7 @@ class YahooProvider:
         "operating_margin": "operatingMargins", "profit_margin": "profitMargins",
         "roe": "returnOnEquity", "debt_to_equity": "debtToEquity",
         "current_ratio": "currentRatio", "free_cash_flow": "freeCashflow",
+        "total_cash": "totalCash", "total_debt": "totalDebt",
         "target_mean_price": "targetMeanPrice",
         "recommendation_mean": "recommendationMean",
         "target_low_price": "targetLowPrice", "target_high_price": "targetHighPrice",
