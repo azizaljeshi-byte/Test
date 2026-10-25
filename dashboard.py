@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -350,6 +350,9 @@ if view == "target":
         st.markdown(ui.trade_plan(plan, sizing, risk_pct, portfolio_value), unsafe_allow_html=True)
         st.select_slider("Risk per trade (% of portfolio lost if the stop is hit)", [0.25, 0.5, 1.0, 1.5, 2.0],
                          value=risk_pct, key="risk_pct")
+        account = st.number_input("Your account size in $ (include cash; used by the trade guide)", min_value=0, step=1000,
+                                  value=int(portfolio_value) if portfolio_value else 10000, key="account_size")
+        st.markdown(guide.card(snap, float(account), risk_pct, portfolio.rules(snap["tier"]).max_position_pct), unsafe_allow_html=True)
 
     if cis_decision.mode() == "shadow":
         _cis_shadow_card(ticker, snap)
