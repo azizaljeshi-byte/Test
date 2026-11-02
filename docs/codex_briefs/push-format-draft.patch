@@ -1,0 +1,161 @@
+--- /mnt/user-data/uploads/StockWatch/StockWatch/stockwatch/events.py	2026-11-02 12:22:15.466680416 +0300
++++ stockwatch/events.py	2026-11-02 12:21:23.348120861 +0300
+@@ -56,11 +56,11 @@
+ 
+ 
+ def _push(title: str, lines: list[str], priority: int, tags: str, ticker: str | None = None, channel: str = "calls",
+-          store=None, retry: bool = True) -> str:
++          store=None, retry: bool = True, max_lines: int = MAX_LINES) -> str:
+     if not lines:
+         return ""
+-    rest = len(lines) - MAX_LINES
+-    text = "\n".join(lines[:MAX_LINES] + ([f"+{rest} more"] if rest > 0 else []))
++    rest = len(lines) - max_lines
++    text = "\n".join(lines[:max_lines] + ([f"+{rest} more"] if rest > 0 else []))
+     try:
+         return notify.ntfy_send(title, text, priority, tags, _link(ticker), channel)
+     except notify.DeliveryError as e:
+@@ -167,6 +167,51 @@
+     return oc if isinstance(oc, dict) and oc.get("known") else {}
+ 
+ 
++GROUP_MAX_LINES = 40
++_GROUPS = (("EXIT", "\U0001F534", "EXIT: sell or trim"), ("AVOID", "\U0001F534", "AVOID"), ("ON THE LINE", "\U0001F7E0", "ON THE LINE: no new buys"),
++           ("WAIT FOR TURN", "\U0001F7E1", "WAIT FOR TURN"), ("HOLD", "\U0001F535", "HOLD"), ("WAIT", "\U0001F7E1", "WAIT"),
++           ("ADD", "\U0001F7E2", "ADD"), ("BUY", "\U0001F7E2", "BUY"))
++
++
++def _pct(v) -> str:
++    return f"{v * 100:+.1f}%".replace("-", "\u2212") if isinstance(v, (int, float)) and v == v else ""
++
++
++def grouped_lines(items: list[dict]) -> list[str]:
++    """A readable body for many call changes at once: one block per new call, most urgent first, one stock per line.
++    Sell calls show the day's move and the close against the exit line; the quiet calls are just the tickers and what each was.
++    items: {"t", "before", "call", "close", "line", "dc", "vr"}. Display only."""
++    out: list[str] = []
++    known = [g[0] for g in _GROUPS]
++    for call, dot, head in _GROUPS + (("", "\u26AA", "OTHER"),):
++        grp = [i for i in items if (i["call"] == call if call else i["call"] not in known)]
++        if not grp:
++            continue
++        if out:
++            out.append("")
++        out.append(f"{dot} {head} ({len(grp)})")
++        if call in SELL_CALLS:
++            for i in sorted(grp, key=lambda x: x["dc"] if isinstance(x.get("dc"), (int, float)) else 0):
++                vol = f" on {i['vr']:.0f}x volume" if isinstance(i.get("vr"), (int, float)) and i["vr"] >= 2 and isinstance(i.get("dc"), (int, float)) and i["dc"] <= -0.03 else ""
++                line = f"{i['t']}  {_pct(i.get('dc'))}{vol}".rstrip()
++                if isinstance(i.get("close"), (int, float)) and isinstance(i.get("line"), (int, float)):
++                    line += f" \u00b7 closed {i['close']:,.2f}, exit line {i['line']:,.2f}"
++                out.append(line)
++        else:
++            out.append(", ".join(f"{i['t']} (was {i['before'].lower()})" if len({x['before'] for x in grp}) > 1 else i["t"] for i in grp)
++                       + ("" if len({x["before"] for x in grp}) > 1 else f"  (was {grp[0]['before'].lower()})"))
++    return out
++
++
++def grouped_title(n: int, items: list[dict], what: str = "of your stocks changed") -> str:
++    bits = []
++    for call, _d, _h in _GROUPS:
++        k = sum(1 for i in items if i["call"] == call)
++        if k:
++            bits.append(f"{k} {call.lower()}")
++    return f"{n} {what}: " + ", ".join(bits[:4]) if bits else f"{n} {what}"
++
++
+ def call_flips(store, snaps: list[dict], holdings, extras=frozenset()) -> dict:
+     """Push the New call changes on tracked stocks since the last look. Returns {"exits": n, "buys": n, "learned": bool}."""
+     from . import rotation
+@@ -239,11 +284,15 @@
+                 lines = [f"{before} \u2192 {call}. {oc.get('why', '')}"]
+                 title, prio, tag = f"{t} (you own it): {before} -> {call}", 3, "bell"
+             own_msgs.append((t, before, call, title, lines, prio, tag))
+-        if len(own_msgs) >= OWN_GROUP_FROM:                     # many at once: one push, a line each, at the most urgent priority
+-            lines = [f"{t}: {before} \u2192 {call}. {ls[0]}" if call in SELL_CALLS else f"{t}: {before} \u2192 {call}."
+-                     for t, before, call, _ti, ls, _p, _tg in own_msgs]
++        if len(own_msgs) >= OWN_GROUP_FROM:                     # many at once: one push, grouped by call, at the most urgent priority
++            by_t = {s["ticker"]: s for s, _ in fresh_own}
++            items = []
++            for t, before, call, _ti, _ls, _p, _tg in own_msgs:
++                oc, tech = _oc(by_t[t]), ((by_t[t].get("payload") or {}).get("technical") or {})
++                items.append({"t": t, "before": before, "call": call, "close": oc.get("close"), "line": oc.get("exit_line"),
++                              "dc": tech.get("day_change"), "vr": tech.get("volume_ratio")})
+             top = max(own_msgs, key=lambda m: m[5])
+-            _push(f"{len(own_msgs)} of your stocks changed", lines, top[5], top[6], top[0], store=store)
++            _push(grouped_title(len(own_msgs), items), grouped_lines(items), top[5], top[6], top[0], store=store, max_lines=GROUP_MAX_LINES)
+         else:
+             for t, _b, _c, title, lines, prio, tag in own_msgs:
+                 _push(title, lines, prio, tag, t, store=store)
+@@ -253,13 +302,21 @@
+             oc = _oc(s)
+             sw = oc.get("distance_swings")
+             px, close = ui._now(s)[0], oc.get("close")
+-            lines.append(f"{s['ticker']} {oc.get('call')} \u00b7 {px if px == px and px else s.get('price', 0):,.2f} now"
+-                         + (f" \u00b7 closed {close:,.2f}, {sw:.1f} swings above its line {oc.get('exit_line')}"
+-                            if isinstance(sw, (int, float)) and isinstance(close, (int, float)) else ""))
+-        _push(f"Watchlist: {len(lines)} New call buy signal{'s' if len(lines) != 1 else ''}", lines, 2, "chart_with_upwards_trend", fresh_buy[0]["ticker"], store=store)
++            lines.append(f"\U0001F7E2 {s['ticker']}  {oc.get('call')}  {px if px == px and px else s.get('price', 0):,.2f} now")
++            if isinstance(sw, (int, float)) and isinstance(close, (int, float)):
++                lines.append(f"    closed {close:,.2f} \u00b7 {sw:.1f} swings above its exit line {oc.get('exit_line')}")
++        _push(f"Watchlist: {len(fresh_buy)} New call buy signal{'s' if len(fresh_buy) != 1 else ''}", lines, 2, "chart_with_upwards_trend", fresh_buy[0]["ticker"], store=store, max_lines=GROUP_MAX_LINES)
+     if fresh_other:
+-        lines = [f"{s['ticker']}: {b} \u2192 {_oc(s)['call']}" for s, b in fresh_other]
+-        _push(f"Watchlist: {len(lines)} status change{'s' if len(lines) != 1 else ''}", lines, 2, "bar_chart", fresh_other[0][0]["ticker"], store=store)
++        n = len(fresh_other)
++        if n >= OWN_GROUP_FROM:
++            items = [{"t": s["ticker"], "before": b, "call": _oc(s)["call"], "close": _oc(s).get("close"), "line": _oc(s).get("exit_line"),
++                      "dc": ((s.get("payload") or {}).get("technical") or {}).get("day_change"),
++                      "vr": ((s.get("payload") or {}).get("technical") or {}).get("volume_ratio")} for s, b in fresh_other]
++            _push(grouped_title(n, items, f"watchlist status change{'s'}"), grouped_lines(items), 2, "bar_chart", fresh_other[0][0]["ticker"],
++                  store=store, max_lines=GROUP_MAX_LINES)
++        else:
++            lines = [f"{s['ticker']}: {b} \u2192 {_oc(s)['call']}" for s, b in fresh_other]
++            _push(f"Watchlist: {n} status change{'s' if n != 1 else ''}", lines, 2, "bar_chart", fresh_other[0][0]["ticker"], store=store)
+     store.set_setting(SEEN_KEY, json.dumps(seen))
+     return out
+ 
+--- /mnt/user-data/uploads/StockWatch/StockWatch/tests/test_events.py	2026-11-02 12:22:16.126680455 +0300
++++ tests/test_events.py	2026-11-02 12:21:41.294976298 +0300
+@@ -84,8 +84,10 @@
+     out = events.call_flips(st, [snap(t, "WAIT FOR TURN", "2026-10-30") for t in names] + [snap(t, "EXIT", "2026-10-30") for t in own], hold)
+     assert out["watch_changes"] == 4 and out["owned_changes"] == 3
+     assert len(sent) == 2                                              # one for the stocks you own, one for the watchlist
+-    assert sent[0][0] == "3 of your stocks changed" and sent[0][2] == 5 and all(t in sent[0][1] for t in own)
+-    assert sent[1][0] == "Watchlist: 4 status changes" and all(t in sent[1][1] for t in names)
++    assert sent[0][0] == "3 of your stocks changed: 3 exit" and sent[0][2] == 5 and all(t in sent[0][1] for t in own)
++    assert "EXIT: sell or trim (3)" in sent[0][1]
++    assert sent[1][0] == "4 watchlist status changes: 4 wait for turn" and all(t in sent[1][1] for t in names)
++    assert "WAIT FOR TURN (4)" in sent[1][1] and "(was hold)" in sent[1][1]
+ 
+ 
+ def test_extras_never_push(monkeypatch):
+@@ -203,7 +205,7 @@
+     events.call_flips(st, [live(300.0)], hold)                                      # BUY, but live 300 is under its line 316.6
+     assert sent == []
+     events.call_flips(st, [live(320.0)], hold)                                      # back above the line: now it is pushed, once
+-    assert len(sent) == 1 and "XXX BUY · 320.00 now · closed 283.82, 0.5 swings above its line 316.6" in sent[0][1]
++    assert len(sent) == 1 and "XXX  BUY  320.00 now" in sent[0][1] and "closed 283.82 \u00b7 0.5 swings above its exit line 316.6" in sent[0][1]
+     events.call_flips(st, [live(321.0)], hold)
+     assert len(sent) == 1
+ 
+@@ -288,3 +290,19 @@
+     st.rows.append(alert(1, "BBB", "volume_surge_up", "3.0x average volume on a +6.0% day"))
+     assert events.signals(st, snaps, [], session="POST") == {"volume": 0, "news": 0} and sent == []
+     assert events.signals(st, snaps, [], session="REGULAR") == {"volume": 0, "news": 0} and sent == []
++
++
++def test_grouped_body_reads_by_call_most_urgent_first():
++    items = [{"t": "NVDA", "before": "WAIT FOR TURN", "call": "EXIT", "close": 204.64, "line": 210.18, "dc": -0.042, "vr": 1.2},
++             {"t": "INTC", "before": "WAIT FOR TURN", "call": "EXIT", "close": 65.76, "line": 84.65, "dc": -0.286, "vr": 4.0},
++             {"t": "ORCL", "before": "WAIT FOR TURN", "call": "ON THE LINE", "close": None, "line": None, "dc": None, "vr": None},
++             {"t": "SBUX", "before": "HOLD", "call": "WAIT FOR TURN", "close": None, "line": None, "dc": None, "vr": None},
++             {"t": "ONDS", "before": "HOLD", "call": "WAIT FOR TURN", "close": None, "line": None, "dc": None, "vr": None},
++             {"t": "DIS", "before": "ON THE LINE", "call": "ADD", "close": None, "line": None, "dc": None, "vr": None}]
++    body = events.grouped_lines(items)
++    assert [l for l in body if l][0].endswith("EXIT: sell or trim (2)")
++    assert body[1].startswith("INTC") and "on 4x volume" in body[1] and "closed 65.76, exit line 84.65" in body[1]   # the biggest drop first
++    assert any(l.endswith("ON THE LINE: no new buys (1)") for l in body) and "SBUX, ONDS  (was hold)" in "\n".join(body)
++    assert body.index(next(l for l in body if "EXIT" in l)) < body.index(next(l for l in body if "ADD" in l))
++    assert events.grouped_title(6, items) == "6 of your stocks changed: 2 exit, 1 on the line, 2 wait for turn, 1 add"
++    print("\n".join(body))
