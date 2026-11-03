@@ -157,7 +157,8 @@ def test_price_source_follows_the_selected_provider_not_a_flag(monkeypatch):
     assert rl.price_source(object())['market_data'] is False
     # the page passes its own provider and never decides the label itself
     page = (ROOT / 'dashboard.py').read_text()
-    research = page[page.index('def _research_submit'):page.index('@st.fragment(run_every="5s")')]
+    start = page.index('def _research_submit')
+    research = page[start:page.index('@st.fragment(run_every="5s")', start)]
     assert 'research_lab.chart_run(data, ticker)' in research and 'STOCKWATCH_DEMO' not in research
 
 

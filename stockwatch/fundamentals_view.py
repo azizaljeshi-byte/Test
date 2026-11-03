@@ -160,7 +160,8 @@ def _smart(sm: dict) -> str:
                     f"{sp * 100:.0f}% of shares are sold short." + (" Expect sharp moves both ways." if sp >= 0.15 else "")))
     ip = sm.get("institution_pct")
     if ip is not None and not nan(ip):
-        out.append(("info", f"Institutions own {ip * 100:.0f}%."))
+        out.append(("info", "Institutions hold more than 100% of shares (funds report overlapping holdings)"
+                    if ip > 1.0 else f"Institutions own {ip * 100:.0f}%."))
     return ('<div class="fv-k">Insiders and short sellers</div>' + "".join(design.icon_line(k, t) for k, t in out)) if out else ""
 
 

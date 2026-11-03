@@ -277,7 +277,8 @@ def overview(snap: dict) -> dict:
             sm += 10 if sp < 0.03 else 0
             notes.append(f"{sp * 100:.0f}% of float short")
         if _ok(smart.get("institution_pct")):
-            notes.append(f"institutions own {smart['institution_pct'] * 100:.0f}%")
+            notes.append("institutions: over 100% (overlap)" if smart["institution_pct"] > 1.0
+                         else f"institutions own {smart['institution_pct'] * 100:.0f}%")
         card.append(("Smart money", max(0.0, min(100.0, sm)), _join(notes)))
 
     grades = [{"area": a, "grade": _grade(s) if _ok(s) else "?", "score": s if _ok(s) else None, "note": n}
