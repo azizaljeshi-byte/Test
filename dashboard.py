@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import extended, ask_ai, ask_ai_view, candidates, stockhead, rotation, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import extended, testlist, ask_ai, ask_ai_view, candidates, stockhead, rotation, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -241,7 +241,7 @@ controls()
 # ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
 # Turbo and the Briefing are switched off (owner, 30 Oct): not on the tab bar and their addresses open the Radar. Their code is kept.
 VIEWS = {"radar": "◉ Radar", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log",
-         "fleet": "+ Fleet", "research": "⚗ Research", "paper": "◈ Paper", "quick": "⏱ Quick", "ai": "✧ Ask the AI", "rotate": "↻ Rotate", "ext": "☾ Extended"}
+         "fleet": "+ Fleet", "research": "⚗ Research", "paper": "◈ Paper", "quick": "⏱ Quick", "ai": "✧ Ask the AI", "rotate": "↻ Rotate", "ext": "☾ Extended", "tests": "☑ Test list"}
 HIDDEN_VIEWS = ("fleet", "research")          # off the tab bar for now (owner); both still open at ?view=fleet and ?view=research
 SHOWN_VIEWS = [v for v in VIEWS if v not in HIDDEN_VIEWS]
 current = st.query_params.get("view", "radar")
@@ -784,6 +784,33 @@ def _ai_answer(ticker: str):
     tracked = {s["ticker"] for s in store.latest_snapshots()}
     st.markdown(ask_ai_view.html(ask_ai.latest(store, ticker), tracked=tracked), unsafe_allow_html=True)
     st.markdown(ask_ai_view.history_html(ask_ai.history(store), tracked=tracked), unsafe_allow_html=True)
+
+
+if view == "tests":
+    st.markdown("### Test list")
+    st.caption("Up to 10 breakout stocks a day, found from 17:45 Riyadh (09:45 New York), for you to try by hand. Watching only: no trade is placed. "
+               "The exit is fixed: sell at the target or the stop, whichever comes first, or at 22:50 Riyadh (15:50 New York). No hoping for more.")
+    tl = testlist.load(store)["days"]
+    days = sorted(tl, reverse=True)
+    if not days:
+        st.info("No list yet. The first stocks can appear at 17:45 Riyadh on a trading day.")
+    else:
+        day = st.selectbox("Day", days, key="tl_day")
+        rows = tl[day]["rows"]
+        if not rows:
+            st.info("No stock has passed yet today.")
+        else:
+            def _t(iso):
+                return datetime.fromisoformat(iso).astimezone(ZoneInfo("Asia/Riyadh")).strftime("%H:%M")
+            st.markdown(ui.table(["Stock", "Found (Riyadh)", "Agree", "Entry", "Stop", "Target", "Gain per $1 risked", "Now", "Result"], [
+                [r["ticker"], _t(r["found_at"]), "both" if r["tier"] == 1 else "Quick only", f'{r["entry"]:,.2f}', f'{r["stop"]:,.2f}', f'{r["target"]:,.2f}',
+                 f'${r["reward_risk"]:.1f}', "unknown" if r.get("last") is None else f'{r["last"]:,.2f}',
+                 "open" if r["status"] == "open" else f'{r["status"]} {r["result_pct"]:+.2f}%'] for r in rows]), unsafe_allow_html=True)
+            done = [r for r in rows if r["status"] != "open" and r.get("result_pct") is not None]
+            if done:
+                st.caption(f"{len(done)} finished: {sum(r['status'] == 'target' for r in done)} hit the target, {sum(r['status'] == 'stopped' for r in done)} hit the stop, "
+                           f"{sum(r['status'] == 'time' for r in done)} sold at the time exit. Average {sum(r['result_pct'] for r in done) / len(done):+.2f}%.")
+            st.caption('"Both" = Quick\'s breakout side and New call (BUY or ADD) agree. "Quick only" = Quick\'s breakout side, with New call not against it.')
 
 
 if view == "ext":

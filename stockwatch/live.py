@@ -199,6 +199,11 @@ class Tracker:
                     except Exception:
                         log.exception("candidates step failed")
                     try:
+                        from . import testlist
+                        testlist.tick(store)                                   # the manual test list: breakouts with entry, stop and target, log only
+                    except Exception:
+                        log.exception("test list step failed")
+                    try:
                         from . import agent
                         agent.tick(self.store_path)                            # the AI agent: its own thread, so a slow answer never delays a stop
                     except Exception:
