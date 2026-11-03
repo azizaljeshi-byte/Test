@@ -84,6 +84,10 @@ def market_scan(provider, store: Store | None = None, progress=None) -> list[dic
         before = store.latest_market_scan() or {}
         was = {r["ticker"] for r in before.get("results", []) if r["verdict"] == "BUY SETUP"}
         result = market.run(provider, progress=progress, exclude={h.ticker for h in portfolio.holdings})
+        stats = result.pop("stats", None)
+        if stats:
+            import json
+            store.set_setting("universe_stats", json.dumps({"at": datetime.now().isoformat(timespec="seconds"), "stats": stats}))
         store.save_market_scan(result)
         new = [r for r in result["results"] if r["verdict"] == "BUY SETUP" and r["ticker"] not in was]
         return store.record_market_alerts(new)

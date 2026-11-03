@@ -698,14 +698,20 @@ def _candidates_block() -> None:
         return
     day = max(data)
     rows = list(data[day]["rows"].values())
-    with st.expander(f"Candidate list · {day} · {len(rows)} stocks (scanned 10 min before the open, then every 30 min from 30 min after it)"):
+    n_sp = sum(1 for r in rows if r.get("tracked") == "S&P only")
+    with st.expander(f"Candidate list · {day} · {len(rows)} stocks" + (f" ({n_sp} from the wider S&P 500)" if n_sp else "")
+                     + " · scanned 10 min before the open, then every 5 min from 15 min after it"):
         if not rows:
             st.caption("Nothing qualified in the scans yet.")
         else:
-            st.dataframe([{"Stock": r["ticker"], "Found": r["found"], "Why": r["qualified"], "Quick": r.get("quick", ""),
-                           "Quick result": r.get("quick_result", ""), "New call account": r.get("newcall", ""),
-                           "New call result": r.get("newcall_result", "")} for r in rows], hide_index=True, use_container_width=True)
-        st.caption("A log only: both accounts still trade any stock they qualify. It shows how each account picked up the same stocks.")
+            pct = lambda v: "" if v is None else f"{v:+.2f}"
+            st.dataframe([{"Stock": r["ticker"], "Found": r["found"], "Tracked": r.get("tracked", "yes"), "Why": r["qualified"],
+                           "Sector": r.get("sector") or "", "Volume vs normal": r.get("vol_pace"), "Funnel": r.get("funnel") or "",
+                           "+30 min %": pct(r.get("p30")), "+60 min %": pct(r.get("p60")), "To the close %": pct(r.get("close_pct")),
+                           "Quick": r.get("quick", ""), "Quick result": r.get("quick_result", ""),
+                           "New call account": r.get("newcall", ""), "New call result": r.get("newcall_result", "")} for r in rows],
+                         hide_index=True, use_container_width=True)
+        st.caption("A log only: both accounts still trade any stock they qualify. \"S&P only\" stocks are outside your watchlist: no live data, no earnings check, and neither account can trade them.")
 
 
 if view == "paper":

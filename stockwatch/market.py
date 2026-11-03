@@ -79,6 +79,23 @@ def screen(histories: dict[str, pd.DataFrame], market: pd.DataFrame | None) -> p
     return pd.DataFrame(rows).sort_values("setup", ascending=False) if rows else pd.DataFrame()
 
 
+def universe_stats(histories: dict, names) -> dict:
+    """Daily range (ATR), 20-day average volume and sector for every stock priced in the scan. The scan already holds these
+    histories; keeping the numbers lets the candidate list judge stocks the app does not track (they would otherwise be thrown away)."""
+    out = {}
+    for t, h in histories.items():
+        if len(h) < 30:
+            continue
+        try:
+            a, v = float(technical.atr(h).iloc[-1]), float(h["Volume"].tail(20).mean())
+        except Exception:
+            continue
+        if a == a and a > 0:
+            out[t] = {"atr": round(a, 4), "avg_vol": round(v) if v == v else None,
+                      "sector": str(names.at[t, "sector"]) if t in names.index else None}
+    return out
+
+
 def run(provider, top: int = 25, progress=None, exclude: set[str] = frozenset()) -> dict:
     """Full scan. progress(fraction, text) is called as stages complete."""
     def step(frac, text):
@@ -131,7 +148,8 @@ def run(provider, top: int = 25, progress=None, exclude: set[str] = frozenset())
     results.sort(key=lambda r: (r["rank"], -r["composite"]))
     step(1.0, f"Done: {sum(r['verdict'] == 'BUY SETUP' for r in results)} buy setups among {len(results)} finalists")
     return {"universe": len(tickers), "priced": len(histories), "setups": len(shortlist),
-            "results": results, "evaluations": [e for e, _ in evaluated if not e.error]}
+            "results": results, "evaluations": [e for e, _ in evaluated if not e.error],
+            "stats": universe_stats(histories, names)}
 
 
 def main(argv=None):
