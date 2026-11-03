@@ -3,8 +3,9 @@
 10 minutes before the US open (09:20 New York, so the clock change on 1 November is followed by itself) it scans every stock the app
 tracks and writes the ones worth watching today, then every 5 minutes from 09:45 (when the opening range is set) until 15:55 (owner, 3 Nov:
 the list must run regularly so no trade is missed). Each row also keeps what happened after it was found (+30 min, +60 min, close, best and
-worst point) so the list can be judged on results, and stocks outside the tracked list that moved a lot are kept apart as "wide" rows
-for the same comparison. A stock qualifies when
+worst point) so the list can be judged on results. S&P 500 stocks the app does not track are judged by the same move rules (from the
+funnel's live read and the S&P scan's daily range) and added, marked "S&P only": no live data, no earnings check, and Quick cannot trade
+them. A stock qualifies when
   Quick      it gapped down about GAP_DOWN_ATR daily ranges or more (a bounce candidate) or up GAP_UP_ATR or more (a breakout candidate)
   New call   its New call is BUY or ADD
 and it has no earnings within a day. One row per stock and day, with what each account then did with it: bought (grade, price, result),
@@ -26,13 +27,13 @@ SCAN_PRE_MIN = 9 * 60 + 20          # 09:20 New York
 SCAN_REFRESH_MIN = 9 * 60 + 45      # 09:45 New York: the first scan after the open (opening range set)
 REFRESH_EVERY_MIN = 5               # then again every 5 minutes (owner, 3 Nov: run regularly, miss nothing) ...
 SCAN_LAST_MIN = 15 * 60 + 55        # ... until 15:55 New York
-WIDE_MOVE_PCT = 3.0                 # an untracked S&P stock up or down this much since yesterday's close is kept as a "wide" row
-WIDE_MAX = 60                       # at most this many wide rows a day
+KEY_STATS = "universe_stats"        # {"stats": {ticker: {atr, avg_vol, sector}}} saved by the S&P scan for every stock it prices
+UNIVERSE_MAX = 80                   # at most this many S&P stocks outside the tracked list on the list per day (the biggest movers first)
 OUT_AT_MIN = (30, 60)               # minutes after "found" at which the price is read
 OUT_LATE_MIN = 15                   # a reading taken more than this long after its time is left unknown
 GAP_DOWN_ATR, GAP_UP_ATR = 0.7, 0.5
 KEEP_DAYS = 10
-COLS = [("day", "Day"), ("ticker", "Ticker"), ("found", "Found"), ("qualified", "Why it qualified"), ("price", "Price"),
+COLS = [("day", "Day"), ("ticker", "Ticker"), ("found", "Found"), ("tracked", "Tracked"), ("qualified", "Why it qualified"), ("price", "Price"),
         ("move_pct", "Move %"), ("move_atr", "Move (daily ranges)"), ("call", "New call"),
         ("sector", "Sector"), ("vol_pace", "Volume vs normal"), ("funnel", "Funnel"),
         ("p30", "+30 min %"), ("p60", "+60 min %"), ("close_pct", "To the close %"), ("best", "Best %"), ("worst", "Worst %"),
@@ -97,9 +98,9 @@ def scan(store, snaps: list, now: datetime, phase: str) -> int:
         q = qualify(s, phase)
         if q:
             day["rows"][t] = {"ticker": t, "found": f"{phase} {now.strftime('%H:%M')}", "found_at": now.isoformat(timespec="seconds"),
-                              **q, **_context(s, now, phase, fstate)}
+                              "tracked": "yes", **q, **_context(s, now, phase, fstate)}
             added += 1
-    added += scan_wide(store, day, now, phase) if phase == "refresh" else 0
+    added += scan_universe(store, day, now, fstate) if phase == "refresh" else 0
     day["scans"].append(phase)
     day["last_scan_min"] = now.hour * 60 + now.minute
     _save(store, data)
@@ -121,22 +122,48 @@ def _context(snap: dict, now: datetime, phase: str, fstate: dict | None) -> dict
             "trend": (p.get("technical") or {}).get("trend"), "p30": None, "p60": None, "close_pct": None, "best": None, "worst": None}
 
 
-def scan_wide(store, day: dict, now: datetime, phase: str) -> int:
-    """Stocks the app does not track that moved WIDE_MOVE_PCT or more, from the funnel's last full read. Evidence only: these are not on the list."""
-    raw = store.get_setting(funnel.KEY_MOVES)
+def _json(store, key):
     try:
-        mv = json.loads(raw) if raw else None
+        raw = store.get_setting(key)
+        return json.loads(raw) if raw else None
     except ValueError:
-        mv = None
-    if not mv or funnel_age_min(mv, now) > funnel.STATE_MAX_AGE_MIN:
+        return None
+
+
+def scan_universe(store, day: dict, now: datetime, fstate: dict | None) -> int:
+    """S&P 500 stocks the app does not track, judged by the same move rules from the funnel's last full read and the S&P scan's
+    daily range. They go on the list marked "S&P only". Nothing missing qualifies a stock (no range, no fresh move, no row)."""
+    mv, st = _json(store, funnel.KEY_MOVES), (_json(store, KEY_STATS) or {}).get("stats") or {}
+    if not mv or not st or funnel_age_min(mv, now) > funnel.STATE_MAX_AGE_MIN:
         return 0
     tracked = {s["ticker"] for s in store.latest_snapshots()}
-    wide = day.setdefault("wide", {})
-    added = 0
-    for t, (chg, px) in sorted((mv.get("moves") or {}).items(), key=lambda kv: -abs(kv[1][0])):
-        if t in tracked or t in wide or abs(chg) < WIDE_MOVE_PCT or not px or len(wide) >= WIDE_MAX:
+    rows = day["rows"]
+    found = []
+    for t, (chg, px) in (mv.get("moves") or {}).items():
+        atr = _num((st.get(t) or {}).get("atr"))
+        if t in tracked or t in rows or not px or not atr or chg <= -90:
             continue
-        wide[t] = {"ticker": t, "found_at": now.isoformat(timespec="seconds"), "px_found": px, "move_pct": chg,
+        move_atr = (px - px / (1 + chg / 100)) / atr
+        if move_atr <= -GAP_DOWN_ATR:
+            kind = f"down {abs(chg):.1f}% = {abs(move_atr):.1f} daily ranges (bounce candidate)"
+        elif move_atr >= GAP_UP_ATR:
+            kind = f"up {chg:.1f}% = {move_atr:.1f} daily ranges (breakout candidate)"
+        else:
+            continue
+        found.append((abs(move_atr), t, chg, px, move_atr, kind))
+    room = UNIVERSE_MAX - sum(1 for r in rows.values() if r.get("tracked") == "S&P only")
+    added = 0
+    for _a, t, chg, px, move_atr, kind in sorted(found, reverse=True)[:max(room, 0)]:
+        v = None
+        try:
+            v = funnel.verdict(t, fstate, now)
+        except Exception:
+            pass
+        rows[t] = {"ticker": t, "found": f"refresh {now.strftime('%H:%M')}", "found_at": now.isoformat(timespec="seconds"),
+                   "tracked": "S&P only", "qualified": f"Quick: {kind}. S&P only: earnings not checked", "price": px,
+                   "move_pct": round(chg, 2), "move_atr": round(move_atr, 2), "call": None,
+                   "sector": (st.get(t) or {}).get("sector"), "vol_pace": None,
+                   "funnel": None if not v else v.split(":")[0].replace("WOULD BLOCK at ", "block ").lower()[:24], "trend": None,
                    "p30": None, "p60": None, "close_pct": None, "best": None, "worst": None}
         added += 1
     return added
@@ -174,7 +201,7 @@ def _follow(r: dict, px, ref, now: datetime, reg_close=None, closed_ok: bool = F
 
 
 def track(store, snaps: list, now: datetime) -> bool:
-    """Fill +30 min, +60 min, close, best and worst on today's rows (and wide rows). True when the log changed."""
+    """Fill +30 min, +60 min, close, best and worst on today's rows (and the S&P-only rows). True when the log changed."""
     data = load(store)
     d = data["days"].get(now.date().isoformat())
     if not d:
@@ -194,19 +221,16 @@ def track(store, snaps: list, now: datetime) -> bool:
         except ValueError:
             fresh_close = False
         changed |= _follow(r, px, ref, now, reg, now >= close_t and fresh_close)
-    raw = store.get_setting(funnel.KEY_MOVES)
-    try:
-        mv = json.loads(raw) if raw else None
-    except ValueError:
-        mv = None
-    if mv and d.get("wide") and funnel_age_min(mv, now) <= funnel.STATE_MAX_AGE_MIN:
-        for t, r in d["wide"].items():
+    mv = _json(store, funnel.KEY_MOVES)
+    if mv and funnel_age_min(mv, now) <= funnel.STATE_MAX_AGE_MIN:
+        for t, r in d["rows"].items():
             cur = (mv.get("moves") or {}).get(t)
-            if cur:
-                changed |= _follow(r, cur[1], r["px_found"], now)
-                last = _pct(cur[1], r["px_found"])
-                if now >= close_t.replace(hour=15, minute=50) and last is not None:
+            if r.get("tracked") == "S&P only" and cur and r.get("price") and r.get("found_at"):
+                changed |= _follow(r, cur[1], r["price"], now)
+                last = _pct(cur[1], r["price"])
+                if now >= close_t.replace(hour=15, minute=50) and last is not None and r.get("close_pct") is None:
                     r["close_pct"] = last                  # the funnel's last read before the close (it runs in the regular session only)
+                    changed = True
     if changed:
         _save(store, data)
     return changed
@@ -258,6 +282,8 @@ def record(store, now: datetime) -> bool:
     for t, r in d["rows"].items():
         r["quick"], r["quick_result"] = _quick_view(qb, t, day)
         r["newcall"], r["newcall_result"] = _newcall_view(nb, t, day, r.get("call"))
+        if r.get("tracked") == "S&P only" and r["quick"] == "no setup yet":
+            r["quick"], r["newcall"] = "not tracked: Quick cannot trade it", "not tracked"
     changed = json.dumps(data, sort_keys=True, default=str) != before
     if changed:
         _save(store, data)

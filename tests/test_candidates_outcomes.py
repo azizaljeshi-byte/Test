@@ -52,21 +52,56 @@ class Store:
         return [{"ticker": "AAA"}]
 
 
-def test_wide_rows_only_for_untracked_big_movers():
+STATS = {"BBB": {"atr": 1.0, "sector": "Energy"}, "DDD": {"atr": 1.0, "sector": "Materials"}, "CCC": {"atr": 1.0, "sector": "Utilities"},
+         "AAA": {"atr": 1.0, "sector": "Tech"}, "EEE": {}}
+
+
+def _universe_store(moves, at=None):
     import json
     st = Store()
-    st.s[funnel.KEY_MOVES] = json.dumps({"at": T(10, 0).isoformat(), "moves": {"AAA": [5.0, 10.0], "BBB": [3.5, 20.0], "CCC": [1.0, 5.0], "DDD": [-4.0, 8.0]}})
+    st.s[funnel.KEY_MOVES] = json.dumps({"at": (at or T(10, 0)).isoformat(), "moves": moves})
+    st.s[candidates.KEY_STATS] = json.dumps({"stats": STATS})
+    return st
+
+
+def test_universe_adds_untracked_movers_by_the_same_rules():
+    # BBB +3.5% on 20 = 0.7 daily ranges (breakout); DDD -9% on 8 = -0.8 (bounce); CCC +1% is too small
+    st = _universe_store({"AAA": [5.0, 10.0], "BBB": [3.5, 20.0], "CCC": [1.0, 5.0], "DDD": [-9.0, 8.0], "EEE": [9.0, 9.0], "FFF": [9.0, 9.0]})
     day = {"rows": {}, "scans": []}
-    assert candidates.scan_wide(st, day, T(10, 1), "refresh") == 2
-    assert set(day["wide"]) == {"BBB", "DDD"}
-    assert candidates.scan_wide(st, day, T(10, 2), "refresh") == 0          # not added twice
+    assert candidates.scan_universe(st, day, T(10, 1), None) == 2
+    assert set(day["rows"]) == {"BBB", "DDD"}                          # AAA is tracked; CCC too small; EEE has no range; FFF has no stats
+    r = day["rows"]["BBB"]
+    assert r["tracked"] == "S&P only" and "breakout candidate" in r["qualified"] and r["sector"] == "Energy" and r["price"] == 20.0
+    assert "bounce candidate" in day["rows"]["DDD"]["qualified"]
+    assert candidates.scan_universe(st, day, T(10, 2), None) == 0      # not added twice
 
 
-def test_wide_ignores_old_funnel_read():
+def test_universe_keeps_the_biggest_movers_when_capped(monkeypatch):
+    monkeypatch.setattr(candidates, "UNIVERSE_MAX", 1)
+    st = _universe_store({"BBB": [3.5, 20.0], "DDD": [-9.0, 8.0]})
+    day = {"rows": {}, "scans": []}
+    candidates.scan_universe(st, day, T(10, 1), None)
+    assert set(day["rows"]) == {"DDD"}
+
+
+def test_universe_ignores_old_funnel_read_and_missing_stats():
+    old = _universe_store({"BBB": [9.0, 20.0]}, at=T(9, 0))
+    assert candidates.scan_universe(old, {"rows": {}, "scans": []}, T(10, 0), None) == 0
+    nostats = _universe_store({"BBB": [9.0, 20.0]})
+    nostats.s.pop(candidates.KEY_STATS)
+    assert candidates.scan_universe(nostats, {"rows": {}, "scans": []}, T(10, 0), None) == 0
+
+
+def test_track_follows_universe_rows_from_the_funnel():
     import json
-    st = Store()
-    st.s[funnel.KEY_MOVES] = json.dumps({"at": T(9, 0).isoformat(), "moves": {"BBB": [9.0, 20.0]}})
-    assert candidates.scan_wide(st, {"rows": {}, "scans": []}, T(10, 0), "refresh") == 0
+    st = _universe_store({"BBB": [3.5, 20.0]})
+    day = {"rows": {}, "scans": []}
+    candidates.scan_universe(st, day, T(10, 0), None)
+    st.s[candidates.KEY] = json.dumps({"days": {"2026-11-03": day}})
+    st.s[funnel.KEY_MOVES] = json.dumps({"at": T(10, 31).isoformat(), "moves": {"BBB": [4.0, 20.4]}})
+    assert candidates.track(st, [], T(10, 31))
+    r = candidates.load(st)["days"]["2026-11-03"]["rows"]["BBB"]
+    assert r["p30"] == 2.0 and r["best"] == 2.0
 
 
 def test_funnel_moves_has_change_and_price():
