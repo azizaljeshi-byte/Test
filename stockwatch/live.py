@@ -214,6 +214,11 @@ class Tracker:
                     except Exception:
                         log.exception("funnel step failed")
                     try:
+                        from . import extended
+                        extended.run_async(self.store_path)                    # pre-market / after-hours monitor, own thread, log only
+                    except Exception:
+                        log.exception("extended hours step failed")
+                    try:
                         from . import dbtrim, store as store_module
                         dbtrim.run_async(self.store_path or store_module.DEFAULT_DB)   # hourly, own thread: keeps the database from growing
                     except Exception:

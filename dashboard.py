@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import ask_ai, ask_ai_view, candidates, stockhead, rotation, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import extended, ask_ai, ask_ai_view, candidates, stockhead, rotation, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -241,7 +241,7 @@ controls()
 # ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
 # Turbo and the Briefing are switched off (owner, 30 Oct): not on the tab bar and their addresses open the Radar. Their code is kept.
 VIEWS = {"radar": "◉ Radar", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log",
-         "fleet": "+ Fleet", "research": "⚗ Research", "paper": "◈ Paper", "quick": "⏱ Quick", "ai": "✧ Ask the AI", "rotate": "↻ Rotate"}
+         "fleet": "+ Fleet", "research": "⚗ Research", "paper": "◈ Paper", "quick": "⏱ Quick", "ai": "✧ Ask the AI", "rotate": "↻ Rotate", "ext": "☾ Extended"}
 HIDDEN_VIEWS = ("fleet", "research")          # off the tab bar for now (owner); both still open at ?view=fleet and ?view=research
 SHOWN_VIEWS = [v for v in VIEWS if v not in HIDDEN_VIEWS]
 current = st.query_params.get("view", "radar")
@@ -784,6 +784,31 @@ def _ai_answer(ticker: str):
     tracked = {s["ticker"] for s in store.latest_snapshots()}
     st.markdown(ask_ai_view.html(ask_ai.latest(store, ticker), tracked=tracked), unsafe_allow_html=True)
     st.markdown(ask_ai_view.history_html(ask_ai.history(store), tracked=tracked), unsafe_allow_html=True)
+
+
+if view == "ext":
+    st.markdown("### Extended hours")
+    st.caption("Pre-market and after-hours trading of your tracked stocks, from Yahoo. Watching only: places no trade and changes no score. "
+               "Yahoo has no data between 20:00 and 04:00 New York.")
+    ext = extended.load(store)
+    if not ext:
+        st.info("No reading yet. It runs every 5 minutes in pre-market (12:00-17:30 Riyadh) and after-hours (00:00-04:00 Riyadh).")
+    else:
+        at = datetime.fromisoformat(ext["at"])
+        st.caption(f"{'Pre-market' if ext['session'] == 'PRE' else 'After-hours'} reading at {at:%H:%M} New York, "
+                   f"{at.astimezone(ZoneInfo('Asia/Riyadh')):%H:%M} Riyadh · {ext['active']} of {ext['read']} stocks have real trading, the rest are thin")
+        top = extended.ranked(ext)
+        if not top:
+            st.info("No tracked stock has real trading in this window yet.")
+        else:
+            def _vol(v):
+                return "unknown" if v is None else f"{v:.1f}% of a normal day"
+            st.markdown(ui.table(["Stock", "Move", "Price", "Traded ($)", "Volume", "Last trade (min ago)"], [
+                [t, f'{r["move"]:+.2f}%', f'{r["price"]:,.2f}',
+                 f'{r["dollars"] / 1e6:,.2f}M', _vol(r["pct_of_day"]), f'{r["age_min"]:.0f}'] for t, r in top[:40]]), unsafe_allow_html=True)
+        thin = sorted(t for t, r in ext["rows"].items() if r.get("thin"))
+        if thin:
+            st.caption("Thin (too little trading to trust): " + ", ".join(thin[:60]) + (" …" if len(thin) > 60 else ""))
 
 
 if view == "ai":
