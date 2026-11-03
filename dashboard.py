@@ -775,8 +775,9 @@ def _ai_answer(ticker: str):
               help="Uses a tracked stock's saved data. The answer is saved with its time and price.")
     if note := st.session_state.pop("ai_note", None):
         st.caption(note)
-    st.markdown(ask_ai_view.html(ask_ai.latest(store, ticker)), unsafe_allow_html=True)
-    st.markdown(ask_ai_view.history_html(ask_ai.history(store)), unsafe_allow_html=True)
+    tracked = {s["ticker"] for s in store.latest_snapshots()}
+    st.markdown(ask_ai_view.html(ask_ai.latest(store, ticker), tracked=tracked), unsafe_allow_html=True)
+    st.markdown(ask_ai_view.history_html(ask_ai.history(store), tracked=tracked), unsafe_allow_html=True)
 
 
 if view == "ai":
