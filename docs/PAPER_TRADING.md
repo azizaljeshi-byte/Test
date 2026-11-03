@@ -8,6 +8,10 @@ A fake account (start $50,000) trades the rules in `stockwatch/decision.py` on a
 - Buys follow the entry gates, no opening wait for now (owner's choice, so the test sees the open; set `STOCKWATCH_PAPER_BLACKOUT_MIN=60` to bring back the first-hour wait), an earnings block and a limit price. Sells follow the owner's intraday rule: a dip is only an alert until 3:45 pm, then half is sold; a close below the floor sells all.
 - At the first target, a strong trend (momentum strong or building, chart sound) is not sold: the trade is "stretched". The stop trails up under the chart floor and never goes below the entry. It sells everything when the trend has turned for 30 minutes, or a third at 3 times the first risk. A mixed or weak trend at the target sells a third, as before. Each stretched trade records what selling all at the target would have made, and the Report shows the difference. To switch it off, set `stretch=False` in `decision.Config`.
 - The book is kept in the app's database and pushed to the Sheet (Trades, Blocked buys, Daily report tabs) after each change and after 4:05 pm. A rebooted app reads the saved book back.
+- A price counts only if the stored quote is a regular-session trade from today, fetched within 5 minutes and traded within 10. Otherwise the stock is skipped with the reason, and an open trade says its stop is not being watched.
+- A stock dropped from the Test list keeps being watched while it has an open trade (exits only, never a new buy).
+- If the app restarts empty and the Sheet cannot be read, paper trading waits and says so. It starts a new account only when the Sheet says there is none (or no Sheet is set up).
+- A save to the Sheet stays pending and is retried (at most once a minute) until the Sheet accepts it. The day's report is sent after 4:05 pm New York on weekdays.
 - The report says "Too few trades to judge" until 30 trades have closed.
 
 ## One-time setup

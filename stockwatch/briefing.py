@@ -37,6 +37,13 @@ def stock(snap: dict, prev: dict | None = None) -> dict:
     kind = "watchlist name" if p.get("watchlist") else f"Tier {snap['tier']} position"
 
     headline = f"{tk} ({kind}) {VERDICT_PHRASE.get(snap['verdict'], 'was scanned')}."
+    plan = p.get("plan") or {}
+    held = (plan.get("status_exit") or "").startswith(("don't buy", "don't add"))
+    if snap["verdict"] in ("BUY SETUP", "OPPORTUNITY - ADD") and (held or plan.get("stance") == "WAIT FOR CONFIRMATION"):
+        # one straight answer: a buy-looking score must not sit above a plan that says wait
+        reason = (plan["status_exit"].split(" · ", 1)[-1] if held else
+                  f"waiting for {plan['trigger']}" if plan.get("trigger") else "the plan is to wait")
+        headline = f"{tk} ({kind}) is a WAIT, not a buy yet: {reason}."
     if p.get("error"):
         return {"headline": headline, "why": [p["error"]], "changed": [], "watch": []}
 
@@ -83,7 +90,7 @@ def stock(snap: dict, prev: dict | None = None) -> dict:
         if abs(d) >= 5:
             changed.append(f"Overall score {'rose' if d > 0 else 'fell'} {abs(d):.0f} points "
                            f"({prev['composite']:.0f} -> {snap['composite']:.0f}).")
-        if _ok(prev.get("price")) and prev["price"]:
+        if _ok(price) and _ok(prev.get("price")) and prev["price"]:
             move = price / prev["price"] - 1
             if abs(move) >= 0.03:
                 changed.append(f"Price {'up' if move > 0 else 'down'} {abs(move) * 100:.1f}% since the last scan.")
@@ -143,7 +150,7 @@ def portfolio(snaps: list[dict], prevs: dict[str, dict | None], regime: dict | N
     if regime:
         mood = {"RISK-ON": "supportive (SPY in an uptrend)", "RISK-OFF": "hostile (SPY below its 200-day)",
                 "CAUTION": f"mixed ({regime.get('reason') or 'SPY trend unclear'})"}[regime["state"]]
-        lines.append(f"Market backdrop is {mood}; SPY {_pct(regime['day_change'])} today.")
+        lines.append(f"Market backdrop is {mood}; SPY {regime['day_change'] * 100:+.1f}% today.")
     urgent = [s["ticker"] for s in snaps if any(x["kind"] == "risk" and x["severity"] >= 3 for x in s["payload"]["signals"])]
     if urgent:
         lines.append(f"Needs attention now: {', '.join(urgent)}.")
@@ -168,8 +175,14 @@ def portfolio(snaps: list[dict], prevs: dict[str, dict | None], regime: dict | N
         lines.append("Changed since last sweep: " + "; ".join(flips[:5]) + ".")
     ranked = sorted((s for s in snaps if not s["payload"].get("error")), key=lambda s: s["composite"], reverse=True)
     if len(ranked) >= 6:
-        lines.append("Strongest: " + ", ".join(s["ticker"] for s in ranked[:3])
-                     + ". Weakest: " + ", ".join(s["ticker"] for s in ranked[-3:]) + ".")
+        # a quality score is not momentum (owner, 30 Oct: NVDA and PLTR read "strongest" while under pressure), so the line says
+        # "scores", and a stock whose New call is EXIT or AVOID is never listed as a best score
+        def selling(s):
+            oc = ((s["payload"].get("technical") or {}).get("one_call")) or {}
+            return oc.get("known") and oc.get("call") in ("EXIT", "AVOID")
+        best = [s for s in ranked if not selling(s)][:3]
+        lines.append("Best scores: " + ", ".join(s["ticker"] for s in best)
+                     + ". Lowest scores: " + ", ".join(s["ticker"] for s in ranked[-3:]) + ".")
     if not urgent and not opps:
         lines.append("No urgent risks or buy setups right now.")
     return lines

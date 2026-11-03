@@ -48,6 +48,8 @@ def analyse(portfolio, provider, store: Store, quiet: bool = False) -> tuple[lis
             if not quiet:
                 log.warning("%s: %s", e.ticker, e.error)
             continue
+        if e.ticker in portfolio.extras:
+            continue                                  # market stocks added for the test accounts: no alerts
         alerts += [(e.ticker, e.price, e.verdict, s)
                    for s in store.record_alerts(e, portfolio.settings.alert_cooldown_hours)]
     return evals, alerts

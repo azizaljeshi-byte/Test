@@ -62,6 +62,7 @@ class Portfolio:
     source: Path | None = None
     sheet_url: str | None = None       # set when holdings were read from a Google Sheet
     sheet_error: str | None = None     # set when the sheet couldn't be read (YAML holdings used instead)
+    extras: frozenset = frozenset()    # market stocks added to the live sweep for the test accounts (no alerts, not on the Radar)
 
     def rules(self, tier: int) -> TierRules:
         return self.tiers.get(tier) or self.tiers[2]

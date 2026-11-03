@@ -16,6 +16,14 @@ def _signed(v) -> str:
     return "—" if v is None else f'{"+" if v >= 0 else "−"}${abs(v):,.2f}'
 
 
+def wl(rep: dict) -> tuple[str, str]:
+    """Winning and losing percentages (a flat trade counts as a loss), for the tiles."""
+    if not rep["closed"]:
+        return "—", "—"
+    w = rep["wins"] / rep["closed"] * 100
+    return f"{w:.0f}%", f"{100 - w:.0f}%"
+
+
 def _r(v) -> str:
     return "—" if v is None else f"{v:+.1f}R"
 
@@ -33,6 +41,10 @@ def setup_note(cfg: dict) -> str:
 def empty_reason(st: dict) -> str:
     """Why the test list is empty, in plain words."""
     state = st.get("state")
+    if not st["cfg"]["list"]:
+        return "No test list link is set yet."
+    if state is not None and state.get("note") and not state.get("tickers"):
+        return state["note"]
     if state is None:
         return "The tracker has not run its first paper cycle since the app started. Wait a minute and reload."
     return "The list was read but has no rows with Paper = yes (check the Ticker and Paper headers in the Test list tab)."
@@ -80,16 +92,16 @@ def html(st: dict, prices: dict | None = None, now: datetime | None = None) -> s
                       f'<span>{_usd(b["price"])}</span></div>' for b in reversed(book.blocked[-8:]))
     sg = rep["stretch_gain"]
     stretch_line = "" if sg is None else f" · versus selling all at the first target: {_signed(sg)}"
-    wr = "—" if rep["win_rate"] is None else f'{rep["win_rate"] * 100:.0f}%'
     return (f'<style>{CSS}</style><div class="pp"><div class="pp-c"><div class="pp-h">Paper trading</div>'
             f'<div class="pp-m">A fake account follows the rules. Nothing here is real money.</div>{msg}'
-            f'<div class="pp-k"><div><small>Account</small><b>{_usd(eq)}</b></div><div><small>Since start</small>'
-            f'<b class="{"up" if eq >= day_start else "dn"}">{_signed(eq - day_start)}</b></div><div><small>Open</small><b>{rep["open"]} trades</b></div></div>'
+            f'<div class="pp-k pp-k4"><div><small>Account</small><b>{_usd(eq)}</b></div><div><small>Since start</small>'
+            f'<b class="{"up" if eq >= day_start else "dn"}">{_signed(eq - day_start)}</b></div><div><small>Open</small><b>{rep["open"]} trades</b></div>'
+            f'<div><small>Winning · losing</small><b>{wl(rep)[0]} · {wl(rep)[1]}</b><small>{rep["wins"]} won · {rep["closed"] - rep["wins"]} lost</small></div></div>'
             f'<div class="pp-hd">Test list · {len(state.get("tickers", []))} stocks</div><div class="pp-chs">{chips or "<small>" + empty_reason(st) + "</small>"}</div>{skipped}</div>'
             f'<div class="pp-c"><div class="pp-h">Open now</div>{"".join(opens) or "<div class=pp-m>No open trades.</div>"}</div>'
             f'<div class="pp-c"><div class="pp-h">Closed</div>{rows or "<div class=pp-m>No closed trades yet.</div>"}</div>'
             f'<div class="pp-c"><div class="pp-h">Report</div><div class="pp-k2"><div><small>Closed</small><b>{rep["closed"]}</b></div>'
-            f'<div><small>Win rate</small><b>{wr}</b></div><div><small>Average R</small><b>{_r(rep["avg_r"])}</b></div>'
+            f'<div><small>Winning</small><b>{wl(rep)[0]}</b><small>{rep["wins"]} trades</small></div><div><small>Losing</small><b>{wl(rep)[1]}</b><small>{rep["closed"] - rep["wins"]} trades</small></div><div><small>Average R</small><b>{_r(rep["avg_r"])}</b></div>'
             f'<div><small>Buys held back</small><b>{rep["blocked"]}</b></div></div>'
             f'<div class="pp-m">Stretched trades: {rep["stretched"]}{stretch_line}</div>'
             f'<div class="pp-v">{escape(rep["verdict"])}</div>'
@@ -101,7 +113,7 @@ CSS = """
 .pp-h{font-size:1.1rem;font-weight:800}.pp-m,.pp-c small{color:var(--dz-muted,#8b95a7);font-size:.74rem}
 .pp-note{margin:8px 0;padding:8px 10px;border-radius:10px;font-size:.78rem;border:1px solid var(--dz-watch,#ffc267);background:color-mix(in srgb,var(--dz-watch,#ffc267) 12%,transparent)}
 .pp-note.bad{border-color:var(--dz-act,#ff7a7a);background:color-mix(in srgb,var(--dz-act,#ff7a7a) 12%,transparent)}
-.pp-k,.pp-k2{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}.pp-k2{grid-template-columns:repeat(2,1fr)}
+.pp-k,.pp-k2{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}.pp-k2{grid-template-columns:repeat(2,1fr)}.pp-k4{grid-template-columns:repeat(4,1fr)}@media(max-width:560px){.pp-k4{grid-template-columns:repeat(2,1fr)}}
 .pp-k>div,.pp-k2>div{background:color-mix(in srgb,var(--dz-ink,#e9eef5) 6%,transparent);border-radius:10px;padding:8px}.pp-k b,.pp-k2 b{display:block;font-size:1.05rem}
 .up{color:var(--dz-buy,#7be3a8)}.dn{color:var(--dz-act,#ff7a7a)}
 .pp-hd{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--dz-soft,#9aa4b2);font-weight:800;margin:14px 0 6px}

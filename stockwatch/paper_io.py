@@ -65,10 +65,13 @@ def push(webhook: str, token: str, book: dict, report: dict) -> dict:
     return _call(webhook, {"token": token, "book": book, "report": report})
 
 
-def pull(webhook: str, token: str) -> dict | None:
-    """The book the script last saved, or None when there is none or the link failed."""
+def pull(webhook: str, token: str) -> dict:
+    """What the script last saved: {"ok": True, "book": dict or None} (None = a genuinely new account), or
+    {"ok": False, "error": why} when the link could not be read. The two are never mixed up."""
     try:
         res = _call(webhook + ("&" if "?" in webhook else "?") + urllib.parse.urlencode({"token": token}), None)
-    except Exception:
-        return None
-    return res.get("book") if res.get("ok") else None
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+    if not res.get("ok"):
+        return {"ok": False, "error": str(res.get("error", "the link did not accept the request"))[:200]}
+    return {"ok": True, "book": res.get("book")}

@@ -159,7 +159,8 @@ def analyze(df: pd.DataFrame, trailing_atr_mult: float = 3.0, owned: bool = True
     metrics = {
         "price": price, "rsi": r, "sma50": float(last["SMA50"]), "sma200": float(last["SMA200"]),
         "atr": float(last["ATR"]), "high_52w": hi52, "low_52w": lo52, "drawdown_52w": drawdown,
-        "ret_1m": ret_1m, "ret_3m": ret_3m, "volume_ratio": vol_ratio, "day_change": day_move,
+        "ret_1m": ret_1m, "ret_3m": ret_3m, "volume_ratio": vol_ratio, "vol_avg20": None if np.isnan(float(last["VolAvg20"])) else float(last["VolAvg20"]),
+        "day_change": day_move,
         "trend": "up" if uptrend else "down" if downtrend else "mixed", "trailing_stop": trail,
         "score_parts": parts, "raw_points": sum(pt for _, pt in parts),
     }

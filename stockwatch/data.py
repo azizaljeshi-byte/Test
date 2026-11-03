@@ -102,6 +102,16 @@ class DataProvider(Protocol):
         ...
 
 
+def trim_unfinished(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop trailing daily bars that have no usable prices (an empty or not-yet-started bar for the latest day, which Yahoo
+    sometimes returns). It is not a bar yet, so nothing is repaired or invented. A bad bar anywhere else is left in, so the
+    quality check still refuses that history."""
+    px = ["Open", "High", "Low", "Close"]
+    while len(df) and not ((df[px].iloc[-1].astype(float) > 0).all()):     # NaN compares False, so it is dropped too
+        df = df.iloc[:-1]
+    return df
+
+
 # Yahoo rate-limits its token ("crumb") when many requests arrive at once, after which quote,
 # fundamentals and analyst requests fail with 401s. Keep only a few requests in flight.
 _YAHOO_SLOTS = threading.BoundedSemaphore(3)
@@ -157,7 +167,7 @@ class YahooProvider:
         if df.empty:
             raise ValueError(f"No price history for {ticker}")
         df.index = pd.to_datetime(df.index).tz_localize(None)
-        return df[["Open", "High", "Low", "Close", "Volume"]]
+        return trim_unfinished(df[["Open", "High", "Low", "Close", "Volume"]])
 
     @_yahoo
     def fundamentals(self, ticker: str) -> dict:
@@ -374,7 +384,7 @@ def _yahoo_street(yf, ticker: str) -> dict:
 
 def _yahoo_research(yf, ticker: str, industry_key: str | None = None) -> dict:
     t = yf.Ticker(ticker)
-    out: dict = {"earnings": [], "quarterly": [], "annual": [], "insiders": [], "peers": []}
+    out: dict = {"earnings": [], "quarterly": [], "annual": [], "insiders": [], "peers": [], "report_dates": []}
 
     def attempt(name, fn):
         try:
@@ -389,6 +399,18 @@ def _yahoo_research(yf, ticker: str, industry_key: str | None = None) -> dict:
                 out["earnings"].append({"quarter": pd.Timestamp(q).date(), "eps_actual": _f(r.get("epsActual")),
                                         "eps_estimate": _f(r.get("epsEstimate")),
                                         "surprise_pct": _f(r.get("surprisePercent"))})
+
+    def report_dates():
+        """The real report times (not just the quarter ends), so the share move is measured on the right day."""
+        df = t.get_earnings_dates(limit=12)
+        if df is None or df.empty:
+            return
+        now = pd.Timestamp.now(tz="UTC")
+        for ts in df.index:
+            ts = pd.Timestamp(ts)
+            ts = ts.tz_localize(NY) if ts.tzinfo is None else ts.tz_convert(NY)
+            if ts.tz_convert("UTC") < now:
+                out["report_dates"].append({"date": ts.date().isoformat(), "hour": ts.hour})
 
     def statements(freq, key, rows):
         df = t.get_income_stmt(pretty=False, freq=freq)
@@ -413,6 +435,7 @@ def _yahoo_research(yf, ticker: str, industry_key: str | None = None) -> dict:
             out["peers"] = [p for p in _industry_leaders(yf, key) if p.upper() != ticker.upper()][:4]
 
     attempt("earnings history", earnings)
+    attempt("report dates", report_dates)
     attempt("quarterly statements", lambda: statements("quarterly", "quarterly", {
         "revenue": "TotalRevenue", "gross_profit": "GrossProfit",
         "operating_income": "OperatingIncome", "net_income": "NetIncome"}))
@@ -462,14 +485,19 @@ _PRICECHECK: dict = {}
 
 
 def price_check(ticker: str, closes) -> dict:
-    """Stooq re-check of our recent closes, cached 6 h. Always a dict (with `unavailable` and a reason on failure)."""
+    """Massive (when a key is set, else Stooq) re-check of our recent closes, cached 6 h. Always a dict (with `unavailable` and a reason on failure)."""
     hit = _PRICECHECK.get(ticker)
     if hit and time.monotonic() - hit[0] < SECOND_TTL:
         return hit[1]
-    from . import stooq
-    out = stooq.check(ticker, closes)
+    from . import massive, stooq
+    out = massive.check(ticker, closes) if massive.enabled() else None       # Massive first (owner's key), Stooq as the fallback
+    if out is None or "unavailable" in out:
+        alt = stooq.check(ticker, closes)
+        if out is None or "unavailable" not in alt:
+            out = alt
+    stamp = time.monotonic() - (SECOND_TTL - 120 if out.get("retry") else 0)      # a "still loading" read is asked again in 2 min
     if "unavailable" not in out or hit is None:
-        _PRICECHECK[ticker] = (time.monotonic(), out)
+        _PRICECHECK[ticker] = (stamp, out)
     return _PRICECHECK[ticker][1]
 
 
@@ -489,16 +517,21 @@ def _bar_summary(bars: pd.DataFrame) -> dict:
         day = idx[last_i].tz_convert(NY).date()
         earlier = [i for i in regular if idx[i].tz_convert(NY).date() < day]
         prev_regular = float(bars["Close"].iloc[earlier[-1]]) if earlier else None
+    day_volume = None
+    if regular and "Volume" in bars.columns:                  # shares traded in the latest regular session so far
+        today = [i for i in regular if idx[i].tz_convert(NY).date() == day]
+        vols = bars["Volume"].iloc[today].dropna()
+        day_volume = float(vols.sum()) if len(vols) else None
     return {"last_close": float(bars["Close"].iloc[-1]), "last_session": sessions[-1],
             "last_time": idx[-1].to_pydatetime().astimezone(timezone.utc),
-            "last_regular": last_regular, "prev_regular": prev_regular}
+            "last_regular": last_regular, "prev_regular": prev_regular, "day_volume": day_volume}
 
 
 def _quote_from_bars(bars: pd.DataFrame | None, source: str | None, errors: list[str]) -> dict:
     clock = us_session()
     out = {"market_state": clock, "ext_session": None, "ext_price": None, "ext_change": None, "ext_time": None,
            "ext_stale": False, "live_price": None, "live_change": None, "live_time": None,
-           "regular_price": None, "source": None,
+           "live_volume": None, "regular_price": None, "source": None,
            "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     summary = None
     if bars is not None:
@@ -511,6 +544,7 @@ def _quote_from_bars(bars: pd.DataFrame | None, source: str | None, errors: list
         out["regular_price"] = summary["last_regular"]
         if clock == "REGULAR" and summary["last_session"] == "REGULAR":
             out["live_price"], out["live_time"] = summary["last_close"], summary["last_time"]
+            out["live_volume"] = summary.get("day_volume")
             if summary["prev_regular"]:
                 out["live_change"] = summary["last_close"] / summary["prev_regular"] - 1
         elif clock != "REGULAR" and summary["last_session"] in ("PRE", "POST"):
@@ -735,6 +769,13 @@ class DemoProvider:
                 "news": sorted(news, key=lambda n: n["published"], reverse=True), "rating_changes": changes}
 
 
+def partial_after_close(fetched_at: datetime, now: datetime) -> bool:
+    """True when a daily history fetched before today's close (while its last bar was still moving with the live price) is
+    being read after the close: it must be fetched again once, so the last bar is the final close and not a mid-session price."""
+    close = now.replace(hour=16, minute=5, second=0, microsecond=0)
+    return now.weekday() < 5 and now >= close and fetched_at < close
+
+
 class CachedProvider:
     """Shares fetches across threads and scans. Fundamentals and events change slowly,
     so they're kept longer, which also keeps the Yahoo request count down."""
@@ -749,12 +790,14 @@ class CachedProvider:
         self._lock = threading.Lock()
         self._cache: dict[tuple, tuple[float, Future]] = {}
         self._last: dict[tuple, pd.DataFrame] = {}   # last good price history, for pages that mustn't wait
+        self._at: dict[tuple, datetime] = {}         # when each history was fetched (New York time)
 
     def _get(self, kind: str, *args):
         key = (kind, *args)
         with self._lock:
             hit = self._cache.get(key)
-            if hit and time.monotonic() - hit[0] < self.TTL[kind]:
+            stale = kind == "history" and key in self._at and partial_after_close(self._at[key], datetime.now(NY))
+            if hit and not stale and time.monotonic() - hit[0] < self.TTL[kind]:
                 fut, owner = hit[1], False
             else:
                 fut, owner = Future(), True
@@ -765,6 +808,7 @@ class CachedProvider:
                 if kind == "history":
                     with self._lock:
                         self._last[key] = value
+                        self._at[key] = datetime.now(NY)
                 fut.set_result(value)
             except Exception as e:
                 with self._lock:  # don't remember failures

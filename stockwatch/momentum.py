@@ -4,7 +4,9 @@ status, call or alert.
 Momentum (from the last completed daily bars): RSI(14), the 20-day return and MACD against its signal line.
   strong       up 8%+ over 20 sessions with MACD above its signal
   building     up over 20 sessions with MACD above its signal
-  stabilising  down over 20 sessions but MACD has turned up
+  stabilising  down over 20 sessions, MACD has turned up AND the fall has actually stopped: no new 10-session closing low in the
+               last 3 sessions and not down 5%+ over the last 3 (MACD lags, so on its own it can read "stabilising" right after
+               a breakdown day; with STAB_CHECK on, that case reads weak: owner asked 2 Nov 2026, switched on only after the compare run)
   fading       up over 20 sessions but MACD has turned down
   weak         down over 20 sessions with MACD below its signal
   falling      down 10%+ over 20 sessions with RSI under 40
@@ -43,6 +45,10 @@ MARKET_MOVE = 0.03
 DIST_DAYS = 25
 DIST_MOVE = 0.002
 DIST_COUNT = 5
+STAB_RECENT = 3               # sessions that must show the fall has stopped
+STAB_LOOKBACK = 10            # a close under the lowest close of the 10 sessions before them is a fresh low
+STAB_DROP = 0.05              # down this much over the recent sessions is still falling
+STAB_CHECK = False            # True = the new rule below. OFF until the owner signs off after scripts/momentum_compare.py (2 Nov 2026); then set True
 
 MOMENTUM_LABEL = {"strong": "STRONG", "building": "BUILDING", "stabilising": "STABILISING", "fading": "FADING",
                   "weak": "WEAK", "falling": "FALLING"}
@@ -98,6 +104,10 @@ def assess(hist, market_hist=None, sector_hist=None, now: datetime | None = None
         mom = "weak"
     elif ret20 < 0:
         mom = "stabilising"
+        recent, older = close.iloc[-STAB_RECENT:], close.iloc[-(STAB_RECENT + STAB_LOOKBACK):-STAB_RECENT]
+        ret_recent = _ret(close, STAB_RECENT)
+        if STAB_CHECK and ((len(older) and float(recent.min()) < float(older.min())) or (ret_recent is not None and ret_recent <= -STAB_DROP)):
+            mom = "weak"                                         # MACD has not caught up: the price is still making new lows
     elif ret20 >= 0.08 and macd_up:
         mom = "strong"
     elif macd_up:

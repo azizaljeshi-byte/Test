@@ -198,3 +198,29 @@ def test_the_engine_records_it_and_it_changes_no_call(monkeypatch):
     monkeypatch.setattr(momentum, "assess", lambda *x, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     b = evaluate(Holding("AAA", 1, 10.0), make_portfolio(), DemoProvider())
     assert b.technical["momentum"] is None and (a.verdict, a.plan) == (b.verdict, b.plan)
+
+
+def _bounce():
+    return np.concatenate([decline(12, -0.10), 90 * 1.04 ** (np.arange(1, 9) / 8)])
+
+
+def test_macd_up_right_after_a_breakdown_day_is_not_stabilising(monkeypatch):
+    monkeypatch.setattr(momentum, "STAB_CHECK", True)
+    """MACD lags: it can sit above its signal line right after a heavy down day. Stabilising needs the fall to have stopped."""
+    base = _bounce()
+    assert momentum.assess(frame(flat_then(base)), None, None, NOW)["momentum"] == "stabilising"       # a real bounce
+    for tail in (np.concatenate([base, [base[-1] * 0.93]]),                                            # -7% today
+                 np.concatenate([base, [base[-1] * 0.985, base[-1] * 0.97, base[-1] * 0.96]])):       # a new low inside 3 sessions
+        r = momentum.assess(frame(flat_then(tail)), None, None, NOW)
+        assert r["facts"]["macd_above_signal"] is True and r["momentum"] in ("weak", "falling")
+
+
+def test_a_base_that_holds_still_reads_stabilising(monkeypatch):
+    monkeypatch.setattr(momentum, "STAB_CHECK", True)
+    base = np.concatenate([_bounce(), np.full(4, 93.2)])
+    assert momentum.assess(frame(flat_then(base)), None, None, NOW)["momentum"] == "stabilising"
+    assert momentum.assess(frame(flat_then(np.concatenate([_bounce(), [_bounce()[-1] * 0.98]]))), None, None, NOW)["momentum"] == "stabilising"   # a small dip above the low
+
+
+def test_the_new_stabilising_rule_is_off_by_default():
+    assert momentum.STAB_CHECK is False
