@@ -64,6 +64,17 @@ def _ticker(value, tracked: set[str] | None) -> str:
     return f'<a href="{escape(href, quote=True)}" target="_self">{text}</a>'
 
 
+def _comparison(v: dict) -> str:
+    previous = v.get("previous")
+    if not isinstance(previous, dict):
+        return ""
+    return f'<small class="aiv-muted">{_text(previous.get("verdict"))} → {_text(v.get("verdict"))}</small>'
+
+
+def _recheck(v: dict) -> str:
+    return '<small class="aiv-muted">re-check at the open</small>' if v.get("recheck") is True else ""
+
+
 def _wrap(body):
     return f'<style>{CSS}</style><div class="aiv">{body}</div>'
 
@@ -104,7 +115,7 @@ def html(verdict: dict | None, tracked: set[str] | None = None) -> str:
     return _wrap(f'<section class="aiv-card" style="--call:{COLORS[call]}">{demo}<div class="aiv-head">'
                  f'<div><div class="aiv-ticker">{ticker}</div><small>{_text(v.get("name") or "")} · {_text(v.get("sector") or "unknown sector")}</small></div>'
                  f'<div class="aiv-price"><b>{_price(v.get("price"))}</b><small>{_text(v.get("price_label"))}</small></div></div>'
-                 f'<div class="aiv-call"><div class="aiv-word">{call}</div><div>{MEANINGS[call]}</div>'
+                 f'<div class="aiv-call">{_comparison(v)}<div class="aiv-word">{call}</div>{_recheck(v)}<div>{MEANINGS[call]}</div>'
                  f'<div class="aiv-conf" aria-label="Confidence: {confidence_text}">{dots}<span>Confidence: {confidence_text}</span></div></div>'
                  f'<p class="aiv-headline">{_text(v.get("headline"))}</p><div class="aiv-title">What would change it</div>{changes}'
                  f'<div class="aiv-title">Price ladder</div><div class="aiv-ladder">{ladder or "Levels unknown"}</div>'
@@ -134,7 +145,7 @@ def history_html(rows: list[dict], tracked: set[str] | None = None) -> str:
         call = r.get("verdict") if status == "ready" else "Asking…" if status == "asking" else "Failed"
         sc = (r.get("scored") or {}) if status == "ready" else {}
         body.append(f'<tr><td>{_text(_time(r.get("asked_at")))}</td><td>{_ticker(r.get("ticker"), tracked)}'
-                    f'{"<small> · demo</small>" if r.get("demo") else ""}</td><td>{_text(call)}</td>'
+                    f'{"<small> · demo</small>" if r.get("demo") else ""}</td><td>{_text(call)}<br>{_comparison(r)}<br>{_recheck(r)}</td>'
                     f'<td>{_return(sc.get("plus60"))}</td><td>{_return(sc.get("close"))}</td></tr>')
     demo = '<p class="aiv-muted">Synthetic demo rows are excluded from statistics.</p>' if any(r.get("demo") for r in rows) else ""
     table = ('<table class="aiv-table"><thead><tr><th scope="col">Saved</th><th scope="col">Stock</th><th scope="col">Verdict</th>'
