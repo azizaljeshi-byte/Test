@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import datetime
 from html import escape
 import math
+from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 COLORS = {"BUY": "#3dffa8", "HOLD": "#ffb020", "SELL": "#ff697b", "AVOID": "#ff697b"}
 MEANINGS = {"BUY": "A possible entry. Check the conditions below.", "HOLD": "Wait. Not a buy yet.",
@@ -47,25 +49,43 @@ def _time(value) -> str:
         return "unknown time"
     try:
         at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        # Keep the saved clock and offset; never silently assume the browser or runtime timezone.
-        offset = at.strftime("%z")
-        offset = offset[:3] + ":" + offset[3:] if offset else "time zone unknown"
-        return f"{at:%d %b %H:%M} ({offset})"
+        if at.tzinfo is None:
+            return f"{at:%d %b %H:%M} (time zone unknown)"
+        return f"{at.astimezone(ZoneInfo('America/New_York')):%d %b %H:%M} NY"
     except ValueError:
         return str(value)
+
+
+def _ticker(value, tracked: set[str] | None) -> str:
+    text = _text(value)
+    if not value or (tracked is not None and value not in tracked):
+        return text
+    href = "?view=target&t=" + quote(str(value), safe="")
+    return f'<a href="{escape(href, quote=True)}" target="_self">{text}</a>'
+
+
+def _comparison(v: dict) -> str:
+    previous = v.get("previous")
+    if not isinstance(previous, dict):
+        return ""
+    return f'<small class="aiv-muted">{_text(previous.get("verdict"))} → {_text(v.get("verdict"))}</small>'
+
+
+def _recheck(v: dict) -> str:
+    return '<small class="aiv-muted">re-check at the open</small>' if v.get("recheck") is True else ""
 
 
 def _wrap(body):
     return f'<style>{CSS}</style><div class="aiv">{body}</div>'
 
 
-def html(verdict: dict | None) -> str:
+def html(verdict: dict | None, tracked: set[str] | None = None) -> str:
     """An escaped verdict card, including unasked/pending/failed states and unknown facts."""
     if not verdict:
         return _wrap('<div class="aiv-card aiv-status">Not asked yet. Choose a stock and tap Ask.</div>')
     v = verdict
     status = v.get("status")
-    ticker = _text(v.get("ticker"))
+    ticker = _ticker(v.get("ticker"), tracked)
     if status == "asking":
         return _wrap(f'<div class="aiv-card" role="status"><div class="aiv-ticker">{ticker}</div><p>Asking…</p>'
                      '<small>The answer will appear here. You can leave this tab.</small></div>')
@@ -95,7 +115,7 @@ def html(verdict: dict | None) -> str:
     return _wrap(f'<section class="aiv-card" style="--call:{COLORS[call]}">{demo}<div class="aiv-head">'
                  f'<div><div class="aiv-ticker">{ticker}</div><small>{_text(v.get("name") or "")} · {_text(v.get("sector") or "unknown sector")}</small></div>'
                  f'<div class="aiv-price"><b>{_price(v.get("price"))}</b><small>{_text(v.get("price_label"))}</small></div></div>'
-                 f'<div class="aiv-call"><div class="aiv-word">{call}</div><div>{MEANINGS[call]}</div>'
+                 f'<div class="aiv-call">{_comparison(v)}<div class="aiv-word">{call}</div>{_recheck(v)}<div>{MEANINGS[call]}</div>'
                  f'<div class="aiv-conf" aria-label="Confidence: {confidence_text}">{dots}<span>Confidence: {confidence_text}</span></div></div>'
                  f'<p class="aiv-headline">{_text(v.get("headline"))}</p><div class="aiv-title">What would change it</div>{changes}'
                  f'<div class="aiv-title">Price ladder</div><div class="aiv-ladder">{ladder or "Levels unknown"}</div>'
@@ -108,7 +128,7 @@ def _return(value):
     return "—" if value is None else f"{value:+.2f}%"
 
 
-def history_html(rows: list[dict]) -> str:
+def history_html(rows: list[dict], tracked: set[str] | None = None) -> str:
     """Scored returns are percentage points, not fractions; only ready real verdicts enter statistics."""
     ready = [r for r in rows if r.get("status") == "ready" and not r.get("demo")]
     def success(call, up):
@@ -124,8 +144,8 @@ def history_html(rows: list[dict]) -> str:
             continue  # pending placeholders belong on the card, not in the outcome history
         call = r.get("verdict") if status == "ready" else "Asking…" if status == "asking" else "Failed"
         sc = (r.get("scored") or {}) if status == "ready" else {}
-        body.append(f'<tr><td>{_text(_time(r.get("asked_at")))}</td><td>{_text(r.get("ticker"))}'
-                    f'{"<small> · demo</small>" if r.get("demo") else ""}</td><td>{_text(call)}</td>'
+        body.append(f'<tr><td>{_text(_time(r.get("asked_at")))}</td><td>{_ticker(r.get("ticker"), tracked)}'
+                    f'{"<small> · demo</small>" if r.get("demo") else ""}</td><td>{_text(call)}<br>{_comparison(r)}<br>{_recheck(r)}</td>'
                     f'<td>{_return(sc.get("plus60"))}</td><td>{_return(sc.get("close"))}</td></tr>')
     demo = '<p class="aiv-muted">Synthetic demo rows are excluded from statistics.</p>' if any(r.get("demo") for r in rows) else ""
     table = ('<table class="aiv-table"><thead><tr><th scope="col">Saved</th><th scope="col">Stock</th><th scope="col">Verdict</th>'

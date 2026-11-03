@@ -42,7 +42,7 @@ def test_each_verdict_has_its_color_changes_confidence_and_no_trade_footer(call,
     assert f'style="--call:{color}"' in h
     assert call in text and 'What would change it' in text and 'Confidence: 2 of 5' in text
     assert 'places no trade' in text and 'scored at +60 min and at the close' in text
-    assert '03 Nov 07:58 (-05:00)' in text
+    assert '03 Nov 07:58 NY' in text
 
 
 def test_unknowns_stay_unknown_and_levels_stay_sorted_with_equal_spacing():
@@ -139,3 +139,90 @@ def test_candidate_selection_does_not_ask_and_invalid_input_does_not_queue():
     assert st.session_state.ai_ticker=='MSFT' and not ask_ai._queue(s)
     st.session_state.ai_ticker='<script>';scope['_ai_submit']()
     assert not ask_ai._queue(s) and 'Enter a ticker' in st.session_state.ai_note
+
+
+@pytest.mark.parametrize("render", [lambda v, **kw: view.html(v, **kw),
+                                  lambda v, **kw: view.history_html([v], **kw)])
+def test_ticker_links_escape_text_and_encode_query_and_respect_tracking(render):
+    ticker = 'FICT&<"/#'
+    h = render(row(ticker=ticker), tracked={ticker})
+    assert 'href="?view=target&amp;t=FICT%26%3C%22%2F%23" target="_self"' in h
+    assert 'FICT&amp;&lt;&quot;/#</a>' in h
+    assert '<a href=' not in render(row(ticker=ticker), tracked=set())
+    assert '<a href=' not in render(row(ticker=None))
+
+
+@pytest.mark.parametrize("stamp, expected", [
+    ("2026-11-03T02:46:00-05:00", "03 Nov 02:46 NY"),
+    ("2026-11-03T07:46:00Z", "03 Nov 02:46 NY"),
+    ("2026-07-03T07:46:00+00:00", "03 Jul 03:46 NY"),
+    ("2026-11-03T02:46:00", "03 Nov 02:46 (time zone unknown)"),
+    (None, "unknown time"), ("invalid", "invalid"),
+])
+def test_saved_time_is_new_york_in_card_and_history(stamp, expected):
+    v = row(asked_at=stamp)
+    assert "Saved " + expected in Text(view.html(v)).text
+    assert expected in Text(view.history_html([v])).text
+
+
+@pytest.mark.parametrize('previous, expected', [(None, None), ({'verdict':'HOLD'}, 'HOLD → BUY'),
+                                              ({'verdict':'BUY'}, 'BUY → BUY'), ({'verdict':None}, 'unknown → BUY')])
+def test_previous_change_and_recheck_tag_in_card_and_history(previous, expected):
+    v = row(previous=previous, recheck=True)
+    for markup in (view.html(v), view.history_html([v])):
+        text = Text(markup).text
+        assert 're-check at the open' in text
+        if expected:
+            assert expected in text
+        else:
+            assert '→' not in text
+    assert 're-check at the open' not in Text(view.html(row(previous=previous))).text
+    assert 're-check at the open' not in Text(view.history_html([row(previous=previous)])).text
+
+
+def test_previous_text_is_escaped_and_unknown_confidence_remains_unknown():
+    v = row(previous={'verdict':'<script>x</script>', 'confidence':None, 'price':None, 'asked_at':None},
+            confidence=None, price=None, recheck=True)
+    for markup in (view.html(v), view.history_html([v])):
+        assert '<script>' not in markup and '&lt;script&gt;' in markup
+    assert 'Confidence: unknown' in Text(view.html(v)).text
+    assert 'unknown' in Text(view.html(v)).text
+
+
+def test_history_native_re_evaluate_buttons_queue_their_own_stock_and_disable_per_stock(monkeypatch):
+    store = FakeStore()
+    for ticker in ('FICTA', 'FICTA', 'FICTB'):
+        ask_ai.save(store, row(ticker=ticker, demo=False))
+    ask_ai.request(store, 'FICTB')
+    store.latest_snapshots = lambda: [{'ticker':'FICTA'}, {'ticker':'FICTB'}]
+    st, scope = callbacks(store, False)
+    buttons = []
+    class Container:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def text(self, value): pass
+        def button(self, label, **kw): buttons.append((label, kw))
+    st.container = lambda **kw: Container()
+    st.columns = lambda widths: (Container(), Container())
+    st.markdown = lambda *a, **kw: None
+    st.caption = lambda *a: None
+    st.button = lambda *a, **kw: None
+    tree = ast.parse((Path(__file__).resolve().parents[1]/'dashboard.py').read_text())
+    func = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_ai_answer')
+    func.decorator_list = []
+    scope['ask_ai_view'] = view
+    exec(compile(ast.Module(body=[func], type_ignores=[]), 'dashboard.py', 'exec'), scope)
+    scope['_ai_answer']('FICTA')
+    by_ticker = {kw['args'][0]:kw for label,kw in buttons if label == 'Re-evaluate'}
+    assert len(buttons) == len(by_ticker) == 2
+    assert not by_ticker['FICTA']['disabled'] and by_ticker['FICTB']['disabled']
+    monkeypatch.setattr(ask_ai, 'ask', lambda *a, **kw: pytest.fail('inline AI call'))
+    action = by_ticker['FICTA']
+    action['on_click'](*action['args'])
+    assert ask_ai.latest(store, 'FICTA')['status'] == 'asking'
+    assert ask_ai._queue(store) == ['FICTB', 'FICTA']
+    scope['_ai_answer']('FICTA')
+    assert all(kw['disabled'] for _,kw in buttons[-2:])
+    # A stale second click also returns without another request.
+    monkeypatch.setattr(ask_ai, 'request', lambda *a, **kw: pytest.fail('duplicate request while asking'))
+    action['on_click'](*action['args'])
