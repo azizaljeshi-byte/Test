@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import time
 from datetime import datetime
@@ -14,7 +15,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import candidates, stockhead, rotation, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import ask_ai, ask_ai_view, candidates, stockhead, rotation, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -240,7 +241,7 @@ controls()
 # ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
 # Turbo and the Briefing are switched off (owner, 30 Oct): not on the tab bar and their addresses open the Radar. Their code is kept.
 VIEWS = {"radar": "◉ Radar", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log",
-         "fleet": "+ Fleet", "research": "⚗ Research", "paper": "◈ Paper", "quick": "⏱ Quick", "rotate": "↻ Rotate"}
+         "fleet": "+ Fleet", "research": "⚗ Research", "paper": "◈ Paper", "quick": "⏱ Quick", "ai": "✧ Ask the AI", "rotate": "↻ Rotate"}
 HIDDEN_VIEWS = ("fleet", "research")          # off the tab bar for now (owner); both still open at ?view=fleet and ?view=research
 SHOWN_VIEWS = [v for v in VIEWS if v not in HIDDEN_VIEWS]
 current = st.query_params.get("view", "radar")
@@ -736,6 +737,57 @@ if view == "quick":
     st.markdown(quick_view.html(qst, qpx), unsafe_allow_html=True)
     st.caption("A test account with loose rules, to watch how it behaves. Fills are simulated at the latest price, so they are approximate. Build: quick-1.")
     _candidates_block()
+
+# ---------------------------------------------------------------- Ask the AI (queues only; the tracker does the work)
+def _ai_candidate_selected():
+    if ticker := st.session_state.get("ai_candidate"):
+        st.session_state.ai_ticker = ticker
+
+
+def _ai_submit():
+    ticker = (st.session_state.get("ai_ticker") or "").upper().strip()
+    if not re.fullmatch(r"[A-Z0-9][A-Z0-9.\-]{0,9}", ticker):
+        st.session_state.ai_note = "Enter a ticker of up to 10 letters, digits, dots or hyphens."
+        return
+    if selected_provider(base.settings.data_provider) == "demo":
+        verdict = ask_ai.sample_verdict(ticker)
+        verdict["demo"] = True
+        if ticker != "ISRG":
+            verdict.update(name="Demo company", sector="Synthetic example")
+        ask_ai.save(store, verdict)
+        st.session_state.ai_note = "Synthetic example saved. No AI or network call."
+    else:
+        ask_ai.request(store, ticker)
+        st.session_state.ai_note = "Queued. The tracker will answer shortly."
+
+
+@st.fragment(run_every="5s")
+def _ai_answer(ticker: str):
+    # Settings don't change the snapshot watermark. Poll this fragment so answers appear even with no sweep.
+    waiting = (ask_ai.latest(store, ticker) or {}).get("status") == "asking"
+    st.button("Ask", key="ai_ask", on_click=_ai_submit, disabled=not ticker or waiting,
+              help="Uses a tracked stock's saved data. The answer is saved with its time and price.")
+    if note := st.session_state.pop("ai_note", None):
+        st.caption(note)
+    st.markdown(ask_ai_view.html(ask_ai.latest(store, ticker)), unsafe_allow_html=True)
+    st.markdown(ask_ai_view.history_html(ask_ai.history(store)), unsafe_allow_html=True)
+
+
+if view == "ai":
+    st.markdown("### Ask the AI")
+    st.caption("One stock, one saved opinion. Places no trade and changes no score.")
+    if selected_provider(base.settings.data_provider) == "demo":
+        st.info("Synthetic demo: Ask saves an example, without contacting an AI.")
+    st.text_input("Ticker", key="ai_ticker", placeholder="ISRG", max_chars=10)
+    today = datetime.now(NY).date().isoformat()
+    candidate_rows = ((candidates.load(store).get("days") or {}).get(today) or {}).get("rows") or {}
+    if candidate_rows:
+        st.pills("Today's candidates", sorted(candidate_rows), key="ai_candidate", on_change=_ai_candidate_selected)
+    else:
+        st.caption("No candidates saved for today. You can type a tracked stock above.")
+    ai_ticker = (st.session_state.get("ai_ticker") or "").upper().strip()
+    _ai_answer(ai_ticker)
+
 
 if view == "rotate":
     st.markdown(ui.hero("Holdings rotation", "Testing only: it suggests, it never trades."), unsafe_allow_html=True)

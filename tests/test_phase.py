@@ -54,3 +54,20 @@ def test_chip_is_plain_and_safe():
     h = ui.phase_chip(snap("strong_uptrend", "strong"))
     assert "Move" in h and "riding" in h
     assert ui.phase_chip({"payload": {}}) == ""
+
+
+def test_breakdown_bouncing_label_does_not_change_the_phase_code():
+    for code in phase.BREAKDOWN:
+        s=snap(code,'falling',live=0.024,price=102.4,atr=2,call='EXIT')  # previous close 100; up 1.2 ATR
+        r=phase.phase(s)
+        assert r['code']=='FALLING' and r['label']=='BOUNCING TODAY'
+        assert 'daily chart still broken' in r['why']
+        assert 'bouncing today' in ui.phase_chip(s)
+        assert s['payload']['technical']['one_call']['call']=='EXIT'
+        assert word(code,'falling',live=0.01,price=101,atr=2)=='FALLING'  # +0.5 ATR
+        assert word(code,'falling',live=0.02,price=102,atr=2)=='BOUNCING TODAY'  # equality, 1.0 ATR
+        assert word(code,'falling')=='FALLING'
+        assert word(code,'falling',live=0.03,atr=None)=='FALLING'
+        assert word(code,'falling',live=0.03,price=None)=='FALLING'
+        assert word(code,'falling',live=0.03,state='CLOSED')=='FALLING'
+    assert word('strong_uptrend','strong',live=0.024,price=102.4)=='RIDING'

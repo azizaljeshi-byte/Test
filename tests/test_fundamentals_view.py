@@ -99,3 +99,25 @@ def test_a_loss_quarter_is_not_drawn_to_scale_and_still_reads_beat_when_the_loss
          {"quarter": "2026-03-31", "eps_actual": 2.03, "eps_estimate": 1.91, "reaction": -0.01}]
     html = fv._eps(q)
     assert "loss quarter" in html and ">BEAT<" in html and html.count("fv-ls") == 1
+
+
+def test_institutional_ownership_over_100_is_explained_without_altering_scores():
+    import copy
+    from stockwatch import briefing
+    for value in (0.62,1.0,1.35,None):
+        s=snap_with(real_metrics(STRONG),research={'smart_money':{'institution_pct':value}})
+        before=copy.deepcopy(s)
+        markup=fv.fundamentals(s)
+        card=briefing.overview(s)
+        smart=next(g for g in card['grades'] if g['area']=='Smart money')
+        assert s==before
+        if value is None:
+            assert 'Institutions ' not in markup and 'institutions' not in smart['note']
+        elif value>1:
+            assert 'Institutions hold more than 100% of shares (funds report overlapping holdings)' in markup
+            assert 'institutions: over 100% (overlap)' in smart['note']
+            assert '135%' not in markup and '135%' not in smart['note']
+        else:
+            assert f'Institutions own {value*100:.0f}%' in markup
+            assert f'institutions own {value*100:.0f}%' in smart['note']
+        assert smart['score']==50.0

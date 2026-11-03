@@ -1,5 +1,6 @@
 """One short word for where a stock is in its move: RIDING, SLOWING, PULLING BACK, STABILISING or FALLING (owner, 2 Nov).
 Display only: it changes no score, call, signal, alert or trade rule, and it fetches nothing.
+A breakdown up at least 1 ATR today is labelled BOUNCING TODAY; its code remains FALLING.
 
 It is built only from two reads the stock already carries, so it cannot disagree with them:
   the chart status (record high / strong uptrend / pullback / weakening / testing support / breakdown), and
@@ -17,6 +18,7 @@ No word when either read is missing, or when the pair does not make a clear stor
 """
 from __future__ import annotations
 
+BOUNCE_ATR = 1.0              # breakdown display only: up this many daily ranges = bouncing today
 GIVEBACK_ATR = 0.5            # in an uptrend, down this many daily ranges today = slowing
 COLORS = {"RIDING": "opp", "SLOWING": "warn", "PULLING BACK": "info", "STABILISING": "info", "FALLING": "risk"}
 UP_TREND = ("record_high", "strong_uptrend")
@@ -88,4 +90,7 @@ def phase(snap: dict) -> dict | None:
     call = ((tech.get("one_call") or {}).get("call"))
     if (word in ("RIDING", "PULLING BACK") and call in ("EXIT", "AVOID")) or (word == "FALLING" and call in ("BUY", "ADD")):
         return None                                              # would contradict the New call: no signal rather than two answers
-    return {"code": word, "label": word, "why": why, "color": COLORS[word]}
+    label = word
+    if code in BREAKDOWN and word == "FALLING" and day is not None and day >= BOUNCE_ATR:
+        label, why = "BOUNCING TODAY", f"up {day:.1f} daily ranges today; daily chart still broken"
+    return {"code": word, "label": label, "why": why, "color": COLORS[word]}
