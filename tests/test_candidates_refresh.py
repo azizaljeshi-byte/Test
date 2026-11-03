@@ -30,11 +30,13 @@ def _run(monkeypatch, times):
     return calls
 
 
-def test_scans_every_30_minutes_from_10_until_15_30(monkeypatch):
-    times = [(h, m) for h in range(9, 16) for m in range(0, 60, 5) if (h, m) >= (9, 30)]
-    assert _run(monkeypatch, times) == [(10, 0), (10, 30), (11, 0), (11, 30), (12, 0), (12, 30), (13, 0), (13, 30),
-                                        (14, 0), (14, 30), (15, 0), (15, 30)]
+def test_scans_every_5_minutes_from_9_45_until_15_55(monkeypatch):
+    times = [(h, m) for h in range(9, 17) for m in range(0, 60, 5) if (h, m) >= (9, 30)]
+    got = _run(monkeypatch, times)
+    assert got[0] == (9, 45) and got[1] == (9, 50) and got[-1] == (15, 55)
+    assert len(got) == (15 * 60 + 55 - (9 * 60 + 45)) // 5 + 1
+    assert (9, 40) not in got and (16, 0) not in got and (10, 0) in got and (10, 5) in got
 
 
-def test_no_scan_before_10_or_after_15_30(monkeypatch):
-    assert _run(monkeypatch, [(9, 45), (15, 45), (15, 55)]) == []
+def test_no_scan_before_9_45_or_after_15_55(monkeypatch):
+    assert _run(monkeypatch, [(9, 35), (9, 40), (16, 0), (16, 5)]) == []
