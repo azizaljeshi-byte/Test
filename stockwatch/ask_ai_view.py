@@ -68,6 +68,19 @@ def _wrap(body):
     return f'<style>{CSS}</style><div class="aiv">{body}</div>'
 
 
+def plan_html(plan) -> str:
+    """The trade plan box: entry, stop, targets, reward vs risk. Advice only; nothing here is placed."""
+    if not isinstance(plan, dict):
+        return '<div class="aiv-title">Plan</div><div class="aiv-muted">No plan for this answer.</div>'
+    rows = [("Entry", plan.get("entry"), ""), ("Stop loss", plan.get("stop"), plan.get("stop_why")),
+            ("Take profit 1", plan.get("target1"), plan.get("target_why")), ("Take profit 2", plan.get("target2"), "")]
+    body = ''.join(f'<div class="aiv-fact"><span>{label}{"<br><small>" + _text(why) + "</small>" if why else ""}</span>'
+                   f'<span>{_price(val)}</span></div>' for label, val, why in rows if val is not None)
+    rr = _num(plan.get("reward_risk"))
+    rr_text = f'<div class="aiv-fact"><span>Gain for each $1 risked</span><span>${rr:.1f}</span></div>' if rr is not None else ""
+    return f'<div class="aiv-title">Plan (advice only)</div>{body}{rr_text}'
+
+
 def html(verdict: dict | None, tracked: set[str] | None = None) -> str:
     """An escaped verdict card, including unasked/pending/failed states and unknown facts."""
     if not verdict:
@@ -107,7 +120,7 @@ def html(verdict: dict | None, tracked: set[str] | None = None) -> str:
                  f'<div class="aiv-call"><div class="aiv-word">{call}</div><div>{MEANINGS[call]}</div>'
                  f'<div class="aiv-conf" aria-label="Confidence: {confidence_text}">{dots}<span>Confidence: {confidence_text}</span></div></div>'
                  f'<p class="aiv-headline">{_text(v.get("headline"))}</p><div class="aiv-title">What would change it</div>{changes}'
-                 f'<div class="aiv-title">Price ladder</div><div class="aiv-ladder">{ladder or "Levels unknown"}</div>'
+                 f'{plan_html(v.get("plan"))}<div class="aiv-title">Price ladder</div><div class="aiv-ladder">{ladder or "Levels unknown"}</div>'
                  f'<div class="aiv-title">Facts</div>{facts or "Facts unknown"}'
                  f'<div class="aiv-foot">Saved {_text(_time(v.get("asked_at")))} · scored at +60 min and at the close · places no trade</div></section>')
 

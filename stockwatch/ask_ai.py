@@ -20,6 +20,9 @@ Verdict dict (every key always present; unknown = None, never 0):
   previous                        the stock's earlier saved verdict, or None: {"verdict", "confidence", "asked_at", "price"}
                                   (the screen can show the change, for example HOLD -> BUY)
   recheck                         True when this is the automatic re-check at 09:45 New York of an answer saved before then
+  plan                            optional trade plan, or None: {"entry", "stop", "target1", "target2" (or None), "reward_risk",
+                                  "stop_why", "target_why"}. Prices come from the AI but are checked by code (see `check_plan`);
+                                  never present for SELL or AVOID. Old saved verdicts have no "plan" key.
   scored                          {"plus60": pct or None, "close": pct or None}
   status                          "ready" | "asking" | "failed"
   error                           text when status is "failed", else None
@@ -145,11 +148,17 @@ OUTPUT: reply with one JSON object and nothing else.
  "headline": "at most 30 words, plain English, the main reason",
  "change_buy": "what would have to happen for this to become a BUY",
  "change_hold": "what keeps it a HOLD, or what to wait for",
- "change_sell": "what would make it a SELL (if owned, the exit)"}
+ "change_sell": "what would make it a SELL (if owned, the exit)",
+ "plan": null OR {"entry": price to buy at (or the price to wait for), "stop": price where the idea is wrong and you leave,
+   "target1": first profit-taking price, "target2": a second target or null,
+   "stop_why": "short reason, name the level used", "target_why": "short reason, name the level used"}}
 Meaning: BUY = a clean entry exists now under the playbook; HOLD = if owned keep it, if not wait, not a buy yet; SELL = if owned, leave;
 AVOID = do not buy and no reason to own. Use only the numbers in the data, never invent prices or news. Missing data is unknown: say so,
 and do not treat it as bad. Name the pattern and its label (forming, confirmed, failed, no clean pattern) when you can. A BUY needs the
 stock to be turning or riding with confirmation and confidence 3 or more; otherwise say HOLD or AVOID. Each change_ line is one sentence.
+PLAN: for BUY or HOLD give a long-only plan using levels from the data (support, resistance, exit line, typical daily move); the stop sits
+just under a real support or the failed level, the targets at real resistance or a stated multiple of the stop distance. For SELL or AVOID
+set plan to null. If the data is too thin to place a stop and target, set plan to null and say why in the headline. Never invent levels.
 """
 
 
@@ -219,7 +228,36 @@ def _price_for(snap: dict, now: datetime):
     return None, "last close"
 
 
-def parse_answer(text: str) -> dict:
+def _price_num(v):
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    return x if x == x and 0 < x < 1e7 else None
+
+
+def check_plan(raw, verdict: str, price) -> dict | None:
+    """Keep the AI's plan only when it is sane; otherwise None. Reward/risk is computed here, never taken from the AI.
+    Rules: BUY/HOLD only; stop < entry < target1 (< target2); entry within 10% of the price; stop within 25% of entry; targets within 60%."""
+    if verdict not in ("BUY", "HOLD") or not isinstance(raw, dict):
+        return None
+    entry, stop, t1 = (_price_num(raw.get(k)) for k in ("entry", "stop", "target1"))
+    t2 = _price_num(raw.get("target2"))
+    if None in (entry, stop, t1) or not stop < entry < t1:
+        return None
+    if t2 is not None and not t2 > t1:
+        t2 = None
+    ref = _price_num(price)
+    if ref is not None and abs(entry - ref) / ref > 0.10:
+        return None
+    if (entry - stop) / entry > 0.25 or max(t1, t2 or 0) / entry > 1.6:
+        return None
+    return {"entry": round(entry, 2), "stop": round(stop, 2), "target1": round(t1, 2), "target2": None if t2 is None else round(t2, 2),
+            "reward_risk": round((t1 - entry) / (entry - stop), 1), "stop_why": _txt(raw.get("stop_why"), 120),
+            "target_why": _txt(raw.get("target_why"), 120)}
+
+
+def parse_answer(text: str, price=None) -> dict:
     a = agent.parse(text)
     verdict = str(a.get("verdict") or "").upper().strip()
     if verdict not in VERDICTS:
@@ -230,14 +268,14 @@ def parse_answer(text: str) -> dict:
         conf = 1
     return {"verdict": verdict, "confidence": min(5, max(1, conf)), "headline": _txt(a.get("headline"), 260),
             "change_buy": _txt(a.get("change_buy"), 240), "change_hold": _txt(a.get("change_hold"), 240),
-            "change_sell": _txt(a.get("change_sell"), 240)}
+            "change_sell": _txt(a.get("change_sell"), 240), "plan": check_plan(a.get("plan"), verdict, price)}
 
 
 def _blank(ticker: str, now: datetime, status: str, error: str | None = None) -> dict:
     v = sample_verdict(ticker)
     v.update(name="", sector=None, asked_at=now.isoformat(timespec="seconds"), price=None, price_label="last close",
              verdict="HOLD", confidence=1, headline="", change_buy="", change_hold="", change_sell="", levels=[], facts=[],
-             previous=None, recheck=False,
+             previous=None, recheck=False, plan=None,
              scored={"plus60": None, "close": None}, status=status, error=error)
     return v
 
@@ -307,8 +345,8 @@ def _answer(store, snap: dict, ticker: str, now: datetime, caller, fetch) -> dic
         agent._add_usage(store, now, usage)
     except Exception:
         pass
-    a = parse_answer(text)
     p = d.get("price")
+    a = parse_answer(text, p)
     return {"ticker": ticker, "name": d.get("name") or "", "sector": d.get("sector"), "asked_at": now.isoformat(timespec="seconds"),
             "price": p, "price_label": label, **a, "levels": build_levels(d, p), "facts": build_facts(d, live),
             "previous": None, "recheck": False, "scored": {"plus60": None, "close": None}, "status": "ready", "error": None}
