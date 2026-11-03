@@ -692,15 +692,21 @@ if view == "turbo":
 
 # ---------------------------------------------------------------- alert log
 def _candidates_block() -> None:
-    """Today's shared list of stocks worth watching, with what Quick and New call did with each (log only)."""
+    """Saved daily candidate lists and their observed outcomes (display only)."""
     data = candidates.load(store)["days"]
     if not data:
         return
-    day = max(data)
-    rows = list(data[day]["rows"].values())
-    n_sp = sum(1 for r in rows if r.get("tracked") == "S&P only")
-    with st.expander(f"Candidate list · {day} · {len(rows)} stocks" + (f" ({n_sp} from the wider S&P 500)" if n_sp else "")
-                     + " · scanned 10 min before the open, then every 5 min from 15 min after it"):
+    with st.expander("Candidate list · saved days · scanned 10 min before the open, then every 5 min from 15 min after it"):
+        day = st.selectbox("Candidate day", sorted(data, reverse=True), index=0, key="candidate_day")
+        rows = list(data[day]["rows"].values())
+        s = candidates.summary(rows)
+        n_sp = sum(1 for r in rows if r.get("tracked") == "S&P only")
+        up = "unknown" if s["p60_up_share"] is None else f"{s['p60_up_share']:.0%} up"
+        avg60 = "unknown" if s["p60_average"] is None else f"{s['p60_average']:+.2f}%"
+        avgclose = "unknown" if s["close_average"] is None else f"{s['close_average']:+.2f}%"
+        count = f"{s['rows']} rows" + (f" ({n_sp} S&P only)" if n_sp else "")
+        st.caption(f"{count} · +60 min: {up}, avg {avg60} ({s['p60_count']} known) · "
+                   f"Close: avg {avgclose} ({s['close_count']} known)")
         if not rows:
             st.caption("Nothing qualified in the scans yet.")
         else:
