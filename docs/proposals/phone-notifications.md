@@ -1,6 +1,6 @@
-# Phone notification proposal — awaiting owner approval
+# Phone notification layout — owner approved 3 Nov
 
-Design only. Do not implement until the owner approves the three mock notifications in the draft PR description. All example symbols below are invented; no destinations or private configuration values are included.
+Owner approved the three mocks in PR #73 on 3 Nov. Implemented on the same branch; examples below remain the approved design reference. All example symbols below are invented; no destinations or private configuration values are included.
 
 ## Proposed layout
 
@@ -48,7 +48,7 @@ Click destination: FICTE target page. Priority: 5, unchanged.
 
 These are alternative sweep examples, not three pushes from one sweep. Amounts and symbols are invented. Existing suggested actions and factual reasons must retain their meaning when present; examples do not introduce a new trade instruction.
 
-## Implementation and validation after approval
+## Implementation and validation
 
 Touch the three digest builders in stockwatch/events.py and delivery/link formatting in stockwatch/notify.py as needed. Add offline tests with invented symbols for grouping/order, one push per eligible sweep, no push with no eligible events, unchanged trigger/baseline/deduplication behavior, inherited priorities, single-stock and digest Click destinations, missing configuration, unknown values, and message-size caps. Run focused tests, full suite, lint, and check phone readability.
 

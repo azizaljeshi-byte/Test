@@ -5,7 +5,8 @@ Two feeds, two ntfy topics, so each can have its own sound and mute setting on t
   (The wording of each message follows the design the owner approved on 30 Oct: icon, ticker and event in the title, then the reason
    with real numbers, then the next step.)
   CALLS  (NTFY_TOPIC) the New call changing on tracked stocks. Stocks you OWN come first: EXIT or AVOID is priority 5 with the
-         Rotate suggestion, ON THE LINE is 4, any other change 3. The watchlist reports a new BUY or ADD, and any other status change in one quiet batch (priority 2). Three or more owned changes in one sweep are one push too.
+         Rotate suggestion, near the exit level is 4, any other change 3. Watchlist changes remain priority 2.
+         All eligible call changes are combined once per sweep, at the highest included priority.
   LOG    also: a tracked stock moving a lot before the open or after the close (owned: 3% or more, others: 5% or more), once per
          stock per session, owned first.
 If only NTFY_TOPIC is set, both feeds go to it.
@@ -18,6 +19,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import math
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from . import notify, ui
 
@@ -26,17 +29,19 @@ SEEN_KEY = "push_seen"
 SELL_CALLS = ("EXIT", "AVOID")
 BUY_CALLS = ("BUY", "ADD")
 MAX_LINES = 12
-OWN_GROUP_FROM = 3                           # this many of your stocks changing in one sweep go out as one push
+CALL_DIGEST_KEY = "last_call_digest"
 MOVE_OWNED, MOVE_OTHER = 0.03, 0.05
 OWN_LINES, OTHER_SHOWN = 5, 6                 # a long list is cut: the biggest owned moves, then the biggest others on one line
 MOVES_KEY = "push_moves"
 
 
 def _link(ticker: str | None = None) -> str | None:
-    base = (os.getenv("DASHBOARD_URL") or "").rstrip("/")
+    base = (os.getenv("DASHBOARD_URL") or "").strip()
     if not base:
         return None
-    return f"{base}/?view=target&t={ticker}" if ticker else base
+    parts = urlsplit(base)
+    query = {"view": "target", "t": ticker} if ticker else {"view": "log"}
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
 
 
 FAIL_KEY, OUTBOX_KEY = "push_failures", "push_outbox"
@@ -167,6 +172,23 @@ def _oc(snap: dict) -> dict:
     return oc if isinstance(oc, dict) and oc.get("known") else {}
 
 
+def _known(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _number(value) -> str:
+    return f"{value:,.2f}" if _known(value) else "unknown"
+
+
+def _plain(value) -> str:
+    return str(value).replace("ON THE LINE", "Near the exit level").replace("swings", "typical price moves")
+
+
+def _call_word(call) -> str:
+    return {"BUY": "New buy signal", "ADD": "Add signal", "EXIT": "Exit signal", "AVOID": "Avoid buying",
+            "ON THE LINE": "Near the exit level", "HOLD": "Hold", "WAIT": "Wait", None: "unknown"}.get(call, _plain(call).capitalize())
+
+
 def call_flips(store, snaps: list[dict], holdings, extras=frozenset()) -> dict:
     """Push the New call changes on tracked stocks since the last look. Returns {"exits": n, "buys": n, "learned": bool}."""
     from . import rotation
@@ -208,58 +230,62 @@ def call_flips(store, snaps: list[dict], holdings, extras=frozenset()) -> dict:
             fresh_other.append((s, before))
     out = {"exits": sum(1 for s, _ in fresh_own if _oc(s)["call"] in SELL_CALLS), "owned_changes": len(fresh_own),
            "buys": len(fresh_buy), "watch_changes": len(fresh_other), "learned": learning}
-    own_msgs = []
-    if fresh_own:
-        sells = {s["ticker"] for s, _ in fresh_own if _oc(s)["call"] in SELL_CALLS}
-        rows = {r["ticker"]: r for r in rotation.build(snaps, [h for h in holdings if h.ticker in sells])}
-        for s, before in fresh_own:
-            oc, r = _oc(s), rows.get(s["ticker"]) or {}
-            call, t = oc["call"], s["ticker"]
-            tech = (s.get("payload") or {}).get("technical") or {}
-            if call in SELL_CALLS:
-                first = f"Closed {oc.get('close')}, under the exit line {oc.get('exit_line')}" + (
-                    f" ({oc['distance_swings']:+.1f} swings)." if isinstance(oc.get("distance_swings"), (int, float)) else ".")
-                dc, vr = tech.get("day_change"), tech.get("volume_ratio")
-                if isinstance(dc, (int, float)) and dc <= -0.03:
-                    first += f" Fell {abs(dc) * 100:.1f}%" + (f" on {vr:.0f}x volume." if isinstance(vr, (int, float)) and vr >= 2 else ".")
-                frac = rotation.TRIM.get(call)
-                second = f"{before} \u2192 {call}." + (f" Suggested: trim {frac:.0%}." if frac else "")
-                lines = [first, second]
-                if r.get("picks"):
-                    lines.append("Move the money to: " + ", ".join(f"{p['ticker']} ({p['call']})" for p in r["picks"]) + ".")
-                elif r.get("note"):
-                    lines.append(r["note"][0].upper() + r["note"][1:] + ".")
-                title, prio, tag = f"{t} (you own it) turned {call}", 5, "rotating_light"
-            elif call == "ON THE LINE":
-                band = oc.get("band_line")
-                lines = [f"Close {oc.get('close')}, exit line {oc.get('exit_line')}, band down to {band}.",
-                         f"No new buys. A close under {band} turns it EXIT."]
-                title, prio, tag = f"{t} (you own it) is on its exit line", 4, "warning"
-            else:
-                lines = [f"{before} \u2192 {call}. {oc.get('why', '')}"]
-                title, prio, tag = f"{t} (you own it): {before} -> {call}", 3, "bell"
-            own_msgs.append((t, before, call, title, lines, prio, tag))
-        if len(own_msgs) >= OWN_GROUP_FROM:                     # many at once: one push, a line each, at the most urgent priority
-            lines = [f"{t}: {before} \u2192 {call}. {ls[0]}" if call in SELL_CALLS else f"{t}: {before} \u2192 {call}."
-                     for t, before, call, _ti, ls, _p, _tg in own_msgs]
-            top = max(own_msgs, key=lambda m: m[5])
-            _push(f"{len(own_msgs)} of your stocks changed", lines, top[5], top[6], top[0], store=store)
+    entries = []  # (priority, ticker, section, body); eligibility above is deliberately unchanged
+    sells = {s["ticker"] for s, _ in fresh_own if _oc(s)["call"] in SELL_CALLS}
+    rotations = {r["ticker"]: r for r in rotation.build(snaps, [h for h in holdings if h.ticker in sells])} if sells else {}
+    for s, before in fresh_own:
+        oc, t = _oc(s), s["ticker"]
+        call = oc["call"]
+        if call in SELL_CALLS:
+            line = f"{t}: {_call_word(call)}. Closed {_number(oc.get('close'))}, below exit level {_number(oc.get('exit_line'))}."
+            frac = rotation.TRIM.get(call)
+            if frac:
+                line += f" Suggested: trim {frac:.0%}."
+            r = rotations.get(t) or {}
+            if r.get("picks"):
+                line += " Move the money to: " + ", ".join(f"{p['ticker']} ({_call_word(p['call'])})" for p in r["picks"]) + "."
+            elif r.get("note"):
+                line += " " + _plain(r["note"]) + "."
+            priority, section = 5, "YOUR STOCKS — CHECK FIRST"
+        elif call == "ON THE LINE":
+            line = (f"{t}: Near the exit level. Close {_number(oc.get('close'))}, exit level {_number(oc.get('exit_line'))}. "
+                    f"No new buys. A close below {_number(oc.get('band_line'))} gives an exit signal.")
+            priority, section = 4, "YOUR STOCKS — CHECK FIRST"
         else:
-            for t, _b, _c, title, lines, prio, tag in own_msgs:
-                _push(title, lines, prio, tag, t, store=store)
-    if fresh_buy:
-        lines = []
-        for s in fresh_buy:
-            oc = _oc(s)
-            sw = oc.get("distance_swings")
-            px, close = ui._now(s)[0], oc.get("close")
-            lines.append(f"{s['ticker']} {oc.get('call')} \u00b7 {px if px == px and px else s.get('price', 0):,.2f} now"
-                         + (f" \u00b7 closed {close:,.2f}, {sw:.1f} swings above its line {oc.get('exit_line')}"
-                            if isinstance(sw, (int, float)) and isinstance(close, (int, float)) else ""))
-        _push(f"Watchlist: {len(lines)} New call buy signal{'s' if len(lines) != 1 else ''}", lines, 2, "chart_with_upwards_trend", fresh_buy[0]["ticker"], store=store)
-    if fresh_other:
-        lines = [f"{s['ticker']}: {b} \u2192 {_oc(s)['call']}" for s, b in fresh_other]
-        _push(f"Watchlist: {len(lines)} status change{'s' if len(lines) != 1 else ''}", lines, 2, "bar_chart", fresh_other[0][0]["ticker"], store=store)
+            line = f"{t}: Previous call: {_call_word(before)}. Now: {_call_word(call)}. {_plain(oc.get('why') or '')}"
+            priority, section = 3, "BUY SIGNALS" if call in BUY_CALLS else "YOUR STOCKS"
+        entries.append((priority, t, section, line))
+    for s in fresh_buy:
+        px = ui._now(s)[0]
+        if not _known(px):
+            px = s.get("price")
+        entries.append((2, s["ticker"], "BUY SIGNALS", f"{s['ticker']}: {_call_word(_oc(s)['call'])}. Price {_number(px)}."))
+    # Stable importance order: held exits/stops, buys, other owned changes, watchlist summary.
+    entries.sort(key=lambda e: (0 if e[0] >= 4 else 1 if e[2] == "BUY SIGNALS" else 2, -e[0]))
+    affected = list(dict.fromkeys([e[1] for e in entries] + [s["ticker"] for s, _ in fresh_other]))
+    if affected:
+        full, lines, section = [], [], None
+        for _, _, group, line in entries:
+            if group != section:
+                lines.append(group)
+                section = group
+            lines.append(line.encode("utf-8")[:600].decode("utf-8", errors="ignore") + ("… See Log." if len(line.encode("utf-8")) > 600 else ""))
+            full.append(line)
+        watch = f"Watchlist: {len(fresh_other)} other changes. Tap for the full list." if fresh_other else ""
+        full.extend(f"{s['ticker']}: Previous call: {_call_word(before)}. Now: {_call_word(_oc(s)['call'])}." for s, before in fresh_other)
+        store.set_setting(CALL_DIGEST_KEY, json.dumps({"lines": full}))
+        priority = max([e[0] for e in entries] or [2])
+        single = affected[0] if len(affected) == 1 else None
+        if single and entries:
+            title = f"{single}: " + ("exit signal on a stock you own" if priority == 5 else "near the exit level" if priority == 4 else "stock update")
+        else:
+            buys = sum(e[2] == "BUY SIGNALS" for e in entries)
+            title = ("StockWatch: exit signal on a stock you own" if priority == 5 else
+                     "StockWatch: check your exit levels" if priority == 4 else
+                     f"StockWatch: {buys} new buy signal{'s' if buys != 1 else ''}" if buys else "StockWatch: stock updates")
+        footer = watch or ("Tap to review this stock." if single else "Tap for the full list.")
+        text = notify.phone_digest(lines, footer, MAX_LINES)
+        _push(title, [text], priority, "rotating_light" if priority == 5 else "warning" if priority == 4 else "bell", single, store=store)
     store.set_setting(SEEN_KEY, json.dumps(seen))
     return out
 
