@@ -58,3 +58,44 @@ def test_the_report_card_letters_company_line_delivery_and_insiders_are_folded_i
     assert "Acme Corp" in html and "website" in html and "Report card" in html and "Beat 0 of the last 4" in html
     assert "1 buyer in 90 days" in html and "22% of shares are sold short" in html and "Institutions own 55%" in html
     assert "not part of the fundamentals rating" in html and "Overall" not in html
+
+
+def test_reaction_needs_a_volume_spike():
+    import numpy as np, pandas as pd
+    from stockwatch import deepdive
+    idx = pd.bdate_range("2026-08-01", periods=90)
+    hist = pd.DataFrame({"Close": np.linspace(50, 60, 90), "Volume": 1_000_000.0}, index=idx)
+    assert deepdive._reaction(hist, "2026-06-30") == (None, None)     # no spike: report not in the bars yet
+    hist.loc[idx[10], "Volume"] = 5_000_000.0
+    day, move = deepdive._reaction(hist, "2026-06-30")
+    assert day == idx[10].date().isoformat() and move is not None
+
+
+def test_pending_revenue_note():
+    import inspect
+    from stockwatch import fundamentals_view as fv
+    assert "quarterly report" in inspect.getsource(fv)
+
+
+def test_report_day_uses_the_real_report_date_and_an_option_expiry_friday_is_not_picked():
+    import numpy as np, pandas as pd
+    from stockwatch import deepdive
+    idx = pd.bdate_range("2026-06-15", periods=120)
+    hist = pd.DataFrame({"Close": np.linspace(100, 110, 120), "Volume": 1_000_000.0}, index=idx)
+    witching = pd.Timestamp("2026-09-18")                          # 80 days after the quarter end, heavy volume
+    hist.loc[witching, "Volume"] = 6_000_000.0
+    assert deepdive._reaction(hist, "2026-06-30")[0] != "2026-09-18"      # outside the 10-50 day window now
+    hist.loc[pd.Timestamp("2026-08-07"), "Close"] = hist.loc[pd.Timestamp("2026-08-06"), "Close"] * 1.05
+    after_close = [{"date": "2026-08-06", "hour": 16}]                 # reported after the close on the 6th: the move is on the 7th
+    day, move = deepdive._reaction(hist, "2026-06-30", after_close)
+    assert day == "2026-08-07" and abs(move - 0.05) < 1e-6
+    day, _ = deepdive._reaction(hist, "2026-06-30", [{"date": "2026-08-06", "hour": 7}])
+    assert day == "2026-08-06"                                         # a morning report moves the same day
+
+
+def test_a_loss_quarter_is_not_drawn_to_scale_and_still_reads_beat_when_the_loss_is_smaller():
+    from stockwatch import fundamentals_view as fv
+    q = [{"quarter": "2026-06-30", "eps_actual": -6.75, "eps_estimate": -7.25, "reaction": None},
+         {"quarter": "2026-03-31", "eps_actual": 2.03, "eps_estimate": 1.91, "reaction": -0.01}]
+    html = fv._eps(q)
+    assert "loss quarter" in html and ">BEAT<" in html and html.count("fv-ls") == 1

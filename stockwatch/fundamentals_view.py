@@ -94,7 +94,8 @@ def _eps(quarters: list[dict]) -> str:
     rows = [q for q in quarters[:4] if q.get("eps_actual") is not None and q.get("eps_estimate") is not None][::-1]
     if not rows:
         return ""
-    top = max(max(abs(q["eps_actual"]), abs(q["eps_estimate"])) for q in rows) or 1
+    pos = [max(q["eps_actual"], q["eps_estimate"]) for q in rows if q["eps_actual"] >= 0 and q["eps_estimate"] >= 0]
+    top = max(pos) if pos else 1                                      # a loss quarter never sets the scale for the others
     out = ""
     for q in rows:
         e, a = q["eps_estimate"], q["eps_actual"]
@@ -102,8 +103,9 @@ def _eps(quarters: list[dict]) -> str:
         cls = {"BEAT": "b", "MISS": "m"}.get(res, "l")
         mv = q.get("reaction")
         move = "" if mv is None or nan(mv) else f'<em class="{"up" if mv >= 0 else "dn"}">{mv * 100:+.0f}%</em>'
-        out += (f'<div class="fv-eq"><span>{escape(str(q["quarter"])[:7])}</span><div class="fv-pair">'
-                f'<i class="e" style="width:{max(abs(e) / top * 100, 3):.0f}%"></i><i class="a" style="width:{max(abs(a) / top * 100, 3):.0f}%"></i></div>'
+        bars = ('<small class="fv-ls">loss quarter: not drawn to scale (a one-off charge is common)</small>' if a < 0 or e < 0 else
+                f'<i class="e" style="width:{max(abs(e) / top * 100, 3):.0f}%"></i><i class="a" style="width:{max(abs(a) / top * 100, 3):.0f}%"></i>')
+        out += (f'<div class="fv-eq"><span>{escape(str(q["quarter"])[:7])}</span><div class="fv-pair">{bars}</div>'
                 f'<b class="fv-tag {cls}">{res}</b><small>{_usd(e)} → {_usd(a)}</small>{move}</div>')
     return ('<div class="fv-k">Profit per share: expected vs actual</div><div class="fv-lg"><span><u class="e"></u>Expected</span>'
             f'<span><u class="a"></u>Actual</span><span class="mv">Share move on report day</span></div>{out}')
@@ -196,6 +198,9 @@ def fundamentals(snap: dict) -> str:
     rq = (earn.get("revenue_q") or [])
     gm = rq[0].get("gross_margin") if rq else None
     body += (design.icon_line("info", f"Gross margin: {gm * 100:.0f}% in the last quarter.") if gm is not None and not nan(gm) else "")
+    qs = [q for q in (earn.get("quarters") or []) if q.get("eps_actual") is not None]
+    if qs and rq and str(qs[0]["quarter"])[:7] > str(rq[0]["period"])[:7]:
+        body += design.icon_line("info", f"{str(qs[0]['quarter'])[:7]} quarter is reported. Revenue and margins appear after the company files its quarterly report (days to 2 weeks).")
     body += _revenue(rq) + _delivery(earn) + _eps(earn.get("quarters") or []) + _smart(research.get("smart_money") or {})
     if not (lines or rq or earn.get("quarters")):
         body = '<div class="fv-note">No fundamentals could be read for this stock right now.</div>'
@@ -219,7 +224,7 @@ CSS = """
 .fv-lg{display:flex;gap:14px;font-size:.7rem;color:var(--dz-muted,#8b95a7);margin-bottom:6px}.fv-lg u{display:inline-block;width:10px;height:6px;border-radius:3px;margin-right:5px}
 .fv .e{background:var(--dz-line,#243041)}.fv .a{background:var(--dz-buy,#3fd08d)}.fv-lg .mv{margin-left:auto}
 .fv-eq{display:grid;grid-template-columns:54px 1fr 52px 76px 38px;gap:6px;align-items:center;margin-top:8px;font-size:.72rem}.fv-eq span{color:var(--dz-muted,#8b95a7)}
-.fv-pair{display:grid;gap:3px}.fv-pair i{display:block;height:6px;border-radius:3px}
+.fv-ls{color:var(--dz-muted,#8b95a7);font-size:.66rem}.fv-pair{display:grid;gap:3px}.fv-pair i{display:block;height:6px;border-radius:3px}
 .fv-tag{font-size:.6rem;padding:2px 5px;border-radius:5px;text-align:center;color:#0b1118}.fv-tag.b{background:var(--dz-buy,#3fd08d)}
 .fv-tag.m{background:var(--dz-act,#ff7b78)}.fv-tag.l{background:var(--dz-line,#243041);color:var(--dz-soft,#aab3c3)}
 .fv-eq small{color:var(--dz-soft,#aab3c3)}.fv-eq em{font-style:normal;text-align:right;font-weight:700}.fv .up{color:var(--dz-buy,#3fd08d)}.fv .dn{color:var(--dz-act,#ff7b78)}

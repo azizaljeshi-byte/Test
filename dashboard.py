@@ -14,14 +14,14 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import paper_live, paper_view, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import candidates, stockhead, rotation, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
 from stockwatch.data import NY, get_provider, selected_provider, us_session
 from stockwatch.engine import evaluate
 from stockwatch.relative import market_regime
-from stockwatch.store import Store
+from stockwatch.store import DEFAULT_DB, Store
 
 st.set_page_config(page_title="StockWatch · Mission Control", page_icon="🛸", layout="wide")
 st.markdown(ui.CSS, unsafe_allow_html=True)
@@ -35,6 +35,8 @@ CODE_VERSION = hashlib.sha1(b"".join(
 
 @st.cache_resource
 def get_store(code_version: str) -> Store:
+    from stockwatch import dbtrim
+    dbtrim.startup(DEFAULT_DB)   # thin the saved copies and shrink the file once, before anything else opens it
     return Store()
 
 
@@ -50,6 +52,12 @@ def cached_portfolio(code_version: str):
 
 base = cached_portfolio(CODE_VERSION)
 store = get_store(CODE_VERSION)
+try:                                                              # Quick's open trades and today's setups, for the chips on every card
+    _qs = quick.status(store)
+    ui.set_quick({t: (store.snapshot(t) and ((ui._now(store.snapshot(t))[0] / p["entry"] - 1) * 100)) for t, p in _qs["book"]["positions"].items()
+                  if store.snapshot(t)}, (_qs["state"] or {}).get("setups"))
+except Exception:
+    ui.set_quick({}, {})
 
 # the theme: the address (?theme=light) wins, then what the owner chose last, then follow the phone (auto)
 _saved_theme = st.query_params.get("theme") or store.get_setting("theme") or design.DEFAULT_THEME
@@ -230,8 +238,9 @@ controls()
 
 
 # ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
-VIEWS = {"radar": "◉ Radar", "turbo": "⚡ Turbo", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log",
-         "fleet": "+ Fleet", "research": "⚗ Research", "briefing": "☀ Briefing", "paper": "◈ Paper"}
+# Turbo and the Briefing are switched off (owner, 30 Oct): not on the tab bar and their addresses open the Radar. Their code is kept.
+VIEWS = {"radar": "◉ Radar", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log",
+         "fleet": "+ Fleet", "research": "⚗ Research", "paper": "◈ Paper", "quick": "⏱ Quick", "rotate": "↻ Rotate"}
 HIDDEN_VIEWS = ("fleet", "research")          # off the tab bar for now (owner); both still open at ?view=fleet and ?view=research
 SHOWN_VIEWS = [v for v in VIEWS if v not in HIDDEN_VIEWS]
 current = st.query_params.get("view", "radar")
@@ -270,9 +279,15 @@ def radar_list(snaps: list[dict], brief: str):
     icons = {"Risk": "▼ ", "Opportunity": "▲ ", "Hold": "● "}
     labels = {"All": f"All ({len(snaps)})"} | {
         g: f"{icons.get(g, '')}{g} ({sum(1 for x in snaps if fn(x))})" for g, fn in groups.items()}
+    query = st.text_input("Search", key="radar_search", placeholder="🔍 Search a stock: ticker or name",
+                          label_visibility="collapsed")
     choice = st.pills("Filter", list(labels), format_func=labels.get, default="All", key="radar_filter",
                       label_visibility="collapsed")
     shown = [x for x in snaps if groups[choice](x)] if choice in groups else snaps
+    shown = radar_search.apply(shown, query)
+    if query.strip() and not shown:
+        st.caption(f"No stock on your list matches “{query.strip()}”.")
+        return
     st.markdown(dayboard.render(shown, changed=verdict_changes(snaps), brief=brief), unsafe_allow_html=True)
 
 
@@ -326,8 +341,9 @@ if view == "target":
                                            else "Add it on the [Fleet page](?view=fleet) to track it."))
     p = snap["payload"]
     t, f, ev = p["technical"], p["fundamental"], p.get("events") or {}
-    st.markdown(details.decision(snap), unsafe_allow_html=True)
-    st.markdown(ui.cards([snap]) + ui.status_note(snap) + ui.flow_note(snap) + ui.reassess_note(snap) + ui.wire_note(snap), unsafe_allow_html=True)
+    st.markdown(stockhead.html(snap), unsafe_allow_html=True)           # one card: call, reading, price ladder, key technicals and fundamentals, news
+    with st.expander("How the chart was read · second opinion · flow", expanded=False):
+        st.markdown(ui.status_note(snap) + ui.flow_note(snap) + ("" if ui.HIDE_OLD_CALLS else ui.reassess_note(snap)) + ui.wire_note(snap), unsafe_allow_html=True)
     industry = (p.get("profile") or {}).get("industry")
     if industry:
         st.caption(industry)
@@ -336,46 +352,15 @@ if view == "target":
         st.markdown(f'<div class="mc-log"><small>YOUR NOTE</small><br>{escape(note)}</div>', unsafe_allow_html=True)
     st.markdown(details.brief_html(briefing.stock(snap, prevs.get(ticker))), unsafe_allow_html=True)
     research = p.get("research") or {}
-    today_news = [n for n in ev.get("news") or []
-                  if (datetime.now(NY) - datetime.fromisoformat(n["published"])).total_seconds() <= 36 * 3600]
-    st.markdown('<div class="mc-section">Today\'s news</div>', unsafe_allow_html=True)
-    st.markdown(ui.news_list(today_news) if today_news else
-                '<div class="mc-d">No headlines in the last day. Older news is further down.</div>', unsafe_allow_html=True)
-
-    plan = p.get("plan") or {}
-    if plan:
-        portfolio_value = sum(x["payload"]["position"].get("value", 0) for x in snaps if not x["payload"]["watchlist"])
-        risk_pct = st.session_state.get("risk_pct", portfolio.settings.risk_per_trade_pct)
-        sizing = tradeplan.size(plan, portfolio_value, risk_pct, portfolio.rules(snap["tier"]).max_position_pct)
-        st.markdown(ui.trade_plan(plan, sizing, risk_pct, portfolio_value), unsafe_allow_html=True)
-        st.select_slider("Risk per trade (% of portfolio lost if the stop is hit)", [0.25, 0.5, 1.0, 1.5, 2.0],
-                         value=risk_pct, key="risk_pct")
-        st.session_state.setdefault("account_size", int(portfolio_value) if portfolio_value else 10000)   # set once, so a typed number sticks
-        account = st.number_input("Your account size in $ (include cash; used by the trade guide)", min_value=0, step=1000,
-                                  key="account_size")
-        st.markdown(guide.card(snap, float(account), risk_pct, portfolio.rules(snap["tier"]).max_position_pct), unsafe_allow_html=True)
-
-    if cis_decision.mode() == "shadow":
-        _cis_shadow_card(ticker, snap)
-
-    street_m = research.get("street") or {}
-    if street_m:
-        st.markdown('<div class="mc-section">Outlook · 3 to 12 months</div>', unsafe_allow_html=True)
-        if not street_m.get("consensus"):
-            st.caption("Analyst ratings and targets are missing. " + "Yahoo blocks this data for apps on Streamlit Cloud. " + ("Finnhub didn't have it either." if finnhub.enabled() else "Add a free FINNHUB_API_KEY secret (finnhub.io) to fill it."))
-        st.markdown(ui.outlook(street_m, snap["price"]), unsafe_allow_html=True)
-    elif ticker not in tickers:
-        if st.button("Run the full analysis (street view, outlook, SEC)"):
-            with st.spinner(f"Analysing {ticker}..."):
-                store.save_snapshot(evaluate(Holding(ticker, 2, 0), portfolio, data))
-            st.rerun()
 
     st.markdown('<div class="mc-section">Fundamentals</div>', unsafe_allow_html=True)
     st.markdown(fundamentals_view.fundamentals(snap), unsafe_allow_html=True)
     st.markdown(debtcash_view.html(snap), unsafe_allow_html=True)
 
-    with st.expander("Company overview & report card", expanded=False):
-        st.markdown(ui.overview_card(briefing.overview(snap), ticker), unsafe_allow_html=True)
+    st.markdown('<div class="mc-section">Company overview & report card</div>', unsafe_allow_html=True)
+    st.markdown(ui.overview_card(briefing.overview(snap), ticker), unsafe_allow_html=True)
+
+    plan = p.get("plan") or {}
     lv = (research.get("valuation") or {}).get("levels") or {}
 
     try:
@@ -417,6 +402,52 @@ if view == "target":
                                                                 us_session() != "CLOSED")), unsafe_allow_html=True)
     except Exception as e:
         st.caption(f"Technical evidence offline: {e}")
+
+    street_m = research.get("street") or {}
+    if street_m:
+        st.markdown('<div class="mc-section">Outlook · 3 to 12 months</div>', unsafe_allow_html=True)
+        if not street_m.get("consensus"):
+            st.caption("Analyst ratings and targets are missing. " + "Yahoo blocks this data for apps on Streamlit Cloud. " + ("Finnhub didn't have it either." if finnhub.enabled() else "Add a free FINNHUB_API_KEY secret (finnhub.io) to fill it."))
+        st.markdown(ui.outlook(street_m, snap["price"]), unsafe_allow_html=True)
+    elif ticker not in tickers:
+        if st.button("Run the full analysis (street view, outlook, SEC)"):
+            with st.spinner(f"Analysing {ticker}..."):
+                store.save_snapshot(evaluate(Holding(ticker, 2, 0), portfolio, data))
+            st.rerun()
+
+    plan = p.get("plan") or {}
+    if plan:
+        portfolio_value = sum(x["payload"]["position"].get("value", 0) for x in snaps if not x["payload"]["watchlist"])
+        risk_pct = st.session_state.get("risk_pct", portfolio.settings.risk_per_trade_pct)
+        sizing = tradeplan.size(plan, portfolio_value, risk_pct, portfolio.rules(snap["tier"]).max_position_pct)
+        st.markdown(ui.trade_plan(plan, sizing, risk_pct, portfolio_value), unsafe_allow_html=True)
+        st.select_slider("Risk per trade (% of portfolio lost if the stop is hit)", [0.25, 0.5, 1.0, 1.5, 2.0],
+                         value=risk_pct, key="risk_pct")
+        st.session_state.setdefault("account_size", int(portfolio_value) if portfolio_value else 10000)   # set once, so a typed number sticks
+        account = st.number_input("Your account size in $ (include cash; used by the trade guide)", min_value=0, step=1000,
+                                  key="account_size")
+        st.markdown(guide.card(snap, float(account), risk_pct, portfolio.rules(snap["tier"]).max_position_pct), unsafe_allow_html=True)
+
+    if cis_decision.mode() == "shadow":
+        _cis_shadow_card(ticker, snap)
+
+    oc = ((snap.get("payload") or {}).get("technical") or {}).get("one_call")
+    if isinstance(oc, dict):          # SHADOW: the new technical-first call, beside the old labels; drives nothing
+        st.markdown('<div class="mc-section">New call (testing only)</div>', unsafe_allow_html=True)
+        if not oc.get("known"):
+            st.caption(f"No new call: {oc.get('why', 'unknown')}")
+        else:
+            risk, tf, sz = oc.get("risk") or {}, oc.get("timeframe"), oc.get("size")
+            st.markdown(ui.flag(oc["call"], escape(oc["why"]) + " · testing only: nothing is traded or alerted",
+                                ui.INFO), unsafe_allow_html=True)
+            bits = [f"Exit line {oc['exit_line']:g} (band down to {oc['band_line']:g})", f"Risk: {risk.get('grade')} ({risk.get('why')})"]
+            if tf:
+                bits.append(f"Time: {tf['word'].lower()}, {tf['text']}")
+            if sz:
+                bits.append(f"Size so the exit line costs about 1%: {sz['shares']} shares")
+            if oc.get("over_limit"):
+                bits.append("Position is over its limit")
+            st.caption(" · ".join(bits + list(oc.get("flags") or [])))
 
     st.markdown('<div class="mc-section">Signals</div>', unsafe_allow_html=True)
     st.markdown("".join(f'<div class="mc-log">{ui.signal_glyph(s["kind"])}{"!" * s["severity"]} {escape(s["message"])} '
@@ -659,17 +690,63 @@ if view == "turbo":
         st.caption("Recent: " + " · ".join(st.session_state.turbo_recent))
 
 # ---------------------------------------------------------------- alert log
+def _candidates_block() -> None:
+    """Today's shared list of stocks worth watching, with what Quick and New call did with each (log only)."""
+    data = candidates.load(store)["days"]
+    if not data:
+        return
+    day = max(data)
+    rows = list(data[day]["rows"].values())
+    with st.expander(f"Candidate list · {day} · {len(rows)} stocks (scanned 10 min before the open, then every 30 min from 30 min after it)"):
+        if not rows:
+            st.caption("Nothing qualified in the scans yet.")
+        else:
+            st.dataframe([{"Stock": r["ticker"], "Found": r["found"], "Why": r["qualified"], "Quick": r.get("quick", ""),
+                           "Quick result": r.get("quick_result", ""), "New call account": r.get("newcall", ""),
+                           "New call result": r.get("newcall_result", "")} for r in rows], hide_index=True, use_container_width=True)
+        st.caption("A log only: both accounts still trade any stock they qualify. It shows how each account picked up the same stocks.")
+
+
 if view == "paper":
-    pst = paper_live.status(store)
-    ppx = {}
-    for t in (pst["state"] or {}).get("tickers", []):
+    # the main Paper account and the whole-watchlist account were switched off on 30 Oct (owner): their stored history stays in the database
+    st.markdown("**New call test account** · the technical-first call on every tracked stock")
+    nst = paper_newcall.status(store)
+    npx = {}
+    for t in nst["book"].positions:           # prices are only needed for open trades: one snapshot load each, not one per tracked stock
         sn = store.snapshot(t)
         if sn:
             px, _, _live = ui._now(sn)
             if px == px and px is not None:
-                ppx[t] = float(px)
-    st.markdown(paper_view.html(pst, ppx), unsafe_allow_html=True)
-    st.caption("Fills are simulated at the latest price the tracker holds, so they are approximate. The app only trades while it is awake.")
+                npx[t] = float(px)
+    st.markdown(paper_view.html(nst, npx), unsafe_allow_html=True)
+    def _force_sell():
+        st.session_state["nc_force_msg"] = paper_newcall.force_sell_now(store)["note"]
+    st.button("Force sell all New call trades now (test)", key="nc_force", on_click=_force_sell,
+              help="Fake money only. Sells every open trade in this account at the latest price. The tracker keeps running and picks again on its next cycle.")
+    if st.session_state.get("nc_force_msg"):
+        st.caption(st.session_state["nc_force_msg"])
+    st.caption("A separate $50,000 account that buys when the new call says BUY near the exit line and sells when it turns EXIT. Fills are simulated at the latest price the tracker holds, so they are approximate. The app only trades while it is awake. Build: wait-1.")
+    with st.expander("Why stocks are not bought · all tracked stocks"):
+        st.markdown(whynot.html(whynot.study(store.latest_snapshots())), unsafe_allow_html=True)
+    _candidates_block()
+
+if view == "quick":
+    qst = quick.status(store)
+    qpx = quick.prices_of(store, [t["ticker"] for t in qst["book"]["trades"] if t["status"] == "OPEN"])
+    st.markdown(quick_view.html(qst, qpx), unsafe_allow_html=True)
+    st.caption("A test account with loose rules, to watch how it behaves. Fills are simulated at the latest price, so they are approximate. Build: quick-1.")
+    _candidates_block()
+
+if view == "rotate":
+    st.markdown(ui.hero("Holdings rotation", "Testing only: it suggests, it never trades."), unsafe_allow_html=True)
+    rrows = rotation.build(store.latest_snapshots(), portfolio.holdings)
+    st.markdown(rotation.html(rrows), unsafe_allow_html=True)
+    try:
+        rotation.log(store, rrows, datetime.now(NY).date().isoformat())
+    except Exception:
+        pass
+    st.caption("A holding is flagged only when its New call turns EXIT. The money goes to a stock whose call is ADD or BUY, with strong fundamentals and technicals, "
+               "risk below High, and both scores above the holding's. Candidates come from the stocks the app tracks (watchlist and holdings). Otherwise: keep the cash.")
 
 if view == "log":
     alerts = [a for a in store.recent_alerts(150) if a["ticker"] in tickers or a["source"] == "S&P scan"]
@@ -726,9 +803,17 @@ if view == "log":
             except Exception as e:
                 st.session_state.diag = ("error", f"Quote failed: {e}")
 
-        b1, b2 = st.columns(2)
+        def _test_push():
+            from stockwatch import events
+            res = events.test()
+            st.session_state.diag = (("success", "Test push sent. Check the ntfy app on your phone.") if res == "sent" else
+                                     ("error", "No NTFY_TOPIC in your settings file yet: add it, then restart the launcher." if res == "not configured"
+                                      else f"Push {res}"))
+
+        b1, b2, b3 = st.columns(3)
         b1.button("Test Finnhub key", on_click=_test_finnhub, width="stretch")
         b2.button("Fetch raw quote", on_click=_raw_quote, width="stretch")
+        b3.button("Send a test push", on_click=_test_push, width="stretch")
         kind, msg = st.session_state.get("diag", (None, None))
         if kind == "success":
             st.success(msg)

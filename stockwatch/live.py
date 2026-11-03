@@ -28,9 +28,52 @@ MARKET_LOCK = threading.Lock()   # one S&P scan at a time (tracker or the button
 SWEEP_LOCK = threading.Lock()
 
 
-def current_portfolio(store: Store):
+WIDE_MAX = int(os.getenv("STOCKWATCH_WIDE_MAX", "30"))     # market stocks added to the live sweep (0 switches it off)
+
+
+def wide_extras(store: Store, held: set[str], limit: int | None = None) -> list[str]:
+    """Stocks outside the watchlist that Quick and the New call account may also trade (owner, 30 Oct: open both to the
+    whole market). First any stock with an open trade (its stop must always be watched), then the best setups of the last
+    S&P 500 scan, up to `limit`. They get the same live prices and the same one-call as tracked stocks, but no alerts and
+    no card on the Radar."""
+    limit = WIDE_MAX if limit is None else limit
+    if limit <= 0:
+        return []
+    import json
+    out: list[str] = []
+    try:
+        for key in ("quick_book", "paper_newcall_book"):
+            raw = store.get_setting(key)
+            for t in ((json.loads(raw) if raw else {}).get("positions") or {}):
+                if t not in held and t not in out:
+                    out.append(t)                      # an open trade is always tracked, whatever the limit
+    except Exception:
+        log.exception("open-trade tickers could not be read")
+    try:
+        room = limit
+        for r in (store.latest_market_scan() or {}).get("results", []):
+            t = r.get("ticker")
+            if room <= 0:
+                break
+            if t and t not in held and t not in out and r.get("verdict") != "AVOID":
+                out.append(t)
+                room -= 1
+    except Exception:
+        log.exception("market scan list could not be read")
+    return out
+
+
+def current_portfolio(store: Store, wide: bool = False):
     base = load_portfolio()
-    return base if base.sheet_url else store.apply_overrides(base)
+    base = base if base.sheet_url else store.apply_overrides(base)
+    if not wide:
+        return base
+    from dataclasses import replace
+    from .config import Holding
+    extras = wide_extras(store, {h.ticker for h in base.holdings})
+    if not extras:
+        return base
+    return replace(base, holdings=list(base.holdings) + [Holding(t, 2, 0) for t in extras], extras=frozenset(extras))
 
 
 def market_scan(provider, store: Store | None = None, progress=None) -> list[dict]:
@@ -49,7 +92,7 @@ def market_scan(provider, store: Store | None = None, progress=None) -> list[dic
 def sweep(provider, store: Store | None = None):
     store = store or Store()
     with SWEEP_LOCK:
-        return run_once(current_portfolio(store), provider, store)
+        return run_once(current_portfolio(store, wide=True), provider, store)
 
 
 class Tracker:
@@ -87,7 +130,7 @@ class Tracker:
             self.last_sweep = self.last_quotes = time.time()
             return "sweep"
         if now - self.last_quotes >= QUOTE_SECONDS:
-            refresh_quotes(current_portfolio(store), self.provider, store)
+            refresh_quotes(current_portfolio(store, wide=True), self.provider, store)
             self.last_quotes = time.time()
             return "quotes"
         return "idle"
@@ -131,11 +174,57 @@ class Tracker:
                 self.step(store)
                 if time.time() - getattr(self, "_paper_at", 0.0) >= 20:
                     self._paper_at = time.time()
+                    # the main Paper account and the whole-watchlist account are switched off (owner, 30 Oct); their history stays stored
                     try:
-                        from . import paper_live
-                        paper_live.tick(store)     # the paper-trading test: its own account, never a real order
+                        from . import events, paper_newcall
+                        nc = paper_newcall.tick(store)  # the technical-first one-call traded on paper, in its own account
+                        if nc.get("did"):
+                            events.trades("New call", nc["did"], paper_newcall.load_book(store), store)
                     except Exception:
-                        log.exception("paper trading step failed")
+                        log.exception("new-call paper step failed")
+                    try:
+                        from . import events, quick
+                        qd = quick.tick(store).get("did")                      # the Quick tab's own fake account, separate from Paper
+                        if qd:
+                            events.trades("Quick", qd, quick.load_book(store, migrate=False), store)
+                    except Exception:
+                        log.exception("quick trading step failed")
+                    try:
+                        from . import candidates
+                        candidates.tick(store)                                 # the shared list of stocks worth watching, and what each account did with them
+                    except Exception:
+                        log.exception("candidates step failed")
+                    try:
+                        from . import agent
+                        agent.tick(self.store_path)                            # the AI agent: its own thread, so a slow answer never delays a stop
+                    except Exception:
+                        log.exception("agent step failed")
+                    try:
+                        from . import funnel
+                        funnel.run_async(self.store_path)                      # whole-S&P sector/industry read every 5 minutes, own thread, log only
+                    except Exception:
+                        log.exception("funnel step failed")
+                    try:
+                        from . import dbtrim, store as store_module
+                        dbtrim.run_async(self.store_path or store_module.DEFAULT_DB)   # hourly, own thread: keeps the database from growing
+                    except Exception:
+                        log.exception("database clean-up step failed")
+                    try:
+                        from . import backup
+                        backup.run_async()         # once a day after the US session closes, on its own thread: never blocks the tracker
+                    except Exception:
+                        log.exception("backup step failed")
+                if self.last_sweep and self.last_sweep != getattr(self, "_flip_at", None):
+                    self._flip_at = self.last_sweep               # once per finished sweep: owned stocks turning EXIT, new buy signals
+                    try:
+                        from . import events
+                        pf = current_portfolio(store, wide=True)
+                        snaps_now = store.latest_snapshots()
+                        events.call_flips(store, snaps_now, pf.holdings, pf.extras)
+                        events.moves(store, snaps_now, pf.holdings, pf.extras)
+                        events.signals(store, snaps_now, pf.holdings, pf.extras)
+                    except Exception:
+                        log.exception("push step failed")
                 self.maybe_market_scan(store)
                 self.last_error = None
             except Exception as e:   # keep tracking through a bad sweep

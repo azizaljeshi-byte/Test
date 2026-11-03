@@ -91,7 +91,8 @@ def _sell(book: Book, ticker: str, price: float, fraction: float, now: datetime,
         del book.positions[ticker]
 
 
-def step(book: Book, snaps: dict, prices: dict, now: datetime, cfg: decision.Config = decision.Config()) -> list[dict]:
+def step(book: Book, snaps: dict, prices: dict, now: datetime, cfg: decision.Config = decision.Config(),
+         exit_only: set | None = None) -> list[dict]:
     """Apply one round of decisions for every test-list stock in `snaps` ({ticker: snapshot}). `now` is New York time.
     Returns what was done, newest last."""
     done = []
@@ -109,7 +110,10 @@ def step(book: Book, snaps: dict, prices: dict, now: datetime, cfg: decision.Con
         d = decision.decide(snap, pos_view, price, now, cfg)
         a = d["action"]
         if d.get("blocked"):
-            if not book.blocked or book.blocked[-1].get("ticker") != ticker or book.blocked[-1].get("day") != now.date().isoformat():
+            day = now.date().isoformat()
+            # one line per stock, day and reason: comparing only with the last entry let alternating stocks refill the list
+            if not any(b.get("ticker") == ticker and b.get("day") == day and b.get("reason") == d["reason"]
+                       for b in book.blocked[-300:]):
                 book.blocked.append({"day": now.date().isoformat(), "time": _ts(now), "ticker": ticker, "price": price, "reason": d["reason"]})
         if pos:
             if d.get("mark_below") and not pos.get("below_since"):
@@ -129,6 +133,8 @@ def step(book: Book, snaps: dict, prices: dict, now: datetime, cfg: decision.Con
                 # what selling every share at the first target would have made, to compare with how the stretch ends
                 trade["at_target"] = round(((trade["target1"] or price) - trade["entry"]) * trade["shares"], 2)
                 done.append({"ticker": ticker, "action": "STRETCH", "price": price, "reason": d["reason"], "time": _ts(now)})
+        if a == "ENTER" and ticker in (exit_only or ()):
+            continue                                       # a stock dropped from the test list is only watched, never bought
         if a == "ENTER" and not pos and price:
             t = _open(book, snap, price, now, d)
             if t:

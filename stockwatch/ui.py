@@ -502,11 +502,12 @@ def card(snap: dict, was: str | None = None) -> str:
         sig = f'<div class="mc-sig" style="color:{MUTED}">signal lost: {escape(p["error"][:90])}</div>'
     name = (p.get("profile") or {}).get("name") or p.get("name") or ""
     name = "" if name.upper() == snap["ticker"] else name
+    chip_html = call_chips(snap) if HIDE_OLD_CALLS else f'<span class="mc-chip" style="--c:{color}"><b>{glyph}</b> {escape(snap["verdict"])}</span>'
     return (f'<a class="mc-a" href="?view=target&t={escape(snap["ticker"])}" target="_self">'
             f'<div class="mc-card{" urgent" if urgent else ""}" style="--c:{color}">'
             f'<div class="mc-row"><div><span class="mc-tk">{escape(snap["ticker"])}</span><span class="mc-tag">{tag}</span>'
             f'<span class="mc-name">{escape(name)}</span></div>'
-            f'<span class="mc-chip" style="--c:{color}"><b>{glyph}</b> {escape(snap["verdict"])}</span></div>'
+            f'{chip_html}</div>'
             f'<div class="mc-px">{num(price_now)}{day_html}</div>'
             f'{_bar({"SEC filings": "FUND·SEC", "Finnhub": "FUND·FH"}.get(p.get("fundamental", {}).get("source"), "FUND"), snap["fundamental_score"] if p.get("fundamental", {}).get("available", True) else None)}'
             f'{_bar("TECH", snap["technical_score"])}{_bar("Σ ALL", snap["composite"])}'
@@ -520,6 +521,87 @@ def cards(snaps: list[dict], changed: dict[str, str] | None = None) -> str:
 
 # ---- radar scope: direction is the verdict, distance from the middle is how soon the stock needs you
 BUY_VERDICTS = ("OPPORTUNITY - ADD", "BUY SETUP")
+HIDE_OLD_CALLS = True        # the old call words, verdict chips and Trade plan card stay in the code but are hidden (set False to bring back)
+_QUICK = {"held": {}, "setups": {}}
+NEWCALL_COLOR = {"ADD": OPP, "BUY": OPP, "HOLD": INFO, "WAIT": INFO, "WAIT FOR TURN": INFO, "ON THE LINE": WARN,
+                 "EXIT": RISK, "AVOID": RISK, "UNKNOWN": MUTED}
+
+
+def set_quick(held: dict | None, setups: dict | None) -> None:
+    """The dashboard hands over Quick's open trades ({ticker: % so far}) and today's setups ({ticker: 'bounce'|'breakout'})."""
+    _QUICK["held"], _QUICK["setups"] = dict(held or {}), dict(setups or {})
+
+
+def new_call(snap: dict) -> dict:
+    oc = ((snap.get("payload") or {}).get("technical") or {}).get("one_call")
+    return oc if isinstance(oc, dict) else {}
+
+
+def live_check(snap: dict) -> dict | None:
+    """The New call is built from the last COMPLETED daily bar, so during the session it can disagree with the tape (a BUY on a stock
+    that has already fallen through its exit line today). This compares the live price with the call's own line and band and returns
+    {"word", "color", "why"} when they disagree, else None. Display only: it changes no call, score or trade rule.
+    Unknown price, line or band, or no live session, gives None (the call is shown as it is)."""
+    oc = new_call(snap)
+    if not oc.get("known", True) or oc.get("exit_line") is None or oc.get("band_line") is None:
+        return None
+    price, _move, live = _now(snap)
+    if not live or nan(price):
+        return None
+    line, band, call = oc["exit_line"], oc["band_line"], oc.get("call")
+    if price < band and call not in ("EXIT", "AVOID"):
+        return {"word": "under the band now", "color": RISK,
+                "why": f"Live {price:,.2f} is under the band {band:,.2f}; the call above uses the last daily close, and the close decides."}
+    if band <= price < line and call not in ("EXIT", "AVOID", "ON THE LINE"):
+        return {"word": "under the line now", "color": WARN,
+                "why": f"Live {price:,.2f} is under the exit line {line:,.2f}; the call above uses the last daily close, and the close decides."}
+    if price >= line and call in ("EXIT", "AVOID", "ON THE LINE"):
+        return {"word": "back above the line now", "color": WARN,
+                "why": f"Live {price:,.2f} is back above the exit line {line:,.2f}; the call above uses the last daily close."}
+    return None
+
+
+PHASE_COLOR = {"opp": OPP, "warn": WARN, "info": INFO, "risk": RISK}
+
+
+def phase_chip(snap: dict) -> str:
+    """The third chip: where the stock is in its move (see phase.py). Nothing when there is no clear read."""
+    try:
+        from .phase import phase
+        ph = phase(snap)
+    except Exception:
+        return ""
+    if not ph:
+        return ""
+    return (f' <span class="mc-chip" style="--c:{PHASE_COLOR[ph["color"]]}" title="{escape(ph["why"])}"><b>Move</b> {escape(ph["label"].lower())}</span>')
+
+
+def call_chips(snap: dict) -> str:
+    """Two chips for every card: Quick (its setup now) and New call (the one-call word)."""
+    t = snap["ticker"]
+    if t in _QUICK["held"]:
+        v = _QUICK["held"][t]
+        q, qc = f"holding {v:+.1f}%" if isinstance(v, (int, float)) else "holding", OPP
+    elif _QUICK["setups"].get(t):
+        q, qc = _QUICK["setups"][t], OPP
+    else:
+        q, qc = "no setup", MUTED
+    oc = new_call(snap)
+    n = oc.get("call") if oc.get("known", True) and oc.get("call") else "no call yet"
+    nc = NEWCALL_COLOR.get(oc.get("call"), MUTED)
+    lc = live_check(snap)
+    if lc:
+        n, nc = f"{n} · {lc['word']}", lc["color"]
+    return (f'<span class="mc-chip" style="--c:{qc}"><b>Quick</b> {escape(q)}</span> '
+            f'<span class="mc-chip" style="--c:{nc}"><b>New call</b> {escape(str(n))}</span>' + phase_chip(snap))
+
+
+def call_why(snap: dict) -> str:
+    oc = new_call(snap)
+    lc = live_check(snap)
+    return (lc["why"] + " " if lc else "") + (str(oc.get("why") or "") if oc else "")
+
+
 RISK_VERDICTS = ("RISK - REVIEW", "TRIM / REVIEW", "AVOID")
 # % of the scope's width from the centre, by ring and by how many lanes a crowded group is staggered over
 LANES = {1: ([15], [12, 18], [9, 15, 21]), 2: ([30], [28, 32], [27, 30, 33]), 3: ([41.5], [39.5, 43.5], [38.5, 41.5, 44.5])}
@@ -723,20 +805,25 @@ def row(snap: dict, was: str | None = None) -> str:
         why_html = f'<b class="rg r{r}">{RING_LABEL[r]}</b> {escape(why) if r < 3 else ""}'
     else:
         why_html = f'{signal_glyph(top["kind"])}{escape(top["message"])}'
+    if HIDE_OLD_CALLS and not p.get("error"):
+        why_html = escape(call_why(snap)) or f'<span style="color:{MUTED}">no New call yet for this stock</span>'
+        plan = ""
     new = f'<span class="new" style="color:{color}">● NEW <small>was {escape(was)}</small></span>' if was else ""
     name = (p.get("profile") or {}).get("name") or p.get("name") or ""
     name = "" if name.upper() == snap["ticker"] else name
     from .tradeplan import summary
-    plan = summary(p.get("plan"))
+    plan = "" if HIDE_OLD_CALLS else summary(p.get("plan"))
     price_html, ext_html = price_block(snap)
     facts = "".join(x for x in (
         f'<div class="pl"><b>{"IF IT FAILS" if wait else "PLAN"}</b>{escape(plan)}</div>' if plan else "",
         f'<div class="pl"><b>LEVELS</b>{escape(levels_line(snap))}</div>' if levels_line(snap) else "",
         f'<div class="pl"><b>FLOW</b>{escape(flow_line(snap))}</div>' if flow_line(snap) else "",
         f'<div class="pl"><b>FINNHUB</b>{escape(second_tag(snap))}</div>' if second_tag(snap) else "") if x)
+    act_html = call_chips(snap) if HIDE_OLD_CALLS else f'<span class="act">{glyph} {escape(call)}</span>'
+    status_html = "" if HIDE_OLD_CALLS else status_chip(snap)
     return (f'<a class="mc-a" href="?view=target&t={escape(snap["ticker"])}" target="_self">'
             f'<div class="mc-li{" own" if not p["watchlist"] else ""}" style="--c:{color};--a:{acolor}">'
-            f'<div class="call"><span class="act">{glyph} {escape(call)}</span>{new}{status_chip(snap)}{tag}</div>'
+            f'<div class="call">{act_html}{new}{status_html}{tag}</div>'
             f'<div class="hd"><div class="id"><b class="k"></b><span class="mc-tk">{escape(snap["ticker"])}</span>'
             f'<span class="nm">{escape(name)}</span></div>{price_html}</div>{ext_html}'
             f'<div class="why">{why_html}</div>' + (f'<div class="facts">{facts}</div>' if facts else "") + '</div></a>')
@@ -1099,6 +1186,8 @@ BIAS_GLYPH = {"bullish": ("▲ bullish", OPP), "bearish": ("▼ bearish", RISK),
 
 def plan_line(plan: dict | None) -> str:
     from .tradeplan import summary
+    if HIDE_OLD_CALLS:
+        return ""
     return f'<div class="mc-plan"><b>PLAN</b>{escape(summary(plan))}</div>' if plan else ""
 
 
@@ -1130,7 +1219,7 @@ def _ladder(plan: dict) -> str:
 
 
 def trade_plan(plan: dict, sizing: dict | None, risk_pct: float, portfolio_value: float) -> str:
-    if not plan:
+    if not plan or HIDE_OLD_CALLS:
         return ""
     color = STANCE_COLOR.get(plan["stance"], INFO)
     bias, bias_color = BIAS_GLYPH.get(plan["bias"], ("◆ neutral", INFO))
@@ -1142,9 +1231,12 @@ def trade_plan(plan: dict, sizing: dict | None, risk_pct: float, portfolio_value
 
     zone_label = {"ADD": "Add zone", "HOLD": "Add on dips", "TRIM": "Re-buy zone", "TRIM / PROTECT": "Re-buy zone", "WAIT FOR CONFIRMATION": "Entry zone",
                   "REDUCE / EXIT": "Support zone", "NO TRADE": "Support zone"}.get(plan["stance"], "Entry zone")
+    on_hold = None if exit_only else plan.get("status_exit")   # buying is held back: say so at the top, not only in the notes
+    if on_hold:
+        zone_label += " (on hold)"
     rows = [] if exit_only else [(zone_label, f"{plan['entry_low']:.2f} - {plan['entry_high']:.2f}")]
     if plan.get("trigger"):
-        rows.append(("Trigger", escape(plan["trigger"])))
+        rows.append(("Buy again when" if on_hold else "Trigger", escape(plan["trigger"])))
     rows.append(("Stop", rel(plan["stop"]) + f"<br><small style='color:{MUTED}'>{escape(plan['stop_basis'])}</small>"))
     if not exit_only:
         for i, t in enumerate(plan["targets"]):
@@ -1165,10 +1257,12 @@ def trade_plan(plan: dict, sizing: dict | None, risk_pct: float, portfolio_value
     notes = "".join(f"<p class='note'>⚠ {escape(n)}</p>" for n in plan.get("notes", []))
     hist_html = history_check(plan.get("history")) if not exit_only else ""
     exits = "".join(f"<li>{escape(e)}</li>" for e in plan["exits"])
+    hold_html = (f"<p class='note'>⚠ Not adding yet: {escape(on_hold.split(' · ', 1)[-1])}. The levels below are for reference.</p>"
+                 if on_hold else "")
     return (f'<div class="mc-tp"><div class="hd"><div><div class="lab">TRADE PLAN</div>'
             f'<div class="stance" style="color:{color}">{escape(plan["stance"])}</div></div>'
             f'<span class="mc-chip" style="--c:{bias_color}">{bias}</span></div>'
-            f'{_ladder(plan)}<div class="mc-kv" style="margin-top:.2rem">{grid}</div>'
+            f'{hold_html}{_ladder(plan)}<div class="mc-kv" style="margin-top:.2rem">{grid}</div>'
             f'<p>{escape(plan["outlook"])}</p>{hist_html}{notes}{size_html}'
             f'<div class="lab" style="margin-top:.7rem">{"WHAT WOULD CHANGE THE PLAN" if plan["stance"] == "NO TRADE" else "WHEN TO SELL"}</div><ol>{exits}</ol>'
             f'<div class="fine">Rule-based levels from price structure and volatility, not a forecast or financial advice. '

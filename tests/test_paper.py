@@ -167,3 +167,14 @@ def test_the_report_waits_for_thirty_trades_and_the_book_round_trips():
     assert paper.report(book)["verdict"].startswith("TIGHTEN")
     again = paper.Book.from_dict(book.to_dict())
     assert again.cash == book.cash and len(again.trades) == 30 and paper.Book.from_dict(None).cash == paper.START_CASH
+
+
+def test_blocked_list_does_not_refill_when_two_stocks_alternate():
+    a, b = buy_snap(), buy_snap()
+    for s, t in ((a, "AAA"), (b, "BBB")):
+        s["ticker"] = t
+        s["payload"]["technical"]["momentum"] = {"known": True, "momentum": "falling", "momentum_label": "FALLING"}
+    book = paper.Book()
+    for minute in range(30, 50):
+        paper.step(book, {"AAA": a, "BBB": b}, {"AAA": 99.5, "BBB": 99.5}, at(11, minute))
+    assert sorted(x["ticker"] for x in book.blocked) == ["AAA", "BBB"]

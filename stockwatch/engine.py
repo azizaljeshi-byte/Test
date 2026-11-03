@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from . import analogs, catalysts, debtcash, deepdive, fundamental, momentum, newsfeed, relative, sec, status, street, technical, tradeplan, transitions, zones
+from . import analogs, catalysts, debtcash, deepdive, fundamental, momentum, newsfeed, onecall, relative, sec, status, street, technical, tradeplan, transitions, zones
 from .config import Holding, Portfolio
 from . import data, finnhub
 from .data import SECTOR_ETFS, DataProvider
@@ -291,6 +291,12 @@ def evaluate(h: Holding, portfolio: Portfolio, provider: DataProvider, light: bo
                              "Fundamentals unavailable right now (neither Yahoo nor SEC filings returned enough); "
                              "this verdict is based on price action only", 1)]
     pos, pos_sig = _position(h, price, tech, rules)
+    # the technical-first one-call, SHADOW MODE: shown beside the old labels, read by no call, score, plan, alert or paper rule
+    tech["one_call"] = _optional(onecall.assess, hist, now, not h.is_watchlist, None, None,
+                                 events.get("days_to_earnings"), fs if fund["available"] else None, None, None,
+                                 tech.get("price_status"))
+    if isinstance(tech["one_call"], dict):
+        onecall.log_call(h.ticker, tech["one_call"], not h.is_watchlist)
     signals = (tech_sig + rs_sig + fund_sig + confluence
                + shift_sig + event_sig + deep_sig + ext_sig + pos_sig)
     signals.sort(key=lambda s: (-s.severity, s.kind))
@@ -322,7 +328,13 @@ def scan(portfolio: Portfolio, provider: DataProvider, workers: int = 6, on_read
     """Evaluate every holding. on_ready(evaluation) runs in the caller's thread as each one finishes,
     before the portfolio-level checks, so a slow sweep can show results as they come in."""
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(evaluate, h, portfolio, provider): i for i, h in enumerate(portfolio.holdings)}
+        # positions are read first, then the watchlist, then the market extras, so a slow sweep shows what you own first;
+        # the results keep the order of portfolio.holdings
+        order = sorted(range(len(portfolio.holdings)),
+                       key=lambda i: (portfolio.holdings[i].ticker in portfolio.extras, portfolio.holdings[i].is_watchlist, i))
+        futures = {pool.submit(evaluate, portfolio.holdings[i], portfolio, provider,
+                               portfolio.holdings[i].ticker in portfolio.extras): i      # market extras: the light read
+                   for i in order}
         evals: list[Evaluation | None] = [None] * len(futures)
         for fut in as_completed(futures):
             evals[futures[fut]] = fut.result()

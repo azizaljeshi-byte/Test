@@ -40,20 +40,20 @@ def parse(text: str) -> pd.Series | None:
     return pd.Series(out).sort_index() if out else None
 
 
-def compare(ours: pd.Series, theirs: pd.Series | None) -> dict:
+def compare(ours: pd.Series, theirs: pd.Series | None, source: str = "Stooq", sessions: int = SESSIONS) -> dict:
     """How our recent closes line up with Stooq's. `ours` is indexed by date (time zone ignored)."""
     if theirs is None or theirs.empty:
-        return {"source": "Stooq", "unavailable": "Stooq has no daily prices for this ticker"}
+        return {"source": source, "unavailable": f"{source} has no daily prices for this ticker"}
     idx = ours.index.tz_localize(None) if getattr(ours.index, "tz", None) is not None else ours.index
     mine = pd.Series(ours.values, index=idx.normalize()).dropna()
-    both = pd.concat([mine.tail(SESSIONS * 2), theirs], axis=1, join="inner").dropna().tail(SESSIONS)
+    both = pd.concat([mine.tail(sessions * 2), theirs], axis=1, join="inner").dropna().tail(sessions)
     if len(both) < MIN_OVERLAP:
-        return {"source": "Stooq", "unavailable": f"only {len(both)} sessions overlap with Stooq's data"}
+        return {"source": source, "unavailable": f"only {len(both)} sessions overlap with {source}'s data"}
     gap = ((both.iloc[:, 0] - both.iloc[:, 1]).abs() / both.iloc[:, 1]).where(both.iloc[:, 1] > 0)
     worst = float(gap.max())
     when = gap.idxmax().date().isoformat()
     ok = worst <= TOLERANCE
-    return {"source": "Stooq", "agrees": ok, "verdict": "matches" if ok else "differs", "sessions": len(both),
+    return {"source": source, "agrees": ok, "verdict": "matches" if ok else "differs", "sessions": len(both),
             "worst_gap": round(worst, 4), "worst_day": when,
             "note": (f"Closes match over the last {len(both)} sessions." if ok else
                      f"Closes differ by {worst:.1%} on {when}: one of the two price feeds may be wrong.")}

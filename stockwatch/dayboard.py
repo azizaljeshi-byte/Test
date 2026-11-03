@@ -319,7 +319,7 @@ def _open(snap: dict, a: dict) -> str:
     parts = [f'<div class="rd-rates">{_ratings(snap, a)}</div>',
              design.gauge_line(a["gauge"], a["gauge_label"] if a["gauge"] is not None else (a["why"] or "No read")),
              _sure_html(a), zones_html(snap, price)]
-    if plan:
+    if plan and not ui.HIDE_OLD_CALLS:
         parts.append(f'<div class="rd-h"><span>Plan</span></div><div class="rd-note">{escape(plan)}</div>')
     if flow:
         parts.append(f'<div class="rd-h"><span>Flow</span></div><div class="rd-note">{escape(flow)}</div>')
@@ -330,7 +330,7 @@ def _open(snap: dict, a: dict) -> str:
 def card(snap: dict, was: str | None = None) -> str:
     """One tinted row. Tap to open it; the Details button goes to the full page."""
     a = assess(snap)
-    cls = SPOT[a["word"]]
+    cls = "calm" if ui.HIDE_OLD_CALLS else SPOT[a["word"]]
     price, _ = ui._price(snap)
     p = snap["payload"]
     name = (p.get("profile") or {}).get("name") or p.get("name") or ""
@@ -338,15 +338,14 @@ def card(snap: dict, was: str | None = None) -> str:
     own = "owned" if not p["watchlist"] else "watching"
     sure = f'<span class="rd-sure">{a["sure"][0]}/{a["sure"][1]} sure</span>' if a["sure"] else ""
     new = f'<span class="rd-sure">● new · was {escape(was.lower())}</span>' if was else ""
-    tag = f'<span class="dz-call dz-{cls}">{escape(_words(snap, a))}</span>'
+    tag = ui.call_chips(snap) if ui.HIDE_OLD_CALLS else f'<span class="dz-call dz-{cls}">{escape(_words(snap, a))}</span>'
     bell = f'<span class="rd-bell">{design.bell(True, "Earnings this week")}</span>' if earnings_soon(snap) else ""
     lines = last_quarter(snap) + next_report(snap) + top_story(snap)
     sid = _slug(snap["ticker"])
     return (f'<details class="rd-row dz-{cls}" id="c-{sid}"><summary>'
             f'<div class="rd-top"><div><b class="rd-tk">{escape(snap["ticker"])}</b><small>{escape(name)} · {own}</small></div>'
             f'<div class="rd-px"><b>{ui.num(price)}</b>{design.change_pill(day_move(snap))}{extra_price(snap)}</div></div>'
-            f'<div class="rd-mid">{tag}{sure}{new}{bell}</div>'
-            f'<p class="rd-why">{escape(_why(snap, a))}</p></summary>'
+            f'<div class="rd-mid">{tag}{sure}{new}<span class="rd-why">{escape(ui.call_why(snap) if ui.HIDE_OLD_CALLS else _why(snap, a))}</span>{bell}</div></summary>'
             f'{_open(snap, a)}<div class="rd-lines">{lines}</div></details>')
 
 
@@ -380,6 +379,9 @@ def events_calendar(snaps: list[dict]) -> str:
 
 
 MAP_CAP = 6.0              # a move beyond +/-6% sits at the edge of the map
+
+
+SHOW_MAP = False          # the "Map of your list" is off the Radar (owner, 30 Oct); the code is kept
 
 
 def dot_map(snaps: list[dict]) -> str:
@@ -470,11 +472,11 @@ def today_card(lines: list[str], tickers=(), when: str = "") -> str:
             chips = "".join(_chip(t, "dn" if float(c) < 0 else "up", f"{float(c):+.1f}% {w}") for t, c, w in found)
             rows.append(_row("info", "Out of hours", "Big moves", chips))
             continue
-        m = re.match(r"Strongest: (.*?)\. Weakest: (.*)\.$", line)
+        m = re.match(r"(?:Strongest|Best scores): (.*?)\. (?:Weakest|Lowest scores): (.*)\.$", line)
         if m:
             def group(label, txt, cls):
                 return f'<span class="rd-lb">{label}</span>' + "".join(_chip(x.strip(), cls) for x in txt.split(","))
-            rows.append(_row("info", "Strongest and weakest", "", group("Strongest", m.group(1), "buy") + group("Weakest", m.group(2), "dn")))
+            rows.append(_row("info", "Best and lowest scores", "", group("Best scores", m.group(1), "buy") + group("Lowest scores", m.group(2), "dn")))
             continue
         m = re.match(r"Changed since last sweep: (.*)\.$", line)
         if m:
@@ -489,18 +491,31 @@ def today_card(lines: list[str], tickers=(), when: str = "") -> str:
 
 def render(snaps: list[dict], changed: dict[str, str] | None = None, brief: str = "") -> str:
     changed = changed or {}
-    need, close, calm = [], [], []
-    for s in sorted(snaps, key=ui._ring_sort):
-        w = word(s)
-        (need if w in ("ACT", "BUY") else calm if w == "CALM" else close).append(s)
+
+    def split(items):
+        need, close, calm = [], [], []
+        for s in sorted(items, key=ui._ring_sort):
+            w = word(s)
+            (need if w in ("ACT", "BUY") else calm if w == "CALM" else close).append(s)
+        return need, close, calm
+
+    # holdings first, then the rest of the watchlist (owner, 31 Oct), each with the same three groups
+    held = [s for s in snaps if not s["payload"]["watchlist"]]
+    watch = [s for s in snaps if s["payload"]["watchlist"]]
+    need, close, calm = split(snaps)
     parts = [f'<style>{CSS}</style><div class="rd">', headline(len(need), len(close), len(calm)), movers(snaps)]
-    parts.append(dot_map(snaps))
+    if SHOW_MAP:
+        parts.append(dot_map(snaps))
     if brief:
         parts.append(brief)
-    for title, group, cls in (("Needs you today", need, "act"), ("Getting close", close, "watch"), ("All calm", calm, "calm")):
-        if group:
-            parts.append(f'<div class="rd-sec"><i class="dz-{cls}"></i>{title} <small>{len(group)}</small></div>')
-            parts += [card(s, changed.get(s["ticker"])) for s in group]
+    blocks = [("Your holdings", held), ("Watchlist", watch)] if held and watch else [("", snaps)]
+    for label, items in blocks:
+        if label:
+            parts.append(f'<div class="rd-h"><b>{label}</b><span>{len(items)} stocks</span></div>')
+        for title, group, cls in zip(("Needs you today", "Getting close", "All calm"), split(items), ("act", "watch", "calm")):
+            if group:
+                parts.append(f'<div class="rd-sec"><i class="dz-{cls}"></i>{title} <small>{len(group)}</small></div>')
+                parts += [card(s, changed.get(s["ticker"])) for s in group]
     if not (need or close or calm):
         parts.append('<div class="rd-note">No stocks with this status right now.</div>')
     parts.append(events_calendar(snaps))
@@ -528,17 +543,17 @@ CSS = """
 .rd-mv{flex:none}.rd-evs{display:grid;gap:6px}.rd-ev span{flex:1;color:var(--dz-soft);font-size:.82rem}.rd-ev small{color:var(--dz-muted)}
 .rd-sec{display:flex;align-items:center;gap:8px;font-weight:700;font-size:.95rem;margin:20px 2px 10px}
 .rd-sec i{width:10px;height:10px;border-radius:50%;background:var(--dz-c)}.rd-sec small{font-weight:400;color:var(--dz-muted)}
-.rd-row{margin-bottom:9px;border-radius:14px;border:1px solid color-mix(in srgb,var(--dz-c) 30%,var(--dz-line));border-left:5px solid var(--dz-c);
-  background:color-mix(in srgb,var(--dz-c) 9%,var(--dz-surface));padding:12px 13px}
+.rd-row{margin-bottom:5px;border-radius:14px;border:1px solid color-mix(in srgb,var(--dz-c) 30%,var(--dz-line));border-left:5px solid var(--dz-c);
+  background:color-mix(in srgb,var(--dz-c) 9%,var(--dz-surface));padding:8px 12px}
 .rd-row:target{box-shadow:0 0 0 2px var(--dz-c)}
 .rd-row>summary{list-style:none;cursor:pointer}.rd-row>summary::-webkit-details-marker{display:none}
-.rd-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
-.rd-tk{font-size:1.15rem;display:block}.rd-top small{display:block;color:var(--dz-muted);font-size:.74rem;margin-top:2px}
-.rd-px{text-align:right}.rd-px b{display:block;font-size:1.15rem;font-variant-numeric:tabular-nums;margin-bottom:3px}
-.rd-mid{display:flex;align-items:center;gap:8px;margin-top:9px;flex-wrap:wrap}
-.rd-bell{margin-left:auto}.rd-ext{margin-top:5px;font-size:.72rem;color:var(--dz-muted);display:grid;gap:3px;justify-items:end}
+.rd-top{display:flex;justify-content:space-between;gap:10px;align-items:center}
+.rd-tk{font-size:1.05rem;display:block;line-height:1.2}.rd-top small{display:block;color:var(--dz-muted);font-size:.72rem;margin-top:0}
+.rd-px{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:2px 8px;text-align:right}.rd-px>b{font-size:1.05rem;font-variant-numeric:tabular-nums;margin:0}
+.rd-mid{display:flex;align-items:center;gap:4px 8px;margin-top:5px;flex-wrap:wrap}
+.rd-bell{margin-left:auto}.rd-ext{margin:0;font-size:.72rem;color:var(--dz-muted);display:flex;flex-wrap:wrap;gap:2px 8px;justify-content:flex-end;align-items:center}
 .rd-ext span{display:flex;gap:5px;align-items:center;justify-content:flex-end;white-space:nowrap}.rd-ext b{color:var(--dz-ink);font-size:.8rem;margin:0}.rd-ext .dz-chg{font-size:.68rem}.rd-live{color:var(--dz-buy)}.rd-sure{font-size:.72rem;color:var(--dz-muted)}
-.rd-why{margin:8px 0 0;font-size:.88rem;color:var(--dz-soft)}
+.rd-why{flex:1 1 240px;min-width:0;margin:0;font-size:.82rem;line-height:1.3;color:var(--dz-soft)}
 .rd-open{margin-top:12px;border-top:1px solid var(--dz-line);padding-top:10px}
 .rd-rates{margin-bottom:4px}
 .rd-box{background:color-mix(in srgb,var(--dz-ink) 5%,transparent);border-radius:12px;padding:10px 12px;margin:10px 0}

@@ -21,14 +21,31 @@ def _median(values):
 
 # --------------------------------------------------------------------- earnings
 
-def _reaction(hist: pd.DataFrame, quarter_end) -> tuple[str | None, float | None]:
-    """Earnings day isn't in the free data, so use the heaviest-volume day 10-80 days
-    after the quarter closed - the report day almost always is."""
-    start = pd.Timestamp(quarter_end) + pd.Timedelta(days=10)
-    window = hist.loc[start:start + pd.Timedelta(days=70)]
+def _reaction(hist: pd.DataFrame, quarter_end, report_dates: list | None = None) -> tuple[str | None, float | None]:
+    """(day the market reacted, that day's move). With the real report dates it is exact: the report day for a morning report, the next
+    trading day for an after-the-close report. Without them it guesses the heaviest-volume day 10-50 days after the quarter closed that
+    stands out from normal volume. (The old 80-day window picked the quarterly option-expiry Fridays, which are heavy-volume days too.)"""
+    qe = pd.Timestamp(quarter_end)
+    real = sorted((r for r in report_dates or [] if qe + pd.Timedelta(days=7) <= pd.Timestamp(r["date"]) <= qe + pd.Timedelta(days=120)),
+                  key=lambda r: r["date"])
+    if real:
+        r = real[0]
+        d = pd.Timestamp(r["date"])
+        pos = hist.index.searchsorted(d + pd.Timedelta(days=1)) if (r.get("hour") or 0) >= 16 else hist.index.searchsorted(d)
+        if pos >= len(hist):
+            return None, None                                      # the reaction day is not in the daily bars yet
+        if pos == 0:
+            return None, None
+        return hist.index[pos].date().isoformat(), float(hist["Close"].iloc[pos] / hist["Close"].iloc[pos - 1] - 1)
+    start = qe + pd.Timedelta(days=10)
+    window = hist.loc[start:start + pd.Timedelta(days=40)]
     if len(window) < 5:
         return None, None
     day = window["Volume"].idxmax()
+    # A real report day stands out. If the heaviest day is ordinary, the report is not in the daily bars yet.
+    base = hist.loc[:window.index[-1], "Volume"].tail(120).median()
+    if not base or window["Volume"].max() < 1.8 * base:
+        return None, None
     i = hist.index.get_loc(day)
     if i == 0:
         return None, None
@@ -39,7 +56,7 @@ def earnings_track(research: dict, hist: pd.DataFrame) -> tuple[dict, list[Signa
     out: list[Signal] = []
     rows = []
     for e in research.get("earnings") or []:
-        day, move = _reaction(hist, e["quarter"])
+        day, move = _reaction(hist, e["quarter"], research.get("report_dates"))
         rows.append({**e, "quarter": str(e["quarter"]), "report_day": day, "reaction": move})
 
     beats = [r["eps_actual"] > r["eps_estimate"] for r in rows

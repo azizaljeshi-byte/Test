@@ -249,10 +249,37 @@ def test_buy_the_checks_argue_against_shows_one_answer(monkeypatch):
 def test_today_card_rows_and_chips():
     lines = ["Market backdrop is supportive (risk-on).", "Needs attention now: DIS, GLW.", "In a buy zone: AAPL.",
              "Reporting this week: GLW (3d), NVDA (5d).", "Big out-of-hours moves: TSLA -4.2% AH, AMD +3.1% pre.",
-             "Strongest: AAPL, MSFT. Weakest: DIS, GLW.", "Something new."]
+             "Best scores: AAPL, MSFT. Lowest scores: DIS, GLW.", "Something new."]
     html = dayboard.today_card(lines, ["DIS"], "Friday 23 Oct")
     assert 'class="rd-today"' in html and "Friday 23 Oct" in html
     assert html.count('class="rd-bc act"') == 2 and html.count('class="rd-bc buy"') == 3
     assert "view=target&t=GLW" in html and "<small>3d</small>" in html
     assert 'class="rd-bc dn"' in html and "-4.2% AH" in html and "Note" in html
     assert dayboard.today_card([], [], "") == ""
+
+
+def test_best_scores_skip_stocks_whose_new_call_is_selling():
+    from stockwatch import briefing
+
+    def mk(t, comp, call):
+        return {"ticker": t, "composite": comp, "verdict": "HOLD", "payload": {"technical": {"one_call": {"known": True, "call": call}},
+                                                                                "signals": [], "watchlist": True, "quote": {}}}
+    snaps = [mk("A", 90, "AVOID"), mk("B", 85, "HOLD"), mk("C", 80, "WAIT"), mk("D", 70, "HOLD"), mk("E", 20, "WAIT"), mk("F", 10, "WAIT"), mk("G", 5, "WAIT")]
+    line = next((l for l in briefing.portfolio(snaps, {}, {"state": "RISK-ON", "day_change": 0.0, "vs_200d": 0.1})
+                 if l.startswith("Best scores")), None)
+    assert line and line.startswith("Best scores: B, C, D.") and "Lowest scores: E, F, G." in line
+
+
+def test_holdings_are_listed_before_the_watchlist_whatever_their_status():
+    watch_buy = make("NOW", "pullback", held=False)           # a watchlist stock in a buy zone would otherwise lead
+    held_calm = make("HOLD", "strong_uptrend", held=True)
+    watch_buy["ticker"], held_calm["ticker"] = "WATCHX", "HELDX"
+    html = dayboard.render([watch_buy, held_calm])
+    assert html.index("Your holdings") < html.index('id="c-HELDX"') < html.index("Watchlist") < html.index('id="c-WATCHX"')
+
+
+def test_one_kind_of_stock_gets_no_block_titles():
+    only = make("HOLD", "strong_uptrend", held=True)
+    only["ticker"] = "HELDX"
+    html = dayboard.render([only])
+    assert "Your holdings" not in html and "Watchlist" not in html

@@ -49,7 +49,7 @@ def _capped(alerts) -> list[str]:
 
 def _scrub(text: str) -> str:
     """Remove every configured secret from a message before it can reach a log."""
-    for var in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "NTFY_TOPIC", "NTFY_TOKEN", "SMTP_PASSWORD"):
+    for var in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "NTFY_TOPIC", "NTFY_TOPIC_LOG", "NTFY_TOKEN", "SMTP_PASSWORD"):
         value = (os.getenv(var) or "").strip()
         if value:
             text = text.replace(value, f"<{var}>")
@@ -185,6 +185,44 @@ def _ntfy(alerts: list[tuple[str, float, str, Signal]]) -> str:
     server = os.getenv("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
     req = urllib.request.Request(f"{server}/{topic}", data="\n".join(lines).encode(), headers=headers)
     urllib.request.urlopen(req, timeout=10).read()
+    return "sent"
+
+
+def _topic(value: str | None) -> str:
+    """The topic name only. A pasted address such as "ntfy.sh/name" or "https://ntfy.sh/name" gives "name" (a slash in the
+    topic makes ntfy answer 404)."""
+    v = (value or "").strip().strip("/")
+    return v.rsplit("/", 1)[-1].strip() if "/" in v else v
+
+
+def ntfy_configured() -> bool:
+    return bool(_topic(os.getenv("NTFY_TOPIC")))
+
+
+def ntfy_send(title: str, text: str, priority: int = 3, tags: str = "", click: str | None = None, channel: str = "calls") -> str:
+    """One phone push through ntfy. Returns "sent" or "not configured"; raises DeliveryError (safe to log) on a failure.
+    The title is kept to plain ASCII because HTTP headers must be latin-1; the body can hold anything."""
+    topic = _topic(os.getenv("NTFY_TOPIC"))
+    if channel == "log":                                     # a second topic keeps the log apart from the calls; same topic when only one is set
+        topic = _topic(os.getenv("NTFY_TOPIC_LOG")) or topic
+    if not topic:
+        return "not configured"
+    headers = {"Title": title.encode("ascii", "replace").decode()[:120], "Priority": str(max(1, min(5, int(priority))))}
+    if tags:
+        headers["Tags"] = tags
+    click = click or (os.getenv("DASHBOARD_URL") or None)
+    if click:
+        headers["Click"] = click
+    if os.getenv("NTFY_TOKEN"):
+        headers["Authorization"] = f"Bearer {os.environ['NTFY_TOKEN']}"
+    server = (os.getenv("NTFY_SERVER") or "https://ntfy.sh").rstrip("/")
+    req = urllib.request.Request(f"{server}/{topic}", data=text.encode("utf-8")[:3800], headers=headers)
+    try:
+        urllib.request.urlopen(req, timeout=10).read()
+    except urllib.error.HTTPError as e:
+        raise DeliveryError(_scrub(f"ntfy HTTP {e.code}")) from None
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise DeliveryError(_scrub(f"ntfy unreachable: {type(e).__name__}")) from None
     return "sent"
 
 
