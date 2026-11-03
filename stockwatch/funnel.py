@@ -25,6 +25,7 @@ from .data import NY, us_session
 
 log = logging.getLogger("stockwatch.funnel")
 KEY = "funnel_state"
+KEY_MOVES = "funnel_moves"      # {"at", "moves": {ticker: [change %, last price]}} from the latest full read (for the candidate list's wide rows)
 FUNNEL_EVERY_S = 300
 STALE_BAR_MIN = 20            # a stock whose last bar is older than this is not read
 STATE_MAX_AGE_MIN = 15        # an older picture is not used to stamp an entry
@@ -66,6 +67,18 @@ def changes(frames: dict, now: datetime) -> dict:
             if prev.empty or prev.iloc[-1] <= 0:
                 continue
             out[t] = float(close.iloc[-1] / prev.iloc[-1] - 1)
+        except Exception:
+            continue
+    return out
+
+
+def moves(frames: dict, now: datetime) -> dict:
+    """{ticker: [change % since yesterday's close, last price]} for the stocks `changes` reads."""
+    out = {}
+    ch = changes(frames, now)
+    for t, c in ch.items():
+        try:
+            out[t] = [round(c * 100, 2), round(float(frames[t]["Close"].dropna().iloc[-1]), 4)]
         except Exception:
             continue
     return out
@@ -180,6 +193,7 @@ def refresh(store, now: datetime | None = None, frames: dict | None = None, labe
     old = load(store) or {}
     state = summarize(changes(frames, now), labels, now, old.get("history"))
     store.set_setting(KEY, json.dumps(state, default=str))
+    store.set_setting(KEY_MOVES, json.dumps({"at": now.isoformat(), "moves": moves(frames, now)}))
     return state
 
 
