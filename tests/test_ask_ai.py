@@ -130,3 +130,54 @@ def test_score_close():
     s.snaps["ISRG"] = snap
     assert ask_ai.score(s, after_close) == 1
     assert ask_ai.latest(s, "ISRG")["scored"]["close"] == round((436.87 / 430 - 1) * 100, 2)
+
+
+# ---- re-check at the open, previous verdict, placeholder clean-up
+def _at(h, m, day=3):
+    return datetime(2026, 11, day, h, m, tzinfo=NY)
+
+
+def test_ask_records_previous_and_drops_the_placeholder(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    s = SnapStore({"ISRG": _snap()})
+    ask_ai.request(s, "ISRG", _at(4, 0))
+    assert ask_ai.latest(s, "ISRG")["status"] == "asking"
+    first = ask_ai.ask(s, "ISRG", _at(4, 1), caller=lambda *a: (ANSWER, {}))
+    assert first["previous"] is None
+    second = ask_ai.ask(s, "ISRG", _at(5, 0), caller=lambda *a: (ANSWER.replace("hold", "buy"), {}))
+    assert second["previous"]["verdict"] == "HOLD" and second["verdict"] == "BUY" and second["recheck"] is False
+    assert [r["status"] for r in ask_ai._load(s)["ISRG"]] == ["ready", "ready"]          # no 'asking' row left behind
+
+
+def _regular(monkeypatch):
+    monkeypatch.setattr(ask_ai, "us_session", lambda n: "REGULAR")
+
+
+def test_open_recheck_queues_stocks_asked_before_the_open_once(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    _regular(monkeypatch)
+    s = SnapStore({"ISRG": _snap(), "NOW": {**_snap(), "ticker": "NOW"}})
+    ask_ai.ask(s, "ISRG", _at(4, 8), caller=lambda *a: (ANSWER, {}))
+    ask_ai.ask(s, "NOW", _at(9, 50), caller=lambda *a: (ANSWER, {}))            # asked after 09:45: not re-checked
+    assert ask_ai.open_recheck(s, _at(9, 30)) == []                              # too early
+    assert ask_ai.open_recheck(s, _at(9, 46)) == ["ISRG"]
+    assert ask_ai.open_recheck(s, _at(9, 47)) == []                              # only once a day
+    assert ask_ai._queue(s) == ["ISRG"]
+
+
+def test_open_recheck_marks_the_answer(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    _regular(monkeypatch)
+    s = SnapStore({"ISRG": _snap()})
+    ask_ai.ask(s, "ISRG", _at(4, 8), caller=lambda *a: (ANSWER, {}))
+    ask_ai.open_recheck(s, _at(9, 46))
+    v = ask_ai.ask(s, "ISRG", _at(9, 47), caller=lambda *a: (ANSWER.replace("hold", "avoid"), {}))
+    assert v["recheck"] is True and v["previous"]["verdict"] == "HOLD" and v["verdict"] == "AVOID"
+
+
+def test_open_recheck_skips_a_day_with_nothing_asked_and_late_hours(monkeypatch):
+    _regular(monkeypatch)
+    s = SnapStore({"ISRG": _snap()})
+    assert ask_ai.open_recheck(s, _at(9, 46)) == []
+    ask_ai.save(s, {**ask_ai.sample_verdict("ISRG"), "asked_at": "2026-11-03T04:08:00-05:00"})
+    assert ask_ai.open_recheck(s, _at(13, 0)) == []                              # not hours after the open

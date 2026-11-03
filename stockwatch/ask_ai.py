@@ -17,6 +17,9 @@ Verdict dict (every key always present; unknown = None, never 0):
   levels                          [{"label", "price", "kind"}], kind in LEVEL_KINDS,
                                   any order (the screen sorts by price)
   facts                           [{"label", "value", "tone"}], tone in TONES
+  previous                        the stock's earlier saved verdict, or None: {"verdict", "confidence", "asked_at", "price"}
+                                  (the screen can show the change, for example HOLD -> BUY)
+  recheck                         True when this is the automatic re-check at 09:45 New York of an answer saved before then
   scored                          {"plus60": pct or None, "close": pct or None}
   status                          "ready" | "asking" | "failed"
   error                           text when status is "failed", else None
@@ -57,6 +60,7 @@ def sample_verdict(ticker: str = "ISRG") -> dict:
             {"label": "Earnings", "value": "in 80 days", "tone": "neutral"},
             {"label": "Live volume and bars", "value": None, "tone": "neutral"},
         ],
+        "previous": None, "recheck": False,
         "scored": {"plus60": None, "close": None},
         "status": "ready", "error": None,
     }
@@ -127,6 +131,9 @@ from .data import NY, us_session
 log = logging.getLogger("stockwatch.ask_ai")
 KEY_QUEUE = "ai_ask_queue"
 DEFAULT_MAX_PER_DAY = 40                  # asks a day (a cost brake; each ask is about one cent or two)
+RECHECK_AT_MIN = 9 * 60 + 45              # 09:45 New York: the opening range is set, so live bars exist (owner, 3 Nov)
+RECHECK_MAX = 15                          # at most this many stocks re-checked at the open
+KEY_RECHECK = "ai_open_recheck"           # {"day": "YYYY-MM-DD"}: the re-check ran today
 SCORE_AFTER_MIN = 60
 SCORE_WINDOW_MIN = 90                     # the +60 reading is only taken while the age is 60..90 minutes
 _thread: dict = {"t": None}
@@ -230,6 +237,7 @@ def _blank(ticker: str, now: datetime, status: str, error: str | None = None) ->
     v = sample_verdict(ticker)
     v.update(name="", sector=None, asked_at=now.isoformat(timespec="seconds"), price=None, price_label="last close",
              verdict="HOLD", confidence=1, headline="", change_buy="", change_hold="", change_sell="", levels=[], facts=[],
+             previous=None, recheck=False,
              scored={"plus60": None, "close": None}, status=status, error=error)
     return v
 
@@ -237,6 +245,20 @@ def _blank(ticker: str, now: datetime, status: str, error: str | None = None) ->
 def asks_today(store, now: datetime) -> int:
     day = now.date().isoformat()
     return sum(1 for r in history(store, 500) if str(r.get("asked_at", "")).startswith(day) and r.get("status") == "ready")
+
+
+def _earlier(store, ticker: str, before: datetime) -> dict | None:
+    """The stock's newest ready verdict saved before `before`."""
+    rows = [r for r in _load(store).get(ticker, []) if r.get("status") == "ready" and str(r.get("asked_at", "")) < before.isoformat(timespec="seconds")]
+    return rows[-1] if rows else None
+
+
+def _drop_pending(store, ticker: str) -> None:
+    """Remove the 'asking' placeholder once the answer is saved, so none is left behind."""
+    d = _load(store)
+    if ticker in d:
+        d[ticker] = [r for r in d[ticker] if r.get("status") != "asking"]
+        store.set_setting(KEY_VERDICTS, json.dumps(d, default=str))
 
 
 def ask(store, ticker: str, now: datetime | None = None, caller=None, fetch=None) -> dict:
@@ -257,6 +279,13 @@ def ask(store, ticker: str, now: datetime | None = None, caller=None, fetch=None
         except Exception as e:                      # the page must never break on this
             log.exception("ask failed for %s", ticker)
             v = _blank(ticker, now, "failed", _txt(f"The AI did not answer: {e}", 200))
+    prev = _earlier(store, ticker, now)
+    if prev:
+        v["previous"] = {k: prev.get(k) for k in ("verdict", "confidence", "asked_at", "price")}
+        open_t = now.replace(hour=9, minute=45, second=0, microsecond=0)
+        v["recheck"] = bool(v["status"] == "ready" and now >= open_t and datetime.fromisoformat(prev["asked_at"]).astimezone(NY) < open_t
+                            and datetime.fromisoformat(prev["asked_at"]).astimezone(NY).date() == now.date())
+    _drop_pending(store, ticker)
     save(store, v)
     return v
 
@@ -282,7 +311,7 @@ def _answer(store, snap: dict, ticker: str, now: datetime, caller, fetch) -> dic
     p = d.get("price")
     return {"ticker": ticker, "name": d.get("name") or "", "sector": d.get("sector"), "asked_at": now.isoformat(timespec="seconds"),
             "price": p, "price_label": label, **a, "levels": build_levels(d, p), "facts": build_facts(d, live),
-            "scored": {"plus60": None, "close": None}, "status": "ready", "error": None}
+            "previous": None, "recheck": False, "scored": {"plus60": None, "close": None}, "status": "ready", "error": None}
 
 
 def request(store, ticker: str, now: datetime | None = None) -> None:
@@ -350,6 +379,31 @@ def score(store, now: datetime | None = None) -> int:
     return n
 
 
+def open_recheck(store, now: datetime) -> list[str]:
+    """Once a day, at 09:45 New York or the first tick after it in the regular session: queue every stock the owner asked about
+    earlier today (before 09:45) so its verdict is refreshed with live bars. Returns the tickers queued."""
+    if us_session(now) != "REGULAR" or now.hour * 60 + now.minute < RECHECK_AT_MIN or now.hour * 60 + now.minute > 12 * 60:
+        return []
+    day = now.date().isoformat()
+    try:
+        done = (json.loads(store.get_setting(KEY_RECHECK) or "{}") or {}).get("day") == day
+    except ValueError:
+        done = False
+    if done:
+        return []
+    open_t = now.replace(hour=9, minute=45, second=0, microsecond=0).isoformat(timespec="seconds")
+    todo = []
+    for t, rows in _load(store).items():
+        today_rows = [r for r in rows if str(r.get("asked_at", "")).startswith(day) and r.get("status") == "ready"]
+        if today_rows and all(str(r["asked_at"]) < open_t for r in today_rows):
+            todo.append((today_rows[-1]["asked_at"], t))
+    store.set_setting(KEY_RECHECK, json.dumps({"day": day}))
+    out = [t for _a, t in sorted(todo, reverse=True)[:RECHECK_MAX]]
+    for t in out:
+        request(store, t, now)
+    return out
+
+
 def tick(store_path=None, now: datetime | None = None, caller=None) -> None:
     """Called from the tracker's 20-second block. Starts at most one worker thread; returns at once."""
     t = _thread["t"]
@@ -360,6 +414,7 @@ def tick(store_path=None, now: datetime | None = None, caller=None) -> None:
         from .store import Store
         store = Store(store_path) if store_path else Store()
         n = (now or datetime.now(NY)).astimezone(NY)
+        open_recheck(store, n)
         q = _queue(store)
         for tk in q[:3]:
             ask(store, tk, n, caller)
