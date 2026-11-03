@@ -13,10 +13,10 @@ and its `sample_verdict()`, so nothing needs the AI, a key or the network.
   1. Ticker box plus a list of today's candidate tickers to tap (`candidates` module has them). Button "Ask".
   2. The verdict card (`ask_ai_view.html(ask_ai.latest(store, ticker))`), or "Not asked yet" when `latest` is None, or "Asking..." when `status == "asking"`, or the `error` text when `status == "failed"`.
   3. "How the AI did" (`ask_ai.history(store)`).
-- Until Claude's `ask_ai.request()` exists, the Ask button saves `sample_verdict(ticker)` through `ask_ai.save` **only when `STOCKWATCH_DEMO=1`**; otherwise it is disabled with the label "AI not connected yet".
+- The Ask button calls `ask_ai.request(store, ticker)` (returns at once; Claude's tracker thread answers within a minute or so). While the latest verdict has `status == "asking"`, show "Asking..." and let the page's normal refresh pick up the answer. Never call `ask_ai.ask` from the page. In tests and `STOCKWATCH_DEMO=1`, use `sample_verdict()` and `save`.
 
 ## The verdict card (top to bottom)
-1. Header: ticker big, name and sector small, price on the right with "last close" or "now".
+1. Header: ticker big, name and sector small, price on the right with `price_label` ("now" or "last close"; price None shows "unknown").
 2. Verdict block: verdict word in a coloured box (BUY green, HOLD amber, SELL and AVOID red), a one-line meaning ("Wait. Not a buy yet."), five confidence dots ("2 of 5"), then `headline`.
 3. "What would change it": three rows BUY / HOLD / SELL with `change_buy`, `change_hold`, `change_sell`, each tinted green / amber / red.
 4. Price ladder: a vertical line, levels placed by price (highest at the top), each with its number and label. Colours by `kind`: exit_line green dashed, price blue solid, resistance grey dotted, support red dashed. Space levels so labels never overlap (equal spacing is fine; keep the order by price).

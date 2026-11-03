@@ -200,6 +200,11 @@ class Tracker:
                     except Exception:
                         log.exception("agent step failed")
                     try:
+                        from . import ask_ai
+                        ask_ai.tick(self.store_path)                           # "Ask the AI" requests from the page, own thread
+                    except Exception:
+                        log.exception("ask_ai step failed")
+                    try:
                         from . import funnel
                         funnel.run_async(self.store_path)                      # whole-S&P sector/industry read every 5 minutes, own thread, log only
                     except Exception:
