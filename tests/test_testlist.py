@@ -20,6 +20,14 @@ class FakeStore:
 NOW = datetime(2026, 11, 4, 10, 5, tzinfo=NY)
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _watchlist(monkeypatch):
+    monkeypatch.setattr(testlist, "_watchlist", lambda store: {"MINE"})
+
+
 def snap(atr=2.0, res_low=None, price=100.0):
     zones = {"known": True, "support": [], "resistance": [] if res_low is None else [{"low": res_low, "high": res_low + 0.2, "grade": "good", "touches": 3}]}
     return {"ticker": "X", "payload": {"technical": {"atr": atr, "zones": zones},
@@ -86,3 +94,13 @@ def test_an_old_price_changes_nothing(monkeypatch):
     monkeypatch.setattr(testlist.paper_live, "fresh_price", lambda s, now: (None, "old"))
     assert testlist.follow(st, NOW) is False
     assert testlist.load(st)["days"]["2026-11-04"]["rows"][0]["status"] == "open"
+
+
+def test_watchlist_and_holdings_are_left_out_and_an_unreadable_watchlist_adds_nothing(monkeypatch):
+    cands = {"MINE": row("MINE", "BUY"), "NEW": row("NEW", "BUY")}
+    st = FakeStore({t: snap() for t in cands}, cands)
+    assert testlist.pick(st, NOW) == 1
+    assert [r["ticker"] for r in testlist.load(st)["days"]["2026-11-04"]["rows"]] == ["NEW"]
+    monkeypatch.setattr(testlist, "_watchlist", lambda store: None)
+    st2 = FakeStore({t: snap() for t in cands}, cands)
+    assert testlist.pick(st2, NOW) == 0

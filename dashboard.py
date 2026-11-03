@@ -788,7 +788,7 @@ def _ai_answer(ticker: str):
 
 if view == "tests":
     st.markdown("### Test list")
-    st.caption("Up to 10 breakout stocks a day, found from 17:45 Riyadh (09:45 New York), for you to try by hand. Watching only: no trade is placed. "
+    st.caption("Up to 10 breakout stocks a day, none of them on your watchlist, found from 17:45 Riyadh (09:45 New York), for you to try by hand. Watching only: no trade is placed. "
                "The exit is fixed: sell at the target or the stop, whichever comes first, or at 22:50 Riyadh (15:50 New York). No hoping for more.")
     tl = testlist.load(store)["days"]
     days = sorted(tl, reverse=True)

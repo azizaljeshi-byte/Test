@@ -5,7 +5,9 @@ A stock goes on the list when, in the regular session (from the 09:45 New York s
 least GAP_UP_ATR daily ranges, so Quick's breakout side would look at it) and
   tier 1  its New call is BUY or ADD        ("both agree")
   tier 2  its New call is not against it (anything but EXIT, AVOID, ON THE LINE; unknown is left out), at most MAX_TIER2 of these
-Only stocks the app tracks (an "S&P only" row has no live data). Earnings within a day are already left out by the candidates list.
+Only stocks the app tracks (an "S&P only" row has no live data) that are NOT on the owner's watchlist or in his holdings (owner, 3 Nov: the
+list is for stocks he does not already follow, so they come from the market extras). If the watchlist cannot be read, nothing is added.
+Earnings within a day are already left out by the candidates list.
 Levels, fixed when the stock is added and never moved:
   entry   the price when it was found
   stop    Quick's first stop: STOP_ATR daily ranges under the entry
@@ -18,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import datetime
 
 from . import agent, paper_live, quick
@@ -68,16 +71,38 @@ def levels(snap: dict, entry: float) -> tuple[dict | None, str | None]:
             "reward_risk": round((target - entry) / risk, 1), "resistance": None if res is None else round(res, 2)}, None
 
 
+_wl_cache: dict = {"at": 0.0, "set": None}
+
+
+def _watchlist(store) -> set | None:
+    """Tickers on the owner's watchlist and in his holdings, or None when they cannot be read (cached 10 minutes)."""
+    if time.time() - _wl_cache["at"] < 600 and _wl_cache["set"] is not None:
+        return _wl_cache["set"]
+    try:
+        from .live import current_portfolio
+        got = {h.ticker for h in current_portfolio(store).holdings}
+    except Exception:
+        log.exception("watchlist could not be read")
+        return None
+    if not got:
+        return None                                  # an empty watchlist is more likely a read problem than the truth
+    _wl_cache.update(at=time.time(), set=got)
+    return got
+
+
 def pick(store, now: datetime) -> int:
     """Adds today's breakout stocks that pass (see the module note). Returns how many were added."""
     from . import candidates
+    mine = _watchlist(store)
+    if mine is None:
+        return 0
     rows = (candidates.load(store).get("days") or {}).get(now.date().isoformat(), {}).get("rows") or {}
     d = load(store)
     day = d["days"].setdefault(now.date().isoformat(), {"rows": []})
     have = {r["ticker"] for r in day["rows"]}
     added = 0
     for t, r in sorted(rows.items(), key=lambda kv: str(kv[1].get("found_at") or "")):
-        if len(day["rows"]) >= MAX_ROWS or t in have or r.get("tracked") != "yes" or "breakout candidate" not in str(r.get("qualified")):
+        if len(day["rows"]) >= MAX_ROWS or t in have or t in mine or r.get("tracked") != "yes" or "breakout candidate" not in str(r.get("qualified")):
             continue
         try:
             found = datetime.fromisoformat(r["found_at"]).astimezone(NY)
