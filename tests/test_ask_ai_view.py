@@ -42,7 +42,7 @@ def test_each_verdict_has_its_color_changes_confidence_and_no_trade_footer(call,
     assert f'style="--call:{color}"' in h
     assert call in text and 'What would change it' in text and 'Confidence: 2 of 5' in text
     assert 'places no trade' in text and 'scored at +60 min and at the close' in text
-    assert '03 Nov 07:58 (-05:00)' in text
+    assert '03 Nov 07:58 NY' in text
 
 
 def test_unknowns_stay_unknown_and_levels_stay_sorted_with_equal_spacing():
@@ -139,3 +139,27 @@ def test_candidate_selection_does_not_ask_and_invalid_input_does_not_queue():
     assert st.session_state.ai_ticker=='MSFT' and not ask_ai._queue(s)
     st.session_state.ai_ticker='<script>';scope['_ai_submit']()
     assert not ask_ai._queue(s) and 'Enter a ticker' in st.session_state.ai_note
+
+
+@pytest.mark.parametrize("render", [lambda v, **kw: view.html(v, **kw),
+                                  lambda v, **kw: view.history_html([v], **kw)])
+def test_ticker_links_escape_text_and_encode_query_and_respect_tracking(render):
+    ticker = 'FICT&<"/#'
+    h = render(row(ticker=ticker), tracked={ticker})
+    assert 'href="?view=target&amp;t=FICT%26%3C%22%2F%23" target="_self"' in h
+    assert 'FICT&amp;&lt;&quot;/#</a>' in h
+    assert '<a href=' not in render(row(ticker=ticker), tracked=set())
+    assert '<a href=' not in render(row(ticker=None))
+
+
+@pytest.mark.parametrize("stamp, expected", [
+    ("2026-11-03T02:46:00-05:00", "03 Nov 02:46 NY"),
+    ("2026-11-03T07:46:00Z", "03 Nov 02:46 NY"),
+    ("2026-07-03T07:46:00+00:00", "03 Jul 03:46 NY"),
+    ("2026-11-03T02:46:00", "03 Nov 02:46 (time zone unknown)"),
+    (None, "unknown time"), ("invalid", "invalid"),
+])
+def test_saved_time_is_new_york_in_card_and_history(stamp, expected):
+    v = row(asked_at=stamp)
+    assert "Saved " + expected in Text(view.html(v)).text
+    assert expected in Text(view.history_html([v])).text

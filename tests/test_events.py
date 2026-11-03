@@ -60,7 +60,7 @@ def test_first_look_only_learns_then_an_owned_exit_is_pushed_once(monkeypatch):
     assert events.call_flips(st, [snap("AAA", "HOLD"), snap("WWW", "WAIT")], hold)["learned"] is True
     assert sent == []
     out = events.call_flips(st, [snap("AAA", "EXIT", "2026-10-30"), snap("WWW", "WAIT")], hold)
-    assert out["exits"] == 1 and sent[0][0] == "AAA (you own it) turned EXIT" and sent[0][2] == 5 and sent[0][3] == "calls"
+    assert out["exits"] == 1 and sent[0][0] == "AAA: exit signal on a stock you own" and sent[0][2] == 5 and sent[0][3] == "calls"
     events.call_flips(st, [snap("AAA", "EXIT", "2026-10-30"), snap("WWW", "WAIT")], hold)
     assert len(sent) == 1                                            # the same call is not pushed twice
 
@@ -70,8 +70,8 @@ def test_watchlist_new_buy_and_other_changes_are_quiet_and_batched(monkeypatch):
     st, hold = FakeStore(), [Holding("WWW", 2, 0), Holding("XXX", 2, 0)]
     events.call_flips(st, [snap("WWW", "WAIT"), snap("XXX", "WAIT")], hold)
     events.call_flips(st, [snap("WWW", "EXIT"), snap("XXX", "BUY")], hold)
-    assert len(sent) == 2 and "1 New call buy signal" in sent[0][0] and sent[0][2] == 2
-    assert sent[1][0] == "Watchlist: 1 status change" and sent[1][1] == "WWW: WAIT \u2192 EXIT" and sent[1][2] == 2
+    assert len(sent) == 1 and "1 new buy signal" in sent[0][0] and sent[0][2] == 2
+    assert "XXX: New buy signal" in sent[0][1] and "Watchlist: 1 other changes" in sent[0][1]
 
 
 def test_many_status_changes_in_one_sweep_go_out_as_one_push_each_side(monkeypatch):
@@ -83,9 +83,9 @@ def test_many_status_changes_in_one_sweep_go_out_as_one_push_each_side(monkeypat
     events.call_flips(st, [snap(t, "HOLD") for t in names + own], hold)
     out = events.call_flips(st, [snap(t, "WAIT FOR TURN", "2026-10-30") for t in names] + [snap(t, "EXIT", "2026-10-30") for t in own], hold)
     assert out["watch_changes"] == 4 and out["owned_changes"] == 3
-    assert len(sent) == 2                                              # one for the stocks you own, one for the watchlist
-    assert sent[0][0] == "3 of your stocks changed" and sent[0][2] == 5 and all(t in sent[0][1] for t in own)
-    assert sent[1][0] == "Watchlist: 4 status changes" and all(t in sent[1][1] for t in names)
+    assert len(sent) == 1
+    assert sent[0][2] == 5 and all(t in sent[0][1] for t in own)
+    assert "Watchlist: 4 other changes" in sent[0][1]
 
 
 def test_extras_never_push(monkeypatch):
@@ -121,7 +121,7 @@ def test_owned_stock_on_the_line_is_priority_4_and_log_topic_falls_back(monkeypa
     st, hold = FakeStore(), [Holding("AAA", 1, 10)]
     events.call_flips(st, [snap("AAA", "HOLD")], hold)
     events.call_flips(st, [snap("AAA", "ON THE LINE", "2026-10-30")], hold)
-    assert sent[0][2] == 4 and sent[0][0] == "AAA (you own it) is on its exit line" and "A close under 311.0 turns it EXIT" in sent[0][1]
+    assert sent[0][2] == 4 and sent[0][0] == "AAA: near the exit level" and "A close below 311.00 gives an exit signal" in sent[0][1]
 
 
 def test_log_channel_uses_its_own_topic_when_set(monkeypatch):
@@ -203,7 +203,7 @@ def test_a_buy_push_waits_while_the_tape_is_under_its_line_and_shows_the_live_pr
     events.call_flips(st, [live(300.0)], hold)                                      # BUY, but live 300 is under its line 316.6
     assert sent == []
     events.call_flips(st, [live(320.0)], hold)                                      # back above the line: now it is pushed, once
-    assert len(sent) == 1 and "XXX BUY · 320.00 now · closed 283.82, 0.5 swings above its line 316.6" in sent[0][1]
+    assert len(sent) == 1 and "XXX: New buy signal. Price 320.00." in sent[0][1]
     events.call_flips(st, [live(321.0)], hold)
     assert len(sent) == 1
 

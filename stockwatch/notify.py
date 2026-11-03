@@ -199,6 +199,25 @@ def ntfy_configured() -> bool:
     return bool(_topic(os.getenv("NTFY_TOPIC")))
 
 
+def phone_digest(lines: list[str], footer: str, max_lines: int = 12, limit: int = 3800) -> str:
+    """Fit whole importance-ordered lines, reserving room for the tap summary.
+
+    Stop at the first line that will not fit: lower-priority content cannot displace it.
+    The complete list is saved for Log by the caller.
+    """
+    shown = []
+    for line in lines[:max_lines - 1]:
+        candidate = "\n".join([*shown, line, footer])
+        if len(candidate.encode("utf-8")) > limit:
+            break
+        shown.append(line)
+    if len(shown) < len(lines):
+        footer = "More changes in Log. " + footer
+        while shown and len("\n".join([*shown, footer]).encode("utf-8")) > limit:
+            shown.pop()
+    return "\n".join([*shown, footer])
+
+
 def ntfy_send(title: str, text: str, priority: int = 3, tags: str = "", click: str | None = None, channel: str = "calls") -> str:
     """One phone push through ntfy. Returns "sent" or "not configured"; raises DeliveryError (safe to log) on a failure.
     The title is kept to plain ASCII because HTTP headers must be latin-1; the body can hold anything."""

@@ -692,15 +692,21 @@ if view == "turbo":
 
 # ---------------------------------------------------------------- alert log
 def _candidates_block() -> None:
-    """Today's shared list of stocks worth watching, with what Quick and New call did with each (log only)."""
+    """Saved daily candidate lists and their observed outcomes (display only)."""
     data = candidates.load(store)["days"]
     if not data:
         return
-    day = max(data)
-    rows = list(data[day]["rows"].values())
-    n_sp = sum(1 for r in rows if r.get("tracked") == "S&P only")
-    with st.expander(f"Candidate list · {day} · {len(rows)} stocks" + (f" ({n_sp} from the wider S&P 500)" if n_sp else "")
-                     + " · scanned 10 min before the open, then every 5 min from 15 min after it"):
+    with st.expander("Candidate list · saved days · scanned 10 min before the open, then every 5 min from 15 min after it"):
+        day = st.selectbox("Candidate day", sorted(data, reverse=True), index=0, key="candidate_day")
+        rows = list(data[day]["rows"].values())
+        s = candidates.summary(rows)
+        n_sp = sum(1 for r in rows if r.get("tracked") == "S&P only")
+        up = "unknown" if s["p60_up_share"] is None else f"{s['p60_up_share']:.0%} up"
+        avg60 = "unknown" if s["p60_average"] is None else f"{s['p60_average']:+.2f}%"
+        avgclose = "unknown" if s["close_average"] is None else f"{s['close_average']:+.2f}%"
+        count = f"{s['rows']} rows" + (f" ({n_sp} S&P only)" if n_sp else "")
+        st.caption(f"{count} · +60 min: {up}, avg {avg60} ({s['p60_count']} known) · "
+                   f"Close: avg {avgclose} ({s['close_count']} known)")
         if not rows:
             st.caption("Nothing qualified in the scans yet.")
         else:
@@ -775,8 +781,9 @@ def _ai_answer(ticker: str):
               help="Uses a tracked stock's saved data. The answer is saved with its time and price.")
     if note := st.session_state.pop("ai_note", None):
         st.caption(note)
-    st.markdown(ask_ai_view.html(ask_ai.latest(store, ticker)), unsafe_allow_html=True)
-    st.markdown(ask_ai_view.history_html(ask_ai.history(store)), unsafe_allow_html=True)
+    tracked = {s["ticker"] for s in store.latest_snapshots()}
+    st.markdown(ask_ai_view.html(ask_ai.latest(store, ticker), tracked=tracked), unsafe_allow_html=True)
+    st.markdown(ask_ai_view.history_html(ask_ai.history(store), tracked=tracked), unsafe_allow_html=True)
 
 
 if view == "ai":
@@ -814,6 +821,12 @@ if view == "log":
         f'<div class="mc-log"><small>{a["created_at"][5:16].replace("T", " ")}</small> '
         f'{ui.signal_glyph(a["kind"])}<b>{escape(a["ticker"])}</b> @ {a["price"]:.2f} — {escape(a["message"])}</div>'
         for a in alerts), unsafe_allow_html=True)
+
+    # Full call-change list behind the combined phone digest; escaped, display only.
+    call_digest = json.loads(store.get_setting("last_call_digest") or "{}")
+    if call_digest.get("lines"):
+        with st.expander("Latest stock updates", expanded=True):
+            st.markdown("<br>".join(escape(line) for line in call_digest["lines"]), unsafe_allow_html=True)
 
     with st.expander("System diagnostics", expanded=False):
         now_ny = datetime.now(NY)
