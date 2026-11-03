@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from datetime import datetime
 
 from . import funnel, paper_live, paper_newcall, quick, volpace
@@ -42,6 +43,22 @@ COLS = [("day", "Day"), ("ticker", "Ticker"), ("found", "Found"), ("tracked", "T
 
 def _num(v) -> float | None:
     return v if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v else None
+
+
+def summary(rows: list[dict]) -> dict:
+    """Display-only outcomes, in stored percentage points; unknown/non-finite values are excluded.
+
+    The up share uses only known +60-minute outcomes. A measured zero is known (and not up).
+    Counts expose each denominator; no observations means None, never an invented zero return.
+    """
+    def known(key):
+        return [r[key] for r in rows if isinstance(r.get(key), (int, float))
+                and not isinstance(r[key], bool) and math.isfinite(r[key])]
+    p60, close = known("p60"), known("close_pct")
+    return {"rows": len(rows), "p60_count": len(p60), "close_count": len(close),
+            "p60_up_share": sum(v > 0 for v in p60) / len(p60) if p60 else None,
+            "p60_average": sum(p60) / len(p60) if p60 else None,
+            "close_average": sum(close) / len(close) if close else None}
 
 
 def load(store) -> dict:
