@@ -828,6 +828,12 @@ if view == "log":
         f'{ui.signal_glyph(a["kind"])}<b>{escape(a["ticker"])}</b> @ {a["price"]:.2f} — {escape(a["message"])}</div>'
         for a in alerts), unsafe_allow_html=True)
 
+    # Full call-change list behind the combined phone digest; escaped, display only.
+    call_digest = json.loads(store.get_setting("last_call_digest") or "{}")
+    if call_digest.get("lines"):
+        with st.expander("Latest stock updates", expanded=True):
+            st.markdown("<br>".join(escape(line) for line in call_digest["lines"]), unsafe_allow_html=True)
+
     with st.expander("System diagnostics", expanded=False):
         now_ny = datetime.now(NY)
         st.markdown('<div class="mc-kv">' + "".join(f"<div><span>{k}</span>{escape(str(v))}</div>" for k, v in [
