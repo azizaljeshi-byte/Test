@@ -28,7 +28,7 @@ from .data import NY, us_session
 BOOK_KEY, STATE_KEY = "paper_newcall_book", "paper_newcall_state"
 MAX_POSITIONS = 10
 SIZE_CAP_PCT = 15.0
-BLACKOUT_MIN = 60
+BLACKOUT_MIN = 5          # owner, 4 Nov: start trading 5 minutes after the open (was 60: the first hour)
 MIN_PACE = 0.8        # no buy unless today's volume is at least this much of normal for the time of day (a setup that is not established)
 RIDE_ATR = 1.0        # once up this many daily ranges the stop starts to trail (the trade is "riding")
 TRAIL_ATR = 1.0       # the trailing stop sits this far under the peak, never under the entry

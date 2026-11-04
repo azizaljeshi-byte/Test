@@ -33,8 +33,8 @@ def test_high_risk_gets_half_size_and_cap_applies():
     assert book2.positions["AAA"]["shares"] * 100 <= 50_000 * 0.15 + 100     # capped at 15% of the account
 
 
-def test_no_entry_in_opening_hour_late_or_without_a_call():
-    for when in (at(10, 15), at(15, 50)):
+def test_no_entry_in_the_first_five_minutes_late_or_without_a_call():
+    for when in (at(9, 33), at(15, 50)):
         book = paper.Book()
         assert paper_newcall.step(book, {"AAA": snap()}, {"AAA": 100.0}, when) == []
     for s in (snap(call="WAIT FOR TURN"), snap(known=False), snap(call="AVOID")):
