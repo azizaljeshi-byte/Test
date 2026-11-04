@@ -59,3 +59,12 @@ def test_macd_histogram_row_is_context_not_a_vote():
     ev = technical_view.evidence(h)
     n_votes = sum(ev["ind_summary"][k] for k in ("buy", "sell", "neutral"))
     assert n_votes == len([x for x in rows if x["name"] not in technical_view.CONTEXT_ONLY])
+
+
+def test_zone_rows_show_a_grade_badge():
+    oc = {"known": True, "exit_line": 240.12, "close": 171.97, "call": "AVOID", "atr": 6.3}
+    z = {"known": True, "resistance": [{"low": 177.91, "high": 177.91, "grade": "LOW", "reasons": []}, {"low": 200.58, "high": 200.58, "grade": "MEDIUM", "reasons": []}],
+         "support": [{"low": 170.76, "high": 170.76, "grade": "HIGH", "reasons": []}]}
+    h = tl.html(tl.build(oc, z, 171.97))
+    assert "tl-g-weak" in h and "tl-g-medium" in h and "tl-g-strong" in h and ">WEAK<" in h
+    assert h.index("Exit line") < h.index("Resistance 2") < h.index("Resistance 1") < h.index("Price now") < h.index("Support 1")

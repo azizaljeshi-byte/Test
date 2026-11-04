@@ -72,10 +72,11 @@ def _strength(z: dict) -> str:
     return {"HIGH": "strong", "MEDIUM": "medium"}.get(str(z.get("grade")).upper(), "weak")
 
 
-def _row(cls: str, price: str, title: str, sub: str = "", chip: str = "") -> str:
+def _row(cls: str, price: str, title: str, sub: str = "", chip: str = "", grade: str = "") -> str:
+    g = f' <em class="tl-g tl-g-{grade}">{grade.upper()}</em>' if grade else ""
     chip_html = f'<em class="tl-chip tl-c-{chip.split()[0].lower()}">{escape(chip)}</em>' if chip else ""
     sub_html = f"<small>{escape(sub)}</small>" if sub else ""
-    return (f'<div class="tl-row tl-{cls}"><i></i><b>{price}</b><span>{escape(title)}{sub_html}</span>{chip_html}</div>')
+    return (f'<div class="tl-row tl-{cls}"><i></i><b>{price}</b><span>{escape(title)}{g}{sub_html}</span>{chip_html}</div>')
 
 
 def _zone_price(z: dict) -> str:
@@ -93,19 +94,18 @@ def html(plan: dict | None) -> str:
 
     def sub(z, edge):
         n = swings_away(p, z[edge], atr)
-        bits = [_strength(z)] + ([f"{n:.1f} swings"] if n is not None else [])
-        return " · ".join(bits)
+        return f"{n:.1f} swings" if n is not None else ""
 
     items = []          # (price, row): the ladder is sorted by price, so the exit line sits above the price when the price is under it
     for i, z in enumerate(plan["res"], 1):
         chip = f"Profit {i}" if buy and i <= len(plan["targets"]) else ""
-        items.append((float(z["high"]), _row("res", _zone_price(z), f"Resistance {i}", sub(z, "low"), chip)))
+        items.append((float(z["high"]), _row("res", _zone_price(z), f"Resistance {i}", sub(z, "low"), chip, _strength(z))))
     items.append((p, _row("now", f"{p:,.2f}", "Price now", "", "Entry" if buy else "")))
     n_line = swings_away(p, line, atr)
     stop_sub = (f"{n_line:.1f} swings " + ("below" if p > line else "above")) if n_line is not None else ""
     items.append((line, _row("stop" if buy else "exit", f"{line:,.2f}", "Exit line", stop_sub, "Stop loss" if buy else "")))
     for i, z in enumerate(plan["sup"], 1):
-        items.append((float(z["low"]), _row("sup", _zone_price(z), f"Support {i}", sub(z, "high"))))
+        items.append((float(z["low"]), _row("sup", _zone_price(z), f"Support {i}", sub(z, "high"), "", _strength(z))))
     rows = [r for _, r in sorted(items, key=lambda x: -x[0])]
     if buy:
         head = ("BUY ZONE", "buy", "Close to the exit line and turning up.")
@@ -144,5 +144,7 @@ CSS = """
 .tl-stop,.tl-exit{--c:var(--dz-watch,#ffb020);border-bottom:1px dashed var(--dz-watch,#ffb020)}
 .tl-chip{font-style:normal;font-size:.7rem;font-weight:800;padding:2px 8px;border-radius:999px;white-space:nowrap;color:var(--dz-on-c,#0b1118);background:var(--c)}
 .tl-c-profit{background:var(--dz-buy,#3dffa8)}.tl-c-entry{background:#70b8ff}.tl-c-stop{background:var(--dz-act,#ff697b)}
+.tl-g{font-style:normal;font-size:.62rem;font-weight:800;letter-spacing:.04em;padding:1px 6px;margin-left:6px;border-radius:999px;vertical-align:1px;border:1px solid var(--dz-muted);color:var(--dz-soft)}
+.tl-g-strong{background:var(--dz-ink);color:var(--dz-bg,#0b1118);border-color:var(--dz-ink)}.tl-g-medium{border-color:var(--dz-ink);color:var(--dz-ink)}.tl-g-weak{opacity:.75}
 .tl-foot{margin-top:8px;border-top:1px solid var(--dz-line);padding-top:8px;font-size:.78rem;color:var(--dz-soft)}
 """
