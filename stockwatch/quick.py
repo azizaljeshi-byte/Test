@@ -40,6 +40,7 @@ DROP_ATR = 0.7                 # the flush behind a bounce, in daily ranges
 TURN_ATR = 0.15                # how far off the low the turn must be
 TRAIL_ATR = 0.45               # the trailing stop sits this far under the peak
 LOCK_ATR = 0.30                # once up this much the stop is at least the entry
+MAX_LOSS_PCT = 2.0               # owner, 4 Nov: no trade is held more than this far under its entry, however wide half a daily range is (CYPH sat 7% from its stop)
 STOP_ATR = 0.5                 # widest first stop under the entry (was 0.9: every stop hit lost 1.8% on average)
 STALL_MIN = 120                # backstop: minutes with no progress before it leaves
 NO_PROGRESS_MIN = 60           # leaves after this long if it never got +0.5% (frees the cash for the next setup)
@@ -271,7 +272,7 @@ def grade(kind: str, pace: float | None) -> tuple[str | None, str]:
 
 def _first_stop(kind: str, price: float, lo: float, atr: float) -> float:
     base = lo - 0.1 * atr if kind == "bounce" else price - 0.6 * atr
-    return round(max(base, price - STOP_ATR * atr), 2)
+    return round(max(base, price - STOP_ATR * atr, price * (1 - MAX_LOSS_PCT / 100)), 2)
 
 
 def _enter(book: dict, ticker: str, kind: str, why: str, price: float, lo: float, atr: float, now: datetime, pct: float = POSITION_PCT,
@@ -422,12 +423,13 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
             t["best"], t["worst"] = max(t["best"], round(move, 2)), min(t["worst"], round(move, 2))
             if price > pos["peak"]:
                 pos["peak"], pos["best_at"] = price, now.isoformat()
+            pos["stop"] = max(pos["stop"], round(pos["entry"] * (1 - MAX_LOSS_PCT / 100), 2))      # also for trades opened before the cap
             if price >= pos["entry"] + LOCK_ATR * atr:
                 pos["stop"] = round(max(pos["stop"], pos["entry"], pos["peak"] - TRAIL_ATR * atr), 2)
             held = (now - datetime.fromisoformat(pos["opened"])).total_seconds() / 60
             since_best = (now - datetime.fromisoformat(pos["best_at"])).total_seconds() / 60
             if price <= pos["stop"]:
-                reason = "trailing stop hit, riding ended" if pos["stop"] > pos["entry"] else "stop hit"
+                reason = "trailing stop hit, riding ended" if pos["stop"] > pos["entry"] else f"stop hit ({move:+.1f}%)"
             elif mins is not None and mins >= LAST_MIN:
                 reason = "end of day: no overnight"
             elif held >= NO_PROGRESS_MIN and t["best"] < NO_PROGRESS_PCT and price < pos["entry"] + 0.2 * atr:

@@ -230,3 +230,13 @@ def test_in_the_first_thirty_minutes_there_is_no_pace_limit():
     book = multi(ENTRY, ["A", "B", "C", "D"], lambda t: snap(), start=start)       # the turn comes about 18 minutes in
     assert len(book["trades"]) == 4
     assert not any("pace limit" in x["reason"] for x in book["skipped"])
+
+
+def test_no_trade_is_held_more_than_two_percent_under_its_entry_even_with_a_wide_daily_range():
+    assert quick._first_stop("breakout", 2.98, 2.9, 0.44) >= round(2.98 * 0.98, 2)       # half a range would be 7% down
+    book, marks = quick.new_book(), {}
+    t = quick._enter(book, "AAA", "breakout", "test", 2.98, 2.9, 0.44, T0)
+    assert t["stop0"] >= 2.92
+    book["positions"]["AAA"]["stop"] = 2.76                                                # an older position with the far stop
+    quick.step(book, marks, {"AAA": snap(atr=0.44)}, {"AAA": 2.846}, T0 + timedelta(minutes=40))     # -4.5%
+    assert book["trades"][0]["status"] == "CLOSED" and "stop hit" in book["trades"][0]["exit_reason"]
