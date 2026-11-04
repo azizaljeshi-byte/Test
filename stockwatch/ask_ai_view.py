@@ -22,7 +22,7 @@ CSS = """
 .aiv-ladder{position:relative;margin:8px 0;padding-left:16px}.aiv-ladder:before{content:'';position:absolute;left:4px;top:20px;bottom:20px;border-left:1px solid var(--dz-line,#374050)}
 .aiv-level{position:relative;display:grid;grid-template-columns:78px minmax(0,1fr);gap:12px;padding:13px 0;border-bottom:1px dotted #738092;color:#aab3c3}.aiv-level:before{content:'';position:absolute;left:-15px;top:23px;width:7px;height:7px;border-radius:50%;background:currentColor}
 .aiv-level.exit{color:#3dffa8;border-bottom:1px dashed #3dffa8}.aiv-level.price{color:#70b8ff;border-bottom:1px solid #70b8ff}.aiv-level.support{color:#ff697b;border-bottom:1px dashed #ff697b}.aiv-level b{font-variant-numeric:tabular-nums}
-.aiv-fact,.aiv-result{display:flex;justify-content:space-between;gap:16px;border-top:1px solid var(--dz-line,#283348);padding:10px 0}.aiv-fact>span{min-width:0}.aiv-fact>span:last-child{text-align:right}
+.aiv-fact,.aiv-result{display:flex;justify-content:space-between;gap:16px;border-top:1px solid var(--dz-line,#283348);padding:10px 0}.aiv-fact>span{min-width:0}.aiv-fact>span:last-child{text-align:right}.aiv-plan>span:first-child{flex:1}.aiv-plan>span:last-child{flex:0 0 auto;white-space:nowrap}
 .aiv-good{color:#3dffa8}.aiv-bad{color:#ff697b}.aiv-neutral{color:var(--dz-ink,#e9eef5)}.aiv-foot{font-size:12px;border-top:1px solid var(--dz-line,#283348);margin-top:18px;padding-top:12px;color:var(--dz-soft,#aab3c3)}
 .aiv-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.aiv-tiles>div{background:var(--dz-raised,#171f2c);border-radius:10px;padding:12px}.aiv-tiles b{display:block;font-size:23px}.aiv-tiles small{display:block;font-size:12px}
 .aiv-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px}.aiv-table th,.aiv-table td{text-align:left;padding:10px 3px;vertical-align:top;border-bottom:1px solid var(--dz-line,#283348);overflow-wrap:anywhere}.aiv-table th:first-child{width:26%}.aiv-table th:nth-child(2){width:20%}.aiv-table th:nth-child(3){width:19%}
@@ -74,7 +74,7 @@ def plan_html(plan) -> str:
         return '<div class="aiv-title">Plan</div><div class="aiv-muted">No plan for this answer.</div>'
     rows = [("Entry", plan.get("entry"), ""), ("Stop loss", plan.get("stop"), plan.get("stop_why")),
             ("Take profit 1", plan.get("target1"), plan.get("target_why")), ("Take profit 2", plan.get("target2"), "")]
-    body = ''.join(f'<div class="aiv-fact"><span>{label}{"<br><small>" + _text(why) + "</small>" if why else ""}</span>'
+    body = ''.join(f'<div class="aiv-fact aiv-plan"><span>{label}{"<br><small>" + _text(why) + "</small>" if why else ""}</span>'
                    f'<span>{_price(val)}</span></div>' for label, val, why in rows if val is not None)
     rr = _num(plan.get("reward_risk"))
     rr_text = f'<div class="aiv-fact"><span>Gain for each $1 risked</span><span>${rr:.1f}</span></div>' if rr is not None else ""

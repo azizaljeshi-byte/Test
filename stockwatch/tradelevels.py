@@ -68,85 +68,80 @@ def build(oc: dict | None, zones: dict | None, price) -> dict | None:
     return out
 
 
-def _layout(marks: list, price_to_y) -> list:
-    """(mark, y) with labels pushed apart so none overlap."""
-    out, last = [], -999.0
-    for m in sorted(marks, key=lambda m: -m["price"]):
-        y = max(price_to_y(m["price"]), last + MIN_GAP)
-        out.append((m, y))
-        last = y
-    return out
+def _strength(z: dict) -> str:
+    return {"HIGH": "strong", "MEDIUM": "medium"}.get(str(z.get("grade")).upper(), "weak")
+
+
+def _row(cls: str, price: str, title: str, sub: str = "", chip: str = "") -> str:
+    chip_html = f'<em class="tl-chip tl-c-{chip.split()[0].lower()}">{escape(chip)}</em>' if chip else ""
+    sub_html = f"<small>{escape(sub)}</small>" if sub else ""
+    return (f'<div class="tl-row tl-{cls}"><i></i><b>{price}</b><span>{escape(title)}{sub_html}</span>{chip_html}</div>')
+
+
+def _zone_price(z: dict) -> str:
+    lo, hi = z["low"], z["high"]
+    return f"{lo:,.2f}" if abs(hi - lo) < 0.005 else f"{lo:,.2f}-{hi:,.2f}"
 
 
 def html(plan: dict | None) -> str:
+    """ONE ladder: resistance 2 and 1, price (entry), stop, support 1 and 2, top to bottom, with the trade marks on the rows
+    they belong to (profit 1 and 2 sit on the resistance rows, the stop is the exit line)."""
     if not plan:
         return ""
     p, line, atr = plan["price"], plan["line"], plan["atr"]
-    marks = []
-    if plan["mode"] == "buy":
-        for i, t in reversed(list(enumerate(plan["targets"], 1))):
-            marks.append({"label": f"Profit {i}", "price": t, "cls": "tp"})
-        marks.append({"label": "Entry · price now", "price": p, "cls": "now"})
-        marks.append({"label": "Stop loss (exit line)", "price": line, "cls": "stop"})
-    else:
-        marks.append({"label": "Price now", "price": p, "cls": "now"})
-        marks.append({"label": "Exit line", "price": line, "cls": "exit"})
-    bands = [("res", x["low"], x["high"], x) for x in plan["res"]] + [("sup", x["low"], x["high"], x) for x in plan["sup"]]
-    prices = [m["price"] for m in marks] + [b[1] for b in bands] + [b[2] for b in bands]
-    span = (max(prices) - min(prices)) or 1.0
-    lo, hi = min(prices) - span * 0.06, max(prices) + span * 0.06
-    y = lambda v: (hi - v) / (hi - lo) * H  # noqa: E731
-    parts = []
-    for kind, a, b, x in bands:
-        top, ht = y(b), max(y(a) - y(b), 24)
-        top -= (ht - (y(a) - y(b))) / 2
-        word = "Resistance" if kind == "res" else "Support"
-        strength = {"HIGH": "strong", "MEDIUM": "medium"}.get(str(x.get("grade")).upper(), "weak")
-        cls = "tl-w" if strength == "weak" else ""
-        parts.append(f'<div class="tl-band tl-{kind} {cls}" style="top:{top:.0f}px;height:{ht:.0f}px"><span>{word} · {strength}</span></div>')
-    for m, yy in _layout(marks, y):
-        parts.append(f'<div class="tl-ln tl-{m["cls"]}" style="top:{y(m["price"]):.0f}px"></div>'
-                     f'<div class="tl-lb tl-{m["cls"]}" style="top:{yy - 10:.0f}px"><b>{escape(m["label"])}</b><i>{m["price"]:,.2f}</i></div>')
-    chart = f'<div class="tl-chart" style="height:{H}px">{"".join(parts)}</div>'
-    if plan["mode"] == "buy":
+    buy = plan["mode"] == "buy"
+
+    def sub(z, edge):
+        n = swings_away(p, z[edge], atr)
+        bits = [_strength(z)] + ([f"{n:.1f} swings"] if n is not None else [])
+        return " · ".join(bits)
+
+    rows = []
+    for i, z in reversed(list(enumerate(plan["res"], 1))):
+        chip = f"Profit {i}" if buy and i <= len(plan["targets"]) else ""
+        rows.append(_row("res", _zone_price(z), f"Resistance {i}", sub(z, "low"), chip))
+    rows.append(_row("now", f"{p:,.2f}", "Price now", "", "Entry" if buy else ""))
+    n_line = swings_away(p, line, atr)
+    stop_sub = (f"{n_line:.1f} swings " + ("below" if p > line else "above")) if n_line is not None else ""
+    rows.append(_row("stop" if buy else "exit", f"{line:,.2f}", "Exit line", stop_sub, "Stop loss" if buy else ""))
+    for i, z in enumerate(plan["sup"], 1):
+        rows.append(_row("sup", _zone_price(z), f"Support {i}", sub(z, "high")))
+    if buy:
         head = ("BUY ZONE", "buy", "Close to the exit line and turning up.")
-        notes = [f"Risk ${plan['risk']:,.2f} a share ({plan['risk'] / p:.1%}) if it falls to the exit line."]
-        if plan["targets"]:
-            gains = " · ".join(f"profit {i} +${t - p:,.2f}" for i, t in enumerate(plan["targets"], 1))
-            notes.append(f"Gain: {gains}.")
-            notes.append("Gain for each $1 risked: " + ", ".join(f"${r:.1f} at profit {i}" for i, r in enumerate(plan["ratios"], 1)) + ".")
+        foot = [f"Risk ${plan['risk']:,.2f} a share ({plan['risk'] / p:.1%})."]
+        if plan["ratios"]:
+            foot.append("Gain for each $1 risked: " + " · ".join(f"${r:.1f} at profit {i}" for i, r in enumerate(plan["ratios"], 1)) + ".")
             if plan["ratios"][0] < 1:
-                notes.append("Profit 1 is closer than the risk: the first target pays less than the stop can cost.")
+                foot.append("Profit 1 is closer than the risk.")
         else:
-            notes.append("No resistance zone above to use as a target.")
-        notes.append("Stop = the exit line. Targets = the low edge of the nearest resistance zones. Advice only: nothing is placed.")
+            foot.append("No resistance above to use as a target.")
     elif plan["mode"] == "under":
         head = ("NO ENTRY NOW", "avoid", f"Under its exit line {line:,.2f}. Would change if it closes back above it.")
-        notes = ["No entry, stop or targets are drawn until it is back above the exit line."]
+        foot = []
     else:
         n = swings_away(p, line, atr)
-        far = f"{n:.1f} normal swings above its exit line" if n is not None else "above its exit line"
-        head = ("NO ENTRY YET", "wait", f"{far.capitalize()}: not a low-risk entry.")
-        notes = ["The exit line is shown as the level that would end the trade. No entry or targets are drawn."]
-    word, cls, sub = head
-    return (f'<div class="rd-h"><span>Trade levels</span></div><div class="tl"><div class="tl-v tl-{cls}">{word}<small>{escape(sub)}</small></div>'
-            f'{chart}<div class="tl-notes">{"".join(f"<div>{escape(n)}</div>" for n in notes)}</div></div>')
+        far = f"{n:.1f} normal swings above its exit line" if n is not None else "Above its exit line"
+        head = ("NO ENTRY YET", "wait", f"{far[0].upper() + far[1:]}: not a low-risk entry.")
+        foot = []
+    word, cls, subtext = head
+    foot_html = f'<div class="tl-foot">{" ".join(escape(x) for x in foot)}</div>' if foot else ""
+    return (f'<div class="rd-h"><span>Price ladder</span></div><div class="tl"><div class="tl-v tl-{cls}">{word}<small>{escape(subtext)}</small></div>'
+            f'<div class="tl-rows">{"".join(rows)}</div>{foot_html}</div>')
 
 
 CSS = """
 .tl{background:var(--dz-surface);border:1px solid var(--dz-line);border-radius:14px;padding:12px;margin-bottom:10px}
-.tl-v{border-left:4px solid var(--c);padding:7px 11px;border-radius:8px;background:var(--dz-raised);font-weight:800;color:var(--c);margin-bottom:10px}
+.tl-v{border-left:4px solid var(--c);padding:7px 11px;border-radius:8px;background:var(--dz-raised);font-weight:800;color:var(--c);margin-bottom:6px}
 .tl-v small{display:block;font-weight:400;color:var(--dz-soft);font-size:.78rem;margin-top:1px}
 .tl-buy{--c:var(--dz-buy,#3dffa8)}.tl-wait{--c:var(--dz-watch,#ffb020)}.tl-avoid{--c:var(--dz-act,#ff697b)}
-.tl-chart{position:relative;margin:4px 2px}
-.tl-band{position:absolute;left:0;width:52%;border-radius:4px;font-size:.68rem;color:var(--dz-soft)}
-.tl-band span{position:absolute;left:5px;top:50%;transform:translateY(-50%);white-space:nowrap;background:var(--dz-raised);padding:0 5px;border-radius:4px;z-index:3}
-.tl-band.tl-res{background:color-mix(in srgb,var(--dz-act,#ff697b) 16%,transparent);border:1px solid color-mix(in srgb,var(--dz-act,#ff697b) 45%,transparent)}
-.tl-band.tl-sup{background:color-mix(in srgb,var(--dz-buy,#3dffa8) 14%,transparent);border:1px solid color-mix(in srgb,var(--dz-buy,#3dffa8) 40%,transparent)}
-.tl-band.tl-w{opacity:.65}
-.tl-ln{position:absolute;left:0;width:60%;height:0;border-top:2px solid var(--c)}
-.tl-lb{position:absolute;left:62%;right:0;font-size:.8rem;white-space:nowrap;color:var(--c)}.tl-lb i{font-style:normal;float:right;font-variant-numeric:tabular-nums}
-.tl-now{--c:#70b8ff}.tl-stop{--c:var(--dz-act,#ff697b)}.tl-stop.tl-ln,.tl-tp.tl-ln,.tl-exit.tl-ln{border-top-style:dashed}
-.tl-tp{--c:var(--dz-buy,#3dffa8)}.tl-exit{--c:var(--dz-watch,#ffb020)}
-.tl-notes{margin-top:10px;border-top:1px solid var(--dz-line);padding-top:8px;font-size:.78rem;color:var(--dz-soft)}.tl-notes div{padding:2px 0}
+.tl-rows{position:relative;padding-left:16px}.tl-rows:before{content:'';position:absolute;left:4px;top:18px;bottom:18px;border-left:1px solid var(--dz-line)}
+.tl-row{position:relative;display:grid;grid-template-columns:116px minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 0;border-bottom:1px dotted var(--dz-line);color:var(--c)}
+.tl-row:last-child{border-bottom:0}.tl-row i{position:absolute;left:-15px;top:50%;width:7px;height:7px;margin-top:-4px;border-radius:50%;background:var(--c)}
+.tl-row b{font-variant-numeric:tabular-nums;font-size:.9rem;white-space:nowrap}
+.tl-row span{color:var(--dz-ink);font-size:.86rem;line-height:1.25;min-width:0}.tl-row span small{display:block;color:var(--dz-muted);font-size:.72rem}
+.tl-res{--c:var(--dz-act,#ff697b)}.tl-sup{--c:var(--dz-buy,#3dffa8)}.tl-now{--c:#70b8ff;border-top:1px solid #70b8ff;border-bottom:1px solid #70b8ff}
+.tl-stop,.tl-exit{--c:var(--dz-watch,#ffb020);border-bottom:1px dashed var(--dz-watch,#ffb020)}
+.tl-chip{font-style:normal;font-size:.7rem;font-weight:800;padding:2px 8px;border-radius:999px;white-space:nowrap;color:var(--dz-on-c,#0b1118);background:var(--c)}
+.tl-c-profit{background:var(--dz-buy,#3dffa8)}.tl-c-entry{background:#70b8ff}.tl-c-stop{background:var(--dz-act,#ff697b)}
+.tl-foot{margin-top:8px;border-top:1px solid var(--dz-line);padding-top:8px;font-size:.78rem;color:var(--dz-soft)}
 """

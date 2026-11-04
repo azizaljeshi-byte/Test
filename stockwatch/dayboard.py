@@ -235,7 +235,9 @@ def zones_html(snap: dict, price) -> str:
         chart = tradelevels.html(tradelevels.build(oc, z, price if not nan(price) else None))
     except Exception:       # a bad stored result must never break the page
         chart = ""
-    return f'{chart}<div class="rd-h"><span>Where it may stop or turn</span></div>{rows}'
+    if chart:               # one ladder replaces the separate zone cards
+        return chart
+    return f'<div class="rd-h"><span>Where it may stop or turn</span></div>{rows}'
 
 
 def day_move(snap: dict):

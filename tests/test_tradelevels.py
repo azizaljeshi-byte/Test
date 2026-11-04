@@ -24,7 +24,7 @@ def test_under_line_and_wait_draw_no_entry():
     assert u["mode"] == "under" and u["entry"] is None and u["targets"] == []
     w = tl.build(oc("WAIT", line=80.0, close=100.0, dist=5), ZONES, 100.0)
     assert w["mode"] == "wait" and w["stop"] is None
-    assert "No entry" in tl.html(u) and "NO ENTRY YET" in tl.html(w)
+    assert "NO ENTRY NOW" in tl.html(u) and "NO ENTRY YET" in tl.html(w)
 
 
 def test_unknown_gives_nothing():

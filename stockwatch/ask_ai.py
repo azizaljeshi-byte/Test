@@ -253,8 +253,8 @@ def check_plan(raw, verdict: str, price) -> dict | None:
     if (entry - stop) / entry > 0.25 or max(t1, t2 or 0) / entry > 1.6:
         return None
     return {"entry": round(entry, 2), "stop": round(stop, 2), "target1": round(t1, 2), "target2": None if t2 is None else round(t2, 2),
-            "reward_risk": round((t1 - entry) / (entry - stop), 1), "stop_why": _txt(raw.get("stop_why"), 120),
-            "target_why": _txt(raw.get("target_why"), 120)}
+            "reward_risk": round((t1 - entry) / (entry - stop), 1), "stop_why": _txt(raw.get("stop_why"), 200),
+            "target_why": _txt(raw.get("target_why"), 200)}
 
 
 def parse_answer(text: str, price=None) -> dict:
