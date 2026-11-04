@@ -2,6 +2,7 @@
 and by exit reason, with the best and worst trades. Changes nothing."""
 from __future__ import annotations
 
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -22,12 +23,29 @@ def block(title, groups):
         print(f"  {k:<28} {len(ts):>3} trades  wins {pct(len(w), len(ts)):>4}  total {sum(res):>9,.2f}  avg {sum(res) / len(ts):>8,.2f}")
 
 
+def is_test(t) -> bool:
+    return str(t.get("exit_reason") or "").startswith("forced sell")
+
+
 def main() -> None:
-    from stockwatch import paper_newcall
+    from datetime import datetime
+    from stockwatch import paper_newcall, rotation
+    from stockwatch.data import NY
     from stockwatch.store import Store
-    book = paper_newcall.load_book(Store())
+    store = Store()
+    book = paper_newcall.load_book(store)
+    prices = {}
+    try:
+        for sn in store.latest_snapshots():
+            px = rotation._price(sn)
+            if px:
+                prices[sn["ticker"]] = px
+    except Exception as e:
+        print(f"(latest prices not read: {e})")
     trades = book.trades
-    closed = [t for t in trades if t.get("status") == "CLOSED"]
+    test = [t for t in trades if t.get("status") == "CLOSED" and is_test(t)]
+    print(f"Left out of every table below: {len(test)} 'forced sell (owner test)' trades ({sum(t['result'] for t in test):,.2f}), which test the buttons, not the rules.\n")
+    closed = [t for t in trades if t.get("status") == "CLOSED" and not is_test(t)]
     openp = [t for t in trades if t.get("status") != "CLOSED"]
     res = [t["result"] for t in closed]
     wins, losses = [x for x in res if x > 0], [x for x in res if x < 0]
@@ -55,6 +73,34 @@ def main() -> None:
         print(f"  {t['ticker']:<6} {t['result']:>9,.2f}  {str(t['opened'])[:16]} -> {str(t['closed'])[:16]}  {str(t.get('exit_reason'))[:60]}")
     top = sorted(res, reverse=True)[:3]
     print(f"\nShare of the total from the 3 best trades: {sum(top):,.2f} of {sum(res):,.2f}")
+
+    # ---- money in use, what is open, what was held back, and why the rest of the cash is not used
+    eq = book.equity(prices)
+    inv = sum(p["shares"] * (prices.get(t) or p["entry"]) for t, p in book.positions.items())
+    print(f"\nMONEY IN USE\n  Account value {eq:,.2f}. Invested {inv:,.2f} ({inv / eq * 100:.0f}%), cash {book.cash:,.2f} ({book.cash / eq * 100:.0f}%).")
+    print("  Open positions (ticker, shares, in at, now, result, size, share of the account):")
+    unreal = 0.0
+    for t, p in sorted(book.positions.items()):
+        now_px = prices.get(t)
+        r = (now_px - p["entry"]) * p["shares"] if now_px else 0.0
+        unreal += r
+        print(f"    {t:<6} {p['shares']:>6g} {p['entry']:>9,.2f} {now_px or 0:>9,.2f} {r:>+9,.2f} ({(now_px / p['entry'] - 1) * 100 if now_px else 0:+.1f}%)  {p['shares'] * (now_px or p['entry']):>9,.2f}  {p['shares'] * (now_px or p['entry']) / eq * 100:>4.1f}%"
+              f"  stop {p.get('trail') or p.get('stop') or 0:,.2f}")
+    print(f"  Open result right now {unreal:+,.2f}. Closed (without tests) {sum(res):+,.2f}.")
+    today = datetime.now(NY).date().isoformat()
+    held = [b for b in book.blocked if b.get("day") == today]
+    print(f"\nHELD BACK TODAY ({len(held)} stocks the rules wanted but did not buy; one line per stock)")
+    by = defaultdict(list)
+    for b in held:
+        by[re.sub(r"[\d.]+%?", "#", str(b["reason"]))[:90]].append(b["ticker"])
+    for k, v in sorted(by.items(), key=lambda kv: -len(kv[1])):
+        print(f"  {len(v):>3}  {k}  ({', '.join(v[:8])}{'...' if len(v) > 8 else ''})")
+    print("\nWHY THE REST OF THE CASH IS NOT USED")
+    free = paper_newcall.MAX_POSITIONS - len(book.positions)
+    print(f"  Rules: at most {paper_newcall.MAX_POSITIONS} positions at once ({len(book.positions)} open, {free} free), at most {paper_newcall.MAX_NEW} new entries per {paper_newcall.NEW_WINDOW_MIN} minutes,")
+    print(f"  each position sized so a hit on its exit line costs about 1% of the account, never over {paper_newcall.SIZE_CAP_PCT:g}% of it.")
+    print("  A stock is bought only when its call is BUY or ADD, it is not down on the day, its volume is normal, and it is not weak (a confirmed breakdown or a weakening chart).")
+    print("  So cash stays unused when few stocks pass those checks, or when the positions are small because their exit lines are close.")
 
 
 if __name__ == "__main__":
