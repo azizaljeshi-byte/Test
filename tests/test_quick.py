@@ -211,3 +211,15 @@ def test_a_stock_trades_once_a_day_the_day_stops_at_a_one_percent_loss_and_entri
     book = quick.new_book()
     run(ENTRY, book=book)
     assert book["trades"] == [] and any("day limit" in x["reason"] for x in book["skipped"])
+
+
+def test_after_two_percent_it_leaves_soon_after_it_stops_riding():
+    book, marks = run(ENTRY + CLIMB)
+    last = T0 + timedelta(seconds=20 * len(ENTRY + CLIMB))
+    peak = book["positions"]["AAA"]["peak"]
+    assert book["trades"][0]["best"] >= quick.TAKE_PCT
+    quick.step(book, marks, {"AAA": snap()}, {"AAA": round(peak - 0.5, 2)}, last + timedelta(minutes=5))
+    assert book["trades"][0]["status"] == "OPEN"                       # 5 minutes with no new high: still counts as riding
+    quick.step(book, marks, {"AAA": snap()}, {"AAA": round(peak - 0.5, 2)}, last + timedelta(minutes=11))
+    t = book["trades"][0]
+    assert t["status"] == "CLOSED" and "took the profit" in t["exit_reason"] and t["result"] > 0

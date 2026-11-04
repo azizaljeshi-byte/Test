@@ -55,6 +55,9 @@ MAX_PER_DAY = 40               # new entries in a day: only a runaway guard now 
 DAY_LOSS_PCT = 1.0             # no new entries once today's closed result plus open positions is this far under the start (percent of the account)
 SIZE_PCT = {"A": 5.0, "B": 3.0}  # a C setup is not traded
 FIRST_MIN, LAST_MIN = 5, 385   # minutes into the session (9:35 to 15:55)
+TAKE_PCT = 2.0                 # owner, 4 Nov: once up this much, leave as soon as it stops riding ...
+TAKE_STALL_MIN = 10            # ... no new high for this long ...
+TAKE_GIVEBACK_PCT = 0.3        # ... and this far under the peak. While it keeps making new highs it is riding and stays.
 FIXED_PCT = 2.5                # only to compare riding with a fixed exit; not a rule
 LEVEL_PCT = 2.5                # the agent's entries come in levels of this size (percent of the account): level 1, level 2, one more on a pullback
 MAX_LEVELS = 3
@@ -432,6 +435,8 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
                 reason = f"volume dried up after {held:.0f} minutes and the price is not moving"
             elif held >= STALL_MIN and price < pos["entry"] + 0.2 * atr:
                 reason = f"went nowhere for {held:.0f} minutes"
+            elif t["best"] >= TAKE_PCT and since_best >= TAKE_STALL_MIN and price < pos["peak"] * (1 - TAKE_GIVEBACK_PCT / 100) and price > pos["entry"]:
+                reason = f"took the profit: was up {t['best']:.1f}%, no new high for {since_best:.0f} minutes and not riding any more ({move:+.1f}%)"
             elif since_best >= 45 and price < pos["peak"] - 0.25 * atr and price > pos["entry"]:
                 reason = "momentum faded: no new high for 45 minutes"
             elif orders:
