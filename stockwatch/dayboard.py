@@ -215,7 +215,7 @@ def _sure_html(a: dict) -> str:
         head = (f'<div class="rd-h"><span>How sure are we this is the right move</span><b>{n} of {k} agree</b></div>'
                 f'<div class="rd-dots">{dots}</div>')
     rows = "".join(
-        f'<li class="{("y bad" if want == BEAR else "y") if (c["state"] == want or c["state"] == "ok") and a["sure"] else "n"}">{escape(c["text"])}</li>'
+        f'<li class="{("y bad" if want == BEAR and c["state"] == want else "y") if (c["state"] == want or c["state"] == "ok") and a["sure"] else "n"}">{escape(c["text"])}</li>'
         for c in a["checks"])
     chg = f'<p class="rd-chg">Would change if {escape(a["change"])}</p>' if a["change"] else ""
     return f'<div class="rd-box">{head}<ul class="rd-chk">{rows}</ul>{chg}</div>'
