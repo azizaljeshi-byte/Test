@@ -4,7 +4,7 @@ A stock-day is "in the buy zone" by the app's own one-call rule (onecall.py): th
 ENTRY_ATRS normal daily swings of it, the day was an up day with RSI rising, and no earnings in the next 2 days. The exit line is the app's own
 (status.assess) as it stood that day. Trade from that close: stop half a swing under the exit line (where the app says EXIT), target
 R_MULT times the risk above the entry, judged on daily highs and lows (stop first if both in one day), within HORIZON sessions.
-Groups (earnings dates are Yahoo's): AFTER = 1 to AFTER_MAX sessions after an earnings date; FELL = AFTER, and the stock had fallen over the
+Every STEP-th session is looked at (speed). Groups (earnings dates are Yahoo's): AFTER = 1 to AFTER_MAX sessions after an earnings date; FELL = AFTER, and the stock had fallen over the
 10 sessions into the report (the sold-off-then-recovers story); OTHER = no earnings within 3 sessions before or 10 sessions after.
 """
 from __future__ import annotations
@@ -17,6 +17,7 @@ from .onecall import BAND_ATRS, ENTRY_ATRS
 from .reclaim_study import exit_line
 
 R_MULT, HORIZON, AFTER_MAX, FAR_BEFORE, FAR_AFTER, MIN_BARS = 2.0, 20, 5, 3, 10, 210
+STEP = 3          # look at every 3rd session: the exit line is the slow part, and neighbouring days overlap anyway
 
 
 def _positions(dates: np.ndarray, earnings: list) -> list:
@@ -28,14 +29,14 @@ def _positions(dates: np.ndarray, earnings: list) -> list:
     return sorted(set(out))
 
 
-def cases(df: pd.DataFrame, earnings: list, horizon: int = HORIZON, with_line: bool = True, line_fn=exit_line) -> pd.DataFrame:
+def cases(df: pd.DataFrame, earnings: list, horizon: int = HORIZON, with_line: bool = True, line_fn=exit_line, step: int = STEP) -> pd.DataFrame:
     ind = technical.indicators(df)
     c, hi, lo = (df[k].astype(float).to_numpy() for k in ("Close", "High", "Low"))
     atr, rsi = ind["ATR"].to_numpy(), ind["RSI"].to_numpy()
     dates = np.array([d.date() for d in df.index], dtype="datetime64[D]")
     pe = _positions(dates, earnings)
     rows = []
-    for i in range(MIN_BARS, len(c) - horizon - 1):
+    for i in range(MIN_BARS, len(c) - horizon - 1, step):
         if not (c[i] > c[i - 1] and rsi[i] > rsi[i - 1]) or not np.isfinite(atr[i]) or atr[i] <= 0:
             continue
         if any(0 < p - i <= 2 for p in pe):            # the app never calls BUY with earnings in the next 2 days

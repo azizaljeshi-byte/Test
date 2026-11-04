@@ -78,7 +78,17 @@ def load_dates(tickers: list) -> dict:
     return out
 
 
+def low_priority() -> None:
+    """Run behind the app (Windows below-normal priority) so the dashboard stays responsive while this works."""
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x4000)
+    except Exception:
+        pass
+
+
 def main() -> None:
+    low_priority()
     frames = load_bars()
     dates = load_dates(list(frames))
     print(f"{len(frames)} stocks, earnings dates for {sum(1 for v in dates.values() if v)}. Working out the cases...", flush=True)
