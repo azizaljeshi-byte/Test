@@ -1,7 +1,7 @@
 """The shared candidates list for Quick and New call (owner, 2026-10-30). Log only: it does not limit what either account trades.
 
 10 minutes before the US open (09:20 New York, so the clock change on 1 November is followed by itself) it scans every stock the app
-tracks and writes the ones worth watching today, then every 5 minutes from 09:45 (when the opening range is set) until 15:55 (owner, 3 Nov:
+tracks and writes the ones worth watching today, then every 5 minutes from 09:31 (owner, 4 Nov: as soon as the market opens; was 09:45) until 15:55 (owner, 3 Nov:
 the list must run regularly so no trade is missed). Each row also keeps what happened after it was found (+30 min, +60 min, close, best and
 worst point) so the list can be judged on results. S&P 500 stocks the app does not track are judged by the same move rules (from the
 funnel's live read and the S&P scan's daily range) and added, marked "S&P only": no live data, no earnings check, and Quick cannot trade
@@ -25,7 +25,7 @@ from .data import NY, us_session
 log = logging.getLogger("stockwatch.candidates")
 KEY = "candidates_log"
 SCAN_PRE_MIN = 9 * 60 + 20          # 09:20 New York
-SCAN_REFRESH_MIN = 9 * 60 + 45      # 09:45 New York: the first scan after the open (opening range set)
+SCAN_REFRESH_MIN = 9 * 60 + 31      # 09:31 New York: the first scan after the open (owner, 4 Nov: as soon as the market opens; was 09:45), then every 5 minutes
 REFRESH_EVERY_MIN = 5               # then again every 5 minutes (owner, 3 Nov: run regularly, miss nothing) ...
 SCAN_LAST_MIN = 15 * 60 + 55        # ... until 15:55 New York
 KEY_STATS = "universe_stats"        # {"stats": {ticker: {atr, avg_vol, sector}}} saved by the S&P scan for every stock it prices
@@ -322,7 +322,7 @@ def export(store) -> str:
 
 
 def tick(store, now: datetime | None = None) -> dict:
-    """From the tracker, every 20 seconds. Scans at 09:20, then every 5 minutes from 09:45 until 15:55 New York and keeps the rows up to date."""
+    """From the tracker, every 20 seconds. Scans at 09:20, then every 5 minutes from 09:31 until 15:55 New York and keeps the rows up to date."""
     now = (now or datetime.now(NY)).astimezone(NY)
     sess, mins = us_session(now), now.hour * 60 + now.minute
     day = load(store)["days"].get(now.date().isoformat(), {})
