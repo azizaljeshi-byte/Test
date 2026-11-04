@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from html import escape
 
-from . import design, ui
+from . import design, tradelevels, ui
 from .ui import nan
 
 WORDS = {"ACT": ("ACT", "#ff7a7a", "risk"), "BUY": ("BUY", "#7be3a8", "buy"), "WATCH": ("WATCH", "#ffc267", "warn"),
@@ -223,9 +223,19 @@ def zones_html(snap: dict, price) -> str:
     if not (z["support"] or z["resistance"]):
         return ""
     now = (f'<div class="rd-now"><span>Price now {ui.num(price)}</span></div>' if not nan(price) else "")
-    rows = "".join(design.zone_row("resistance", x["low"], x["high"], x["grade"], x["reasons"]) for x in reversed(z["resistance"]))
-    rows += now + "".join(design.zone_row("support", x["low"], x["high"], x["grade"], x["reasons"]) for x in z["support"])
-    return f'<div class="rd-h"><span>Where it may stop or turn</span></div>{rows}'
+    oc = (snap["payload"].get("technical") or {}).get("one_call")
+    atr = tradelevels.atr_of(oc)
+
+    def away(level):
+        n = tradelevels.swings_away(price, level, atr) if not nan(price) else None
+        return "" if n is None else f"{n:.1f} swings away"
+    rows = "".join(design.zone_row("resistance", x["low"], x["high"], x["grade"], x["reasons"], away(x["low"])) for x in reversed(z["resistance"]))
+    rows += now + "".join(design.zone_row("support", x["low"], x["high"], x["grade"], x["reasons"], away(x["high"])) for x in z["support"])
+    try:
+        chart = tradelevels.html(tradelevels.build(oc, z, price if not nan(price) else None))
+    except Exception:       # a bad stored result must never break the page
+        chart = ""
+    return f'{chart}<div class="rd-h"><span>Where it may stop or turn</span></div>{rows}'
 
 
 def day_move(snap: dict):
@@ -503,7 +513,7 @@ def render(snaps: list[dict], changed: dict[str, str] | None = None, brief: str 
     held = [s for s in snaps if not s["payload"]["watchlist"]]
     watch = [s for s in snaps if s["payload"]["watchlist"]]
     need, close, calm = split(snaps)
-    parts = [f'<style>{CSS}</style><div class="rd">', headline(len(need), len(close), len(calm)), movers(snaps)]
+    parts = [f'<style>{CSS}{tradelevels.CSS}</style><div class="rd">', headline(len(need), len(close), len(calm)), movers(snaps)]
     if SHOW_MAP:
         parts.append(dot_map(snaps))
     if brief:

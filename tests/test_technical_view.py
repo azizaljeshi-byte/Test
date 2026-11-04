@@ -32,9 +32,9 @@ def test_a_moving_average_read_is_price_above_or_below_and_short_history_is_na()
 def test_oscillator_reads_and_atr_is_not_a_vote():
     ev = tv.evidence(bars(300, drift=1.0))
     names = {r["name"]: r for r in ev["indicators"]}
-    assert len(names) == 12 and names["RSI (14)"]["read"] == "Sell"           # a steady climb is overbought
+    assert len(names) == 13 and names["RSI (14)"]["read"] == "Sell"           # a steady climb is overbought
     total = ev["ind_summary"]["buy"] + ev["ind_summary"]["sell"] + ev["ind_summary"]["neutral"]
-    assert total == 11 and names["ATR (14)"]["read"] in ("Less volatility", "High volatility")
+    assert total == 11 and names["MACD histogram"]["read"] in ("Rising", "Falling", "Flat") and names["ATR (14)"]["read"] in ("Less volatility", "High volatility")
 
 
 def test_too_few_bars_says_so_and_today_is_dropped_while_open():

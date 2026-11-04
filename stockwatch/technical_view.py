@@ -16,7 +16,8 @@ from . import technical as ta
 
 BUY, SELL, NEUTRAL, NA = "Buy", "Sell", "Neutral", "n/a"
 MA_PERIODS = (5, 10, 20, 50, 100, 200)
-CLS = {BUY: "buy", SELL: "sell", NEUTRAL: "neu", NA: "na"}
+CONTEXT_ONLY = ("ATR (14)", "MACD histogram")     # shown, never counted as a Buy or Sell vote
+CLS = {BUY: "buy", SELL: "sell", NEUTRAL: "neu", NA: "na", "Rising": "neu", "Falling": "neu", "Flat": "neu"}
 
 
 def completed(hist: pd.DataFrame, today=None, session_open: bool = False) -> pd.DataFrame:
@@ -105,6 +106,13 @@ def indicators(h: pd.DataFrame) -> list[dict]:
     m, _ = ta.macd(c)
     mv = float(m.iloc[-1])
     add("MACD (12,26)", mv, BUY if mv > 0 else SELL if mv < 0 else NEUTRAL, "above zero Buy, below zero Sell")
+    line, sig = ta.macd(c)
+    hist = line - sig
+    hv, h3 = float(hist.iloc[-1]), float(hist.iloc[-4]) if len(hist) > 4 else float("nan")
+    if hv == hv and h3 == h3:
+        rows.append({"name": "MACD histogram", "value": f"{hv:+.2f} (3 days ago {h3:+.2f})",
+                     "read": "Rising" if hv > h3 else "Falling" if hv < h3 else "Flat",
+                     "rule": "MACD minus its 9-day signal line. Context only, not a vote. Rising: momentum is improving"})
     adx, pdi, mdi = _adx(h)
     add("ADX (14)", adx, (BUY if pdi > mdi else SELL) if adx > 25 else NEUTRAL, "over 25 is a trend: Buy if up-pressure leads, else Sell")
     ll, hh = h["Low"].rolling(14).min(), h["High"].rolling(14).max()
@@ -154,7 +162,7 @@ def evidence(hist: pd.DataFrame, today=None, session_open: bool = False) -> dict
     mas = moving_averages(h)
     inds = indicators(h)
     ma_reads = [r[k] for r in mas for k in ("simple_read", "exp_read")]
-    ind_reads = [r["read"] for r in inds if r["name"] != "ATR (14)"]
+    ind_reads = [r["read"] for r in inds if r["name"] not in CONTEXT_ONLY]
     return {"as_of": str(pd.Timestamp(h.index[-1]).date()), "price": float(h["Close"].iloc[-1]), "pivots": pivots(h), "mas": mas,
             "indicators": inds, "ma_summary": tally(ma_reads), "ind_summary": tally(ind_reads), "overall": tally(ma_reads + ind_reads)}
 
