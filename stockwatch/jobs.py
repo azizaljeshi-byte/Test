@@ -15,7 +15,7 @@ import threading
 from pathlib import Path
 
 log = logging.getLogger("stockwatch.jobs")
-JOBS = {"stab_study": "scripts/stab_study.py", "candle_break_backtest": "scripts/candle_break_backtest.py",
+JOBS = {"stab_study": "scripts/stab_study.py", "reclaim_study": "scripts/reclaim_study.py", "candle_break_backtest": "scripts/candle_break_backtest.py",
         "candidates_outcomes": "scripts/candidates_outcomes.py"}
 _lock = threading.Lock()
 _running = {"p": None}
