@@ -28,7 +28,8 @@ def test_under_line_and_wait_draw_no_entry():
 
 
 def test_unknown_gives_nothing():
-    assert tl.build(None, ZONES, 10) is None and tl.build({"known": False}, ZONES, 10) is None
+    assert tl.build(None, {"known": False}, 10) is None and tl.build({"known": False}, {"known": False}, 10) is None
+    assert tl.build(None, ZONES, 10)["mode"] == "noline"            # levels without an exit line are still drawn, with the reason
     assert tl.build(oc(), ZONES, None) is None and tl.html(None) == ""
 
 
@@ -68,3 +69,11 @@ def test_zone_rows_show_a_grade_badge():
     h = tl.html(tl.build(oc, z, 171.97))
     assert "tl-g-weak" in h and "tl-g-medium" in h and "tl-g-strong" in h and ">WEAK<" in h
     assert h.index("Exit line") < h.index("Resistance 2") < h.index("Resistance 1") < h.index("Price now") < h.index("Support 1")
+
+
+def test_no_exit_line_still_draws_the_levels_and_says_why():
+    z = {"known": True, "resistance": [{"low": 110.0, "high": 111.0, "grade": "LOW", "reasons": []}],
+         "support": [{"low": 90.0, "high": 91.0, "grade": "HIGH", "reasons": []}]}
+    h = tl.html(tl.build({"known": False, "why": "Only 150 daily bars"}, z, 100.0))
+    assert "NO EXIT LINE" in h and "Only 150 daily bars" in h and "Resistance 1" in h and "Support 1" in h
+    assert tl.build(None, {"known": False}, 100.0) is None      # nothing to draw at all

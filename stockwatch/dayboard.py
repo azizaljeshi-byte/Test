@@ -165,6 +165,13 @@ def assess(snap: dict) -> dict:
 
 def _change(snap: dict, w: str) -> str | None:
     lv = (ui.price_status(snap) or {}).get("levels") or {}
+    oc = (snap["payload"].get("technical") or {}).get("one_call") or {}
+    el = oc.get("exit_line") if oc.get("known") else None
+    if el is not None:                       # one number on the whole page: the exit line the ladder shows
+        if w == "ACT":
+            return f"it closes back above {el:.2f}: then hold and wait."
+        if w == "BUY":
+            return f"it closes below {el:.2f}: then don't add."
     if w == "ACT" and lv.get("support_high"):
         return f'it closes back above {lv["support_high"]:.2f}: then hold and wait.'
     if w == "BUY" and lv.get("support_low"):

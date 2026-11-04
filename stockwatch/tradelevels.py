@@ -48,11 +48,19 @@ def atr_of(oc: dict | None) -> float | None:
 def build(oc: dict | None, zones: dict | None, price) -> dict | None:
     """The plan to draw, or None when there is nothing honest to draw (no exit line, no price)."""
     p = _num(price)
-    if not isinstance(oc, dict) or not oc.get("known") or p is None:
+    if p is None:
         return None
-    line = _num(oc.get("exit_line"))
-    if line is None:
-        return None
+    oc = oc if isinstance(oc, dict) else {}
+    line = _num(oc.get("exit_line")) if oc.get("known") else None
+    if line is None:                                   # no exit line: still draw the levels, say why
+        z = zones if isinstance(zones, dict) and zones.get("known") else {}
+        if not (z.get("resistance") or z.get("support")):
+            return None
+        why = str(oc.get("why") or "no exit line saved for this stock yet")
+        return {"call": "", "price": p, "line": None, "atr": None, "mode": "noline", "why": why, "entry": None, "stop": None,
+                "targets": [], "risk": None, "ratios": [],
+                "res": sorted((x for x in (z.get("resistance") or []) if _num(x.get("low")) is not None and x["low"] > p), key=lambda x: x["low"])[:2],
+                "sup": sorted((x for x in (z.get("support") or []) if _num(x.get("high")) is not None and x["high"] < p), key=lambda x: -x["high"])[:2]}
     z = zones if isinstance(zones, dict) and zones.get("known") else {}
     res = sorted((x for x in (z.get("resistance") or []) if _num(x.get("low")) is not None and x["low"] > p), key=lambda x: x["low"])[:2]
     sup = sorted((x for x in (z.get("support") or []) if _num(x.get("high")) is not None and x["high"] < p), key=lambda x: -x["high"])[:2]
@@ -101,9 +109,10 @@ def html(plan: dict | None) -> str:
         chip = f"Profit {i}" if buy and i <= len(plan["targets"]) else ""
         items.append((float(z["high"]), _row("res", _zone_price(z), f"Resistance {i}", sub(z, "low"), chip, _strength(z))))
     items.append((p, _row("now", f"{p:,.2f}", "Price now", "", "Entry" if buy else "")))
-    n_line = swings_away(p, line, atr)
-    stop_sub = (f"{n_line:.1f} swings " + ("below" if p > line else "above")) if n_line is not None else ""
-    items.append((line, _row("stop" if buy else "exit", f"{line:,.2f}", "Exit line", stop_sub, "Stop loss" if buy else "")))
+    if line is not None:
+        n_line = swings_away(p, line, atr)
+        stop_sub = (f"{n_line:.1f} swings " + ("below" if p > line else "above")) if n_line is not None else ""
+        items.append((line, _row("stop" if buy else "exit", f"{line:,.2f}", "Exit line", stop_sub, "Stop loss" if buy else "")))
     for i, z in enumerate(plan["sup"], 1):
         items.append((float(z["low"]), _row("sup", _zone_price(z), f"Support {i}", sub(z, "high"), "", _strength(z))))
     rows = [r for _, r in sorted(items, key=lambda x: -x[0])]
@@ -116,6 +125,9 @@ def html(plan: dict | None) -> str:
                 foot.append("Profit 1 is closer than the risk.")
         else:
             foot.append("No resistance above to use as a target.")
+    elif plan["mode"] == "noline":
+        head = ("NO EXIT LINE", "wait", "No exit line yet: " + plan["why"].rstrip(".") + ". The levels below still apply.")
+        foot = []
     elif plan["mode"] == "under":
         head = ("NO ENTRY NOW", "avoid", f"Under its exit line {line:,.2f}. Would change if it closes back above it.")
         foot = []
