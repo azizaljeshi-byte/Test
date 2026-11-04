@@ -240,3 +240,16 @@ def test_no_trade_is_held_more_than_two_percent_under_its_entry_even_with_a_wide
     book["positions"]["AAA"]["stop"] = 2.76                                                # an older position with the far stop
     quick.step(book, marks, {"AAA": snap(atr=0.44)}, {"AAA": 2.846}, T0 + timedelta(minutes=40))     # -4.5%
     assert book["trades"][0]["status"] == "CLOSED" and "stop hit" in book["trades"][0]["exit_reason"]
+
+
+def test_a_weak_sector_blocks_new_entries_and_a_healthy_or_unread_one_does_not():
+    def sec_snap(chg, sector="Technology"):
+        s = snap(chg=chg)
+        if sector:
+            s["payload"]["profile"] = {"sector": sector}
+        return s
+    names = ["A", "B", "C", "D"]
+    weak = multi(ENTRY, names, lambda t: sec_snap(-0.004))               # under half up, the middle stock down: the sector is weak
+    assert weak["trades"] == [] and any("sector check" in x["reason"] for x in weak["skipped"])
+    assert len(multi(ENTRY, names, lambda t: sec_snap(0.004))["trades"]) >= 1          # healthy sector: trades as before
+    assert len(multi(ENTRY, names, lambda t: sec_snap(-0.004, None))["trades"]) >= 1   # sector unknown: no read, never a block
