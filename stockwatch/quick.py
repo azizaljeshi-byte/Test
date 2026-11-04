@@ -48,7 +48,8 @@ DRY_MIN = 45                   # leaves after this long if the volume has dried 
 DRY_PACE = 0.6
 HOLD_MIN = 10.0                # a bounce counts only after the low has held this long, with two higher lows after it
 BOUNCE_FIRST_MIN = 5           # owner, 4 Nov: bounce entries too start 5 minutes after the open (was 15)
-MAX_NEW, NEW_WINDOW_MIN = 3, 10  # at most this many new entries in any window, so one move cannot fill the account
+OPEN_FREE_MIN = 30                # owner, 4 Nov: in the first 30 minutes after the open Quick takes as many entries as the setups give (the other brakes stay) ...
+MAX_NEW, NEW_WINDOW_MIN = 3, 10  # ... then at most this many new entries in any window, so one move cannot fill the account
 GATE_DOWN_SHARE, GATE_MEDIAN = 0.6, -0.01   # market gate: this share of stocks down and the median at least this far down: no bounces
 GATE_MIN_STOCKS = 20
 MAX_PER_DAY = 40               # new entries in a day: only a runaway guard now (owner, 2 Nov: 15 missed good ones; was 15 after 30 Oct: 68 trades, 9 wins of 53 closed, -$867). The real brakes stay: MAX_NEW per NEW_WINDOW_MIN and the day-loss stop
@@ -379,7 +380,7 @@ def _agent_entry(book: dict, ticker: str, kind: str, why: str, m: dict, price: f
         no = f"no bounce: {gate}"
     elif days is not None and days <= 1:
         no = f"earnings in {days} day{'s' if days != 1 else ''}"
-    elif _new_in_window(book, now) >= MAX_NEW:
+    elif mins >= OPEN_FREE_MIN and _new_in_window(book, now) >= MAX_NEW:
         no = f"pace limit: {MAX_NEW} new entries in the last {NEW_WINDOW_MIN} minutes"
     elif len(book["positions"]) >= MAX_OPEN:
         no = f"already {MAX_OPEN} open"
@@ -482,7 +483,7 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
             _skip(book, ticker, kind, f"no bounce: {gate}", price, now)
         elif g is None:
             _skip(book, ticker, kind, f"no trade: {g_why}", price, now)
-        elif _new_in_window(book, now) >= MAX_NEW:
+        elif mins >= OPEN_FREE_MIN and _new_in_window(book, now) >= MAX_NEW:
             _skip(book, ticker, kind, f"pace limit: {MAX_NEW} new entries in the last {NEW_WINDOW_MIN} minutes", price, now)
         elif days is not None and days <= 1:
             _skip(book, ticker, kind, f"earnings in {days} day{'s' if days != 1 else ''}", price, now)

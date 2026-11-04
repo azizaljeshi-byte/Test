@@ -223,3 +223,10 @@ def test_after_two_percent_it_leaves_soon_after_it_stops_riding():
     quick.step(book, marks, {"AAA": snap()}, {"AAA": round(peak - 0.5, 2)}, last + timedelta(minutes=11))
     t = book["trades"][0]
     assert t["status"] == "CLOSED" and "took the profit" in t["exit_reason"] and t["result"] > 0
+
+
+def test_in_the_first_thirty_minutes_there_is_no_pace_limit():
+    start = datetime(2026, 10, 26, 9, 30, tzinfo=NY)
+    book = multi(ENTRY, ["A", "B", "C", "D"], lambda t: snap(), start=start)       # the turn comes about 18 minutes in
+    assert len(book["trades"]) == 4
+    assert not any("pace limit" in x["reason"] for x in book["skipped"])
