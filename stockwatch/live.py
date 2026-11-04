@@ -199,6 +199,11 @@ class Tracker:
                     except Exception:
                         log.exception("candidates step failed")
                     try:
+                        from . import jobs
+                        jobs.tick()                                            # run-once study jobs, only when data/run_job.txt exists
+                    except Exception:
+                        log.exception("job runner step failed")
+                    try:
                         from . import testlist
                         testlist.tick(store)                                   # the manual test list: breakouts with entry, stop and target, log only
                     except Exception:
