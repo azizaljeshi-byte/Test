@@ -208,7 +208,7 @@ def _sure_html(a: dict) -> str:
         head = (f'<div class="rd-h"><span>How sure are we this is the right move</span><b>{n} of {k} agree</b></div>'
                 f'<div class="rd-dots">{dots}</div>')
     rows = "".join(
-        f'<li class="{"y" if (c["state"] == want or c["state"] == "ok") and a["sure"] else "n"}">{escape(c["text"])}</li>'
+        f'<li class="{("y bad" if want == BEAR else "y") if (c["state"] == want or c["state"] == "ok") and a["sure"] else "n"}">{escape(c["text"])}</li>'
         for c in a["checks"])
     chg = f'<p class="rd-chg">Would change if {escape(a["change"])}</p>' if a["change"] else ""
     return f'<div class="rd-box">{head}<ul class="rd-chk">{rows}</ul>{chg}</div>'
@@ -572,7 +572,7 @@ CSS = """
 .rd-dots{display:flex;gap:4px;margin:7px 0}.rd-dots i{flex:1;height:6px;border-radius:9px;background:var(--dz-line)}.rd-dots .y{background:var(--dz-buy)}
 .rd-chk{list-style:none;margin:0;padding:0;font-size:.82rem}.rd-chk li{padding:3px 0 3px 20px;position:relative}
 .rd-chk li:before{position:absolute;left:0;font-weight:800}.rd-chk .y:before{content:"✓";color:var(--dz-buy)}
-.rd-chk .n:before{content:"–";color:var(--dz-muted)}.rd-chk .n{color:var(--dz-soft)}
+.rd-chk .y.bad:before{content:"!";color:var(--dz-act)}.rd-chk .n:before{content:"–";color:var(--dz-muted)}.rd-chk .n{color:var(--dz-soft)}
 .rd-chg{margin:7px 0 0;font-size:.78rem;color:var(--dz-watch)}
 .rd-now{text-align:center;font-size:.74rem;color:var(--dz-muted);margin:2px 0 8px}
 .rd-go{display:block;text-align:center;margin-top:12px;padding:10px;border-radius:11px;background:var(--dz-ink);color:var(--dz-bg);font-weight:700;text-decoration:none}

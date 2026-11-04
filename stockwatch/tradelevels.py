@@ -96,16 +96,17 @@ def html(plan: dict | None) -> str:
         bits = [_strength(z)] + ([f"{n:.1f} swings"] if n is not None else [])
         return " · ".join(bits)
 
-    rows = []
-    for i, z in reversed(list(enumerate(plan["res"], 1))):
+    items = []          # (price, row): the ladder is sorted by price, so the exit line sits above the price when the price is under it
+    for i, z in enumerate(plan["res"], 1):
         chip = f"Profit {i}" if buy and i <= len(plan["targets"]) else ""
-        rows.append(_row("res", _zone_price(z), f"Resistance {i}", sub(z, "low"), chip))
-    rows.append(_row("now", f"{p:,.2f}", "Price now", "", "Entry" if buy else ""))
+        items.append((float(z["high"]), _row("res", _zone_price(z), f"Resistance {i}", sub(z, "low"), chip)))
+    items.append((p, _row("now", f"{p:,.2f}", "Price now", "", "Entry" if buy else "")))
     n_line = swings_away(p, line, atr)
     stop_sub = (f"{n_line:.1f} swings " + ("below" if p > line else "above")) if n_line is not None else ""
-    rows.append(_row("stop" if buy else "exit", f"{line:,.2f}", "Exit line", stop_sub, "Stop loss" if buy else ""))
+    items.append((line, _row("stop" if buy else "exit", f"{line:,.2f}", "Exit line", stop_sub, "Stop loss" if buy else "")))
     for i, z in enumerate(plan["sup"], 1):
-        rows.append(_row("sup", _zone_price(z), f"Support {i}", sub(z, "high")))
+        items.append((float(z["low"]), _row("sup", _zone_price(z), f"Support {i}", sub(z, "high"))))
+    rows = [r for _, r in sorted(items, key=lambda x: -x[0])]
     if buy:
         head = ("BUY ZONE", "buy", "Close to the exit line and turning up.")
         foot = [f"Risk ${plan['risk']:,.2f} a share ({plan['risk'] / p:.1%})."]
