@@ -193,7 +193,7 @@ def test_the_market_gate_pauses_bounces_when_most_stocks_are_down_and_a_thin_sam
     assert quick.market_gate({t: snap(chg=0.01) for t in fillers}) == ""                # an up market
 
 
-def test_a_stock_trades_once_a_day_the_day_stops_at_a_one_percent_loss_and_entries_are_capped(monkeypatch):
+def test_a_stock_may_trade_again_the_day_stops_at_a_one_percent_loss_and_entries_are_capped(monkeypatch):
     book, marks = run(ENTRY)
     first = book["trades"][0]
     pos = book["positions"]["AAA"]
@@ -201,7 +201,8 @@ def test_a_stock_trades_once_a_day_the_day_stops_at_a_one_percent_loss_and_entri
     quick.step(book, marks, {"AAA": snap()}, {"AAA": first["entry"] - 5.0}, opened + timedelta(minutes=2))          # stopped out
     assert book["trades"][0]["status"] == "CLOSED"
     book2, _ = run(ENTRY + [96.0] * 3, book=book, start=T0 + timedelta(minutes=30))
-    assert len(book["trades"]) == 1 and any("one trade per stock per day" in x["reason"] for x in book["skipped"])
+    assert not any("one trade per stock per day" in x["reason"] for x in book["skipped"])            # re-entry is allowed (owner, 5 Nov)
+    assert all(x.get("nth_today", 2) == 2 for x in book["trades"][1:])
     # the daily loss stop: today's result is under -1% of the account, so another stock does not enter
     book = quick.new_book()
     book["trades"].append({"ticker": "OLD", "opened": "2026-10-26 09:45", "closed": "2026-10-26 09:55", "result": -600.0, "status": "CLOSED"})
@@ -242,14 +243,21 @@ def test_no_trade_is_held_more_than_two_percent_under_its_entry_even_with_a_wide
     assert book["trades"][0]["status"] == "CLOSED" and "stop hit" in book["trades"][0]["exit_reason"]
 
 
-def test_a_weak_sector_blocks_new_entries_and_a_healthy_or_unread_one_does_not():
-    def sec_snap(chg, sector="Technology"):
+def test_a_weak_sector_no_longer_blocks_entries():
+    """Owner, 5 Nov: the sector check is logged at each entry (sectors.stamp) but does not stop a trade, so weak-sector entries can be studied."""
+    def sec_snap(chg):
         s = snap(chg=chg)
-        if sector:
-            s["payload"]["profile"] = {"sector": sector}
+        s["payload"]["profile"] = {"sector": "Technology"}
         return s
-    names = ["A", "B", "C", "D"]
-    weak = multi(ENTRY, names, lambda t: sec_snap(-0.004))               # under half up, the middle stock down: the sector is weak
-    assert weak["trades"] == [] and any("sector check" in x["reason"] for x in weak["skipped"])
-    assert len(multi(ENTRY, names, lambda t: sec_snap(0.004))["trades"]) >= 1          # healthy sector: trades as before
-    assert len(multi(ENTRY, names, lambda t: sec_snap(-0.004, None))["trades"]) >= 1   # sector unknown: no read, never a block
+    book = multi(ENTRY, ["A", "B", "C", "D"], lambda t: sec_snap(-0.004))          # under half up, the middle stock down: the sector is weak
+    assert len(book["trades"]) >= 1 and not any("sector check" in x["reason"] for x in book["skipped"])
+
+
+
+def test_a_re_entry_is_logged_with_how_the_first_try_ended():
+    book = quick.new_book()
+    quick._enter(book, "AAA", "bounce", "first", 100.0, 99.0, 1.0, T0)
+    quick._exit(book, "AAA", 98.0, T0 + timedelta(minutes=30), "stop hit (-2.0%)")
+    t = quick._enter(book, "AAA", "bounce", "second", 99.0, 98.0, 1.0, T0 + timedelta(minutes=50))
+    assert t["nth_today"] == 2 and t["prev_exit"] == "stop hit (-2.0%)" and t["prev_result"] < 0
+    assert "nth_today" not in book["trades"][0]

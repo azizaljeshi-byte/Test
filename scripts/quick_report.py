@@ -95,6 +95,14 @@ def main() -> None:
         now_px = prices.get(t["ticker"])
         after = f"; since the sale the price is {now_px:,.2f}, so keeping it would have made {(now_px - t['exit']) * t['shares']:+,.2f}" if now_px and t.get("exit") else ""
         print(f"  {t['ticker']:<6} {t['kind']} in {str(t['opened'])[:16]} at {t['entry']:,.2f}, sold {str(t['closed'])[:16]} at {t['exit']:,.2f}: {t['result']:+,.2f}{after}. Why it entered: {str(t.get('reason'))[:80]}")
+    again = [t for t in closed if t.get("nth_today")]
+    first = [t for t in closed if not t.get("nth_today")]
+    print(f"\nRE-ENTRIES (same stock bought again the same day: {len(again)} closed; first tries: {len(first)})")
+    for lab, grp in (("first tries", first), ("re-entries", again)):
+        r = [t["result"] for t in grp]
+        print(f"  {lab:<12} {len(grp):>4} trades  wins {pct(len([x for x in r if x > 0]), len(grp)):>4}  total {sum(r):>9,.2f}")
+    for t in sorted(again, key=lambda t: t["result"])[:10]:
+        print(f"  {t['ticker']:<6} try #{t['nth_today']} in {str(t['opened'])[5:16]}: {t['result']:+,.2f} ({str(t.get('exit_reason'))[:40]}); the try before ended {t.get('prev_result') if t.get('prev_result') is not None else '?'} ({str(t.get('prev_exit'))[:40]})")
     print("\nOPEN POSITIONS")
     for tk, p in sorted(book["positions"].items()):
         px = prices.get(tk) or p["entry"]

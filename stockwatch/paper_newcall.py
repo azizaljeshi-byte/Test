@@ -182,6 +182,10 @@ def _open(book: paper.Book, ticker: str, oc: dict, price: float, now: datetime, 
              "reason": f"{oc['call']}: {oc['why']}", "status": "OPEN", "closed": None, "exit": None, "exit_reason": None,
              "result": 0.0, "r": None, "worst": 0.0, "best": 0.0, "risk": round(shares * (price - line), 2), "sold": 0,
              "proceeds": 0.0, "stretched": False, "at_target": None}
+    same = [x for x in book.trades if x["ticker"] == ticker and str(x["opened"])[:10] == trade["opened"][:10]]
+    if same:                                                      # a re-entry (owner, 5 Nov: allowed, but logged so a failed second try can be studied)
+        trade["nth_today"] = len(same) + 1
+        trade["prev_result"], trade["prev_exit"] = same[-1].get("result"), same[-1].get("exit_reason")
     book.next_id += 1
     book.trades.append(trade)
     book.positions[ticker] = {"trade": trade["id"], "shares": shares, "entry": price, "stop": oc["band_line"],

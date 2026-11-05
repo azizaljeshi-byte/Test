@@ -88,6 +88,15 @@ def main() -> None:
     for t in sorted(closed, key=lambda t: t["result"])[:5]:
         print(f"  {t['ticker']:<6} {t['result']:>9,.2f}  {str(t['opened'])[:16]} -> {str(t['closed'])[:16]}  {str(t.get('exit_reason'))[:60]}")
     hand_section(hand, prices)
+    again = [t for t in closed if t.get("nth_today")]
+    first = [t for t in closed if not t.get("nth_today")]
+    print(f"\nRE-ENTRIES (same stock bought again the same day: {len(again)} closed; first tries: {len(first)})")
+    for lab, grp in (("first tries", first), ("re-entries", again)):
+        r = [t["result"] for t in grp]
+        print(f"  {lab:<12} {len(grp):>4} trades  wins {pct(len([x for x in r if x > 0]), len(grp)):>4}  total {sum(r):>9,.2f}")
+    for t in sorted(again, key=lambda t: t["result"])[:10]:
+        print(f"  {t['ticker']:<6} try #{t['nth_today']} in {str(t['opened'])[5:16]}: {t['result']:+,.2f} ({str(t.get('exit_reason'))[:40]}); the try before ended {t.get('prev_result') if t.get('prev_result') is not None else '?'} ({str(t.get('prev_exit'))[:40]})")
+
     top = sorted(res, reverse=True)[:3]
     print(f"\nShare of the total from the 3 best trades: {sum(top):,.2f} of {sum(res):,.2f}")
 

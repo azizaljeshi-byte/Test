@@ -94,18 +94,6 @@ def market_gate(snaps: dict) -> str:
     return ""
 
 
-def sector_block(snap: dict, secs: dict) -> str:
-    """'' or why this stock's sector is too weak to enter (owner, 4 Nov: it bought SPCX and PLTR while the AI names were all down). The sector is
-    unhealthy when under half of its tracked stocks are up and the middle stock is down (sectors.read). Too few stocks, or an unknown sector, is no
-    read and never blocks."""
-    from . import sectors
-    s = sectors.sector_of(snap)
-    r = secs.get(s) if s else None
-    if r and r.get("healthy") is False:
-        return f"sector check: {s} is weak ({r['up_share']:.0%} of {r['names']} stocks up, median {r['median']:+.2f}%)"
-    return ""
-
-
 def _today_trades(book: dict, now: datetime) -> list[dict]:
     day = now.strftime("%Y-%m-%d")
     return [t for t in book["trades"] if str(t["opened"]).startswith(day)]
@@ -301,6 +289,10 @@ def _enter(book: dict, ticker: str, kind: str, why: str, price: float, lo: float
          "size": round(shares * price, 2), "stop0": stop, "reason": why, "status": "OPEN", "closed": None, "exit": None,
          "exit_reason": None, "result": 0.0, "pct": None, "best": 0.0, "worst": 0.0, "atr": round(atr, 4), "minutes": None,
          "grade": grade_, "levels": 1}
+    same = [x for x in book["trades"] if x["ticker"] == ticker and str(x["opened"])[:10] == t["opened"][:10]]
+    if same:                                                      # a re-entry (owner, 5 Nov: allowed, but logged so a failed second try can be studied)
+        t["nth_today"] = len(same) + 1
+        t["prev_result"], t["prev_exit"] = same[-1].get("result"), same[-1].get("exit_reason")
     book["next_id"] += 1
     book.setdefault("entry_times", []).append(now.isoformat())
     book["entry_times"] = book["entry_times"][-50:]
@@ -370,7 +362,7 @@ def _agent_position(book: dict, ticker: str, pos: dict, t: dict, price: float, a
 
 
 def _agent_entry(book: dict, ticker: str, kind: str, why: str, m: dict, price: float, atr: float, mins: float, gate: str, prices: dict,
-                 now: datetime, days, orders: list, results: dict, sblock: str = "") -> dict | None:
+                 now: datetime, days, orders: list, results: dict) -> dict | None:
     """The agent's level 1 order for a stock not held. Every limit still applies. The old rules' setup (`kind`) is only logged as the baseline."""
     o = next((x for x in orders if x["ticker"] == ticker and x["action"] == "BUY_L1"), None)
     if o is None:
@@ -391,8 +383,6 @@ def _agent_entry(book: dict, ticker: str, kind: str, why: str, m: dict, price: f
         no = "no bounce entries in the first 15 minutes"
     elif turning and gate:
         no = f"no bounce: {gate}"
-    elif sblock:
-        no = sblock
     elif days is not None and days <= 1:
         no = f"earnings in {days} day{'s' if days != 1 else ''}"
     elif mins >= OPEN_FREE_MIN and _new_in_window(book, now) >= MAX_NEW:
@@ -424,8 +414,8 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
     results = results if results is not None else {}
     mins = minutes_in(now)
     gate = market_gate(snaps)
-    from . import sectors
-    secs = sectors.read(snaps)
+    by_hand = {t["ticker"] for t in book["trades"] if str(t.get("exit_reason") or "").startswith("owner override")
+               and str(t.get("closed") or "").startswith(now.strftime("%Y-%m-%d"))}
     for ticker, snap in snaps.items():
         price = prices[ticker]
         m = mark(marks, ticker, price, now)
@@ -475,10 +465,9 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
         chg = _num(q.get("live_change"))
         prev = price / (1 + chg) if chg is not None and chg > -0.9 else None
         kind, why = setup(read_chart(m, price, prev, atr))
-        sblock = sector_block(snap, secs)
         if orders is not None:
             t = _agent_entry(book, ticker, kind, why, m, price, atr, mins, gate, prices, now, (p.get("events") or {}).get("days_to_earnings"),
-                             orders, results, sblock)
+                             orders, results)
             if t:
                 done.append({"ticker": ticker, "action": "ENTER", "price": price, "reason": f"agent: {t['reason']}", "time": now.strftime("%H:%M")})
             continue
@@ -492,16 +481,14 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
         days = (p.get("events") or {}).get("days_to_earnings")
         today = _today_trades(book, now)
         lost = day_result(book, prices, now)
-        if any(t["ticker"] == ticker for t in today):
-            _skip(book, ticker, kind, "one trade per stock per day: it already traded today", price, now)
+        if ticker in by_hand:
+            _skip(book, ticker, kind, "you sold it by hand today", price, now)
         elif lost <= -book["start"] * DAY_LOSS_PCT / 100:
             _skip(book, ticker, kind, f"daily loss stop: down ${abs(lost):,.0f} today (limit ${book['start'] * DAY_LOSS_PCT / 100:,.0f})", price, now)
         elif len(today) >= MAX_PER_DAY:
             _skip(book, ticker, kind, f"day limit: {MAX_PER_DAY} entries today", price, now)
         elif kind == "bounce" and gate:
             _skip(book, ticker, kind, f"no bounce: {gate}", price, now)
-        elif sblock:
-            _skip(book, ticker, kind, sblock, price, now)
         elif g is None:
             _skip(book, ticker, kind, f"no trade: {g_why}", price, now)
         elif mins >= OPEN_FREE_MIN and _new_in_window(book, now) >= MAX_NEW:
