@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import extended, testlist, ask_ai, ask_ai_view, candidates, stockhead, rotation, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import crash, extended, testlist, ask_ai, ask_ai_view, candidates, stockhead, rotation, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -720,6 +720,49 @@ def _candidates_block() -> None:
         st.caption("A log only: both accounts still trade any stock they qualify. \"S&P only\" stocks are outside your watchlist: no live data, no earnings check, and neither account can trade them.")
 
 
+def _crash_tap(acct, choice):
+    st.session_state[f"cr_{acct}_confirm"] = None
+    st.session_state[f"cr_{acct}_msg"] = crash.answer(store, acct, choice)["note"]
+
+
+def _crash_ask_stop(acct):
+    st.session_state[f"cr_{acct}_confirm"] = True
+
+
+def _crash_cancel(acct):
+    st.session_state[f"cr_{acct}_confirm"] = None
+
+
+def _crash_banner(acct):
+    """The market-crash flag and the way back (owner, 5 Nov): asks, never decides. Session state and on_click, so the reload keeps the tap."""
+    name = crash.ACCOUNTS[acct]
+    cs = crash.load(store, acct, datetime.now(NY))
+    state = cs["state"]
+    if st.session_state.get(f"cr_{acct}_msg"):
+        st.info(st.session_state[f"cr_{acct}_msg"])
+    if state == "asked":
+        st.error(f"**The market is crashing.** {cs.get('asked_reading', '')}. {name} has paused new entries since {cs['asked_at'][11:16]} New York time. Stop for today?")
+        if st.session_state.get(f"cr_{acct}_confirm"):
+            st.warning(f"Sell every open {name} trade now at the latest price and stop for today? This cannot be undone.")
+            c1, c2 = st.columns(2)
+            c1.button("Yes, sell all and stop", key=f"cr_{acct}_yes", on_click=_crash_tap, args=(acct, "stop"), type="primary", use_container_width=True)
+            c2.button("Cancel", key=f"cr_{acct}_no", on_click=_crash_cancel, args=(acct,), use_container_width=True)
+        else:
+            c1, c2 = st.columns(2)
+            c1.button("Stop for today (sell all)", key=f"cr_{acct}_stop", on_click=_crash_ask_stop, args=(acct,), type="primary", use_container_width=True)
+            c2.button("Keep going", key=f"cr_{acct}_keep", on_click=_crash_tap, args=(acct, "keep"), use_container_width=True)
+    elif state == "reopen_asked":
+        st.success(f"**The market is recovering.** {cs.get('reopen_reading', '')}. {name} is still stopped. Resume trading?")
+        c1, c2 = st.columns(2)
+        c1.button("Resume trading", key=f"cr_{acct}_resume", on_click=_crash_tap, args=(acct, "resume"), type="primary", use_container_width=True)
+        c2.button("Stay stopped", key=f"cr_{acct}_stay", on_click=_crash_tap, args=(acct, "stay"), use_container_width=True)
+    elif state in ("stopped", "stayed"):
+        st.warning(f"{name} is stopped for today. It asks again if the market recovers." if state == "stopped" else f"{name} is stopped for today.")
+        st.button("Sell anything still open", key=f"cr_{acct}_retry", on_click=_crash_tap, args=(acct, "stop"), use_container_width=True)
+    elif state in ("kept", "resumed"):
+        st.caption(f"{name}: you chose to keep trading through the fall." if state == "kept" else f"{name}: trading again after your resume.")
+
+
 def _hand_sell_ask(prefix, ticker):
     st.session_state[f"{prefix}_pending"] = ticker
 
@@ -768,6 +811,7 @@ if view == "paper":
             if px == px and px is not None:
                 npx[t] = float(px)
     _top, _opens, _rest = paper_view.parts(nst, npx)
+    _crash_banner("newcall")
     _open_with_sell_buttons("nc_hand", _top, _opens, _rest, paper_newcall.sell_by_hand)
     def _force_sell():
         st.session_state["nc_force_msg"] = paper_newcall.force_sell_now(store)["note"]
@@ -784,6 +828,7 @@ if view == "quick":
     qst = quick.status(store)
     qpx = quick.prices_of(store, [t["ticker"] for t in qst["book"]["trades"] if t["status"] == "OPEN"])
     _top, _opens, _rest = quick_view.parts(qst, qpx)
+    _crash_banner("quick")
     _open_with_sell_buttons("qk_hand", _top, _opens, _rest, quick.sell_by_hand)
     st.caption("A test account with loose rules, to watch how it behaves. Fills are simulated at the latest price, so they are approximate. Build: quick-1.")
     _candidates_block()

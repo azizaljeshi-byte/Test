@@ -21,7 +21,7 @@ def is_override(t: dict) -> bool:
 
 def sold_tags(t: dict) -> list[tuple[str, str]]:
     r = str(t.get("exit_reason") or "")
-    return [("SOLD BY HAND", "o")] if r.startswith(OVERRIDE) else [("TEST SELL", "n")] if r.startswith(TEST) else []
+    return [("CRASH STOP", "o")] if r.startswith(OVERRIDE) and "market crash stop" in r else [("SOLD BY HAND", "o")] if r.startswith(OVERRIDE) else [("TEST SELL", "n")] if r.startswith(TEST) else []
 
 
 def usd(v, d: int = 2) -> str:

@@ -442,7 +442,7 @@ def _rank_log(book: dict, now: datetime, c: dict, rank: int, n: int, taken: bool
 
 
 def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setups: dict | None = None,
-         orders: list | None = None, results: dict | None = None) -> list[dict]:
+         orders: list | None = None, results: dict | None = None, halt: str = "") -> list[dict]:
     """One cycle for every stock in `snaps` with a price in `prices`. `now` is New York time. Returns what it did.
     `orders` is None for the old rules (they pick the stocks); a list (maybe empty) means the agent picks: entries open only on its
     orders, and the old setups are logged in book["baseline"]. Exits, stops and every limit work the same either way."""
@@ -453,7 +453,7 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
     from . import sectors
     secs = sectors.read(snaps)                                  # for the ranking only: it no longer blocks a trade
     cands: list = []
-    by_hand = {t["ticker"] for t in book["trades"] if str(t.get("exit_reason") or "").startswith("owner override")
+    by_hand = {t["ticker"] for t in book["trades"] if str(t.get("exit_reason") or "").startswith("owner override") and "market crash stop" not in str(t.get("exit_reason"))
                and str(t.get("closed") or "").startswith(now.strftime("%Y-%m-%d"))}
     for ticker, snap in snaps.items():
         price = prices[ticker]
@@ -505,6 +505,8 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
         prev = price / (1 + chg) if chg is not None and chg > -0.9 else None
         chart = read_chart(m, price, prev, atr)
         kind, why = setup(chart)
+        if halt and orders is not None:
+            continue                                             # paused by the market-crash flag: the agent opens nothing
         if orders is not None:
             t = _agent_entry(book, ticker, kind, why, m, price, atr, mins, gate, prices, now, (p.get("events") or {}).get("days_to_earnings"),
                              orders, results)
@@ -527,7 +529,9 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
         ticker, kind, g, price = c["ticker"], c["kind"], c["g"], c["price"]
         today = _today_trades(book, now)
         lost = day_result(book, prices, now)
-        if ticker in by_hand:
+        if halt:
+            no = halt
+        elif ticker in by_hand:
             no = "you sold it by hand today"
         elif lost <= -book["start"] * DAY_LOSS_PCT / 100:
             no = f"daily loss stop: down ${abs(lost):,.0f} today (limit ${book['start'] * DAY_LOSS_PCT / 100:,.0f})"
@@ -596,7 +600,10 @@ def tick(store, now: datetime | None = None, force_session: bool = False) -> dic
     if orders is not None:
         state["note"] = (f"the agent picks: {len(orders)} order(s) ready" if agent.has_key()
                          else "ANTHROPIC_API_KEY is not set: nothing is bought in agent mode")
-    state["did"] = step(book, marks, snaps, prices, now, state["setups"], orders, results)
+    from . import crash
+    halt = crash.check(store, "quick", snaps, now)
+    state["halt"] = halt
+    state["did"] = step(book, marks, snaps, prices, now, state["setups"], orders, results, halt)
     from . import sectors
     sectors.stamp(book["trades"], state["did"], snaps, store)           # log only: what the sector check said at each entry
     agent.settle(store, results, now)
@@ -611,7 +618,7 @@ def tick(store, now: datetime | None = None, force_session: bool = False) -> dic
     return state
 
 
-def sell_by_hand(store, ticker: str, now: datetime | None = None) -> dict:
+def sell_by_hand(store, ticker: str, now: datetime | None = None, label: str = "sold by hand") -> dict:
     """The owner's override (5 Nov): sell one open trade at the latest fresh price because the entry looked like a mistake. It is recorded as
     'owner override', apart from the rules, so the rules' results and the overrides can be studied separately. Quick never re-enters a stock on
     the day it traded, so the stock is not bought back. Runs from the page; needs the regular session and a fresh price."""
@@ -626,10 +633,10 @@ def sell_by_hand(store, ticker: str, now: datetime | None = None) -> dict:
     price, why = paper_live.fresh_price(snap, now) if snap else (None, "no reading for this stock")
     if price is None:
         return {"ok": False, "note": f"No fresh price for {ticker} ({why}), so it was not sold. Try again in a minute."}
-    _exit(book, ticker, price, now, f"owner override: sold by hand at {price:.2f}")
+    _exit(book, ticker, price, now, f"owner override: {label} at {price:.2f}")
     save_book(store, book)
     t = next(x for x in book["trades"] if x["ticker"] == ticker and x["status"] == "CLOSED" and x["closed"] == now.strftime("%Y-%m-%d %H:%M"))
-    return {"ok": True, "note": f"Sold {ticker} by hand at {price:.2f}: {t['result']:+,.2f} ({t['pct']:+.1f}%)."}
+    return {"ok": True, "note": f"Sold {ticker} ({label}) at {price:.2f}: {t['result']:+,.2f} ({t['pct']:+.1f}%)."}
 
 
 def report(book: dict, prices: dict | None = None) -> dict:

@@ -351,7 +351,7 @@ def _agent_entry(book: paper.Book, ticker: str, snap: dict, oc: dict | None, pri
 
 
 def step(book: paper.Book, snaps: dict, prices: dict, now: datetime, force: bool = False, orders: list | None = None,
-         results: dict | None = None) -> list[dict]:
+         results: dict | None = None, halt: str = "") -> list[dict]:
     """`orders` is None for the old rules; a list (maybe empty) means the agent picks the stocks (see quick.step)."""
     done = []
     results = results if results is not None else {}
@@ -359,7 +359,7 @@ def step(book: paper.Book, snaps: dict, prices: dict, now: datetime, force: bool
     late = now.time() >= decision.DECIDE
     gate = quick.market_gate(snaps)                                   # most tracked stocks down and the median down 1% or more
     cands: list = []
-    by_hand = {t["ticker"] for t in book.trades if t["status"] == "CLOSED" and str(t.get("exit_reason") or "").startswith(OVERRIDE)
+    by_hand = {t["ticker"] for t in book.trades if t["status"] == "CLOSED" and str(t.get("exit_reason") or "").startswith(OVERRIDE) and "market crash stop" not in str(t.get("exit_reason"))
                and str(t.get("closed") or "").startswith(now.strftime("%Y-%m-%d"))}
     for ticker, snap in snaps.items():
         price, pos, oc = prices.get(ticker), book.positions.get(ticker), _call_of(snap)
@@ -403,6 +403,9 @@ def step(book: paper.Book, snaps: dict, prices: dict, now: datetime, force: bool
             if reason:
                 paper._sell(book, ticker, price, 1.0, now, reason)
                 done.append({"ticker": ticker, "action": "SELL_ALL", "price": price, "reason": reason, "time": paper._ts(now)})
+        elif halt:                                                    # paused by the market-crash flag: nothing is opened, the reason is logged
+            if orders is None and oc and oc["call"] in ("BUY", "ADD") and mins >= BLACKOUT_MIN and not late and len(book.positions) < MAX_POSITIONS:
+                _hold_back(book, ticker, price, now, f"BUY held back: {halt}")
         elif orders is not None:
             t = _agent_entry(book, ticker, snap, oc, price, now, mins, late, gate, orders, results)
             if t:
@@ -471,7 +474,7 @@ def force_sell_now(store, now: datetime | None = None) -> dict:
     return {"sold": [d["ticker"] for d in did], "note": f"sold {len(did)}" + (f"; no fresh price yet for {', '.join(left)}" if left else "")}
 
 
-def sell_by_hand(store, ticker: str, now: datetime | None = None) -> dict:
+def sell_by_hand(store, ticker: str, now: datetime | None = None, label: str = "sold by hand") -> dict:
     """The owner's override (5 Nov): sell one open trade at the latest fresh price because the entry looked like a mistake. Recorded as
     'owner override', apart from the rules; the stock is not bought back that day (step). Needs the regular session and a fresh price."""
     now = (now or datetime.now(NY)).astimezone(NY)
@@ -485,9 +488,9 @@ def sell_by_hand(store, ticker: str, now: datetime | None = None) -> dict:
     if price is None:
         return {"ok": False, "note": f"No fresh price for {ticker} ({why}), so it was not sold. Try again in a minute."}
     trade = next(t for t in book.trades if t["id"] == book.positions[ticker]["trade"])
-    paper._sell(book, ticker, price, 1.0, now, f"{OVERRIDE}: sold by hand at {price:.2f}")
+    paper._sell(book, ticker, price, 1.0, now, f"{OVERRIDE}: {label} at {price:.2f}")
     store.set_setting(BOOK_KEY, json.dumps(book.to_dict(), default=str))
-    return {"ok": True, "note": f"Sold {ticker} by hand at {price:.2f}: {trade['result']:+,.2f}."}
+    return {"ok": True, "note": f"Sold {ticker} ({label}) at {price:.2f}: {trade['result']:+,.2f}."}
 
 
 def tick(store, now: datetime | None = None, force_session: bool = False) -> dict:
@@ -515,7 +518,10 @@ def tick(store, now: datetime | None = None, force_session: bool = False) -> dic
     if orders is not None:
         state["note"] = (f"the agent picks: {len(orders)} order(s) ready" if agent.has_key()
                          else "ANTHROPIC_API_KEY is not set: nothing is bought in agent mode")
-    state["did"] = step(book, snaps, prices, now, orders=orders, results=results)
+    from . import crash
+    halt = crash.check(store, "newcall", snaps, now)
+    state["halt"] = halt
+    state["did"] = step(book, snaps, prices, now, orders=orders, results=results, halt=halt)
     from . import sectors
     sectors.stamp(book.trades, state["did"], snaps, store)              # log only: what the sector check said at each entry
     agent.settle(store, results, now)
