@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from html import escape
 
-from . import paper
+from . import paper, paper_layout as pl
 
 
 def _usd(v) -> str:
@@ -54,8 +54,6 @@ def html(st: dict, prices: dict | None = None, now: datetime | None = None) -> s
     book: paper.Book = st["book"]
     state = st.get("state") or {}
     rep = paper.report(book, prices or {})
-    day_start = book.start
-    eq = rep["equity"]
     chips = "".join(
         f'<span class="pp-ch{" off" if t in (state.get("skipped") or {}) else ""}" title="{escape((state.get("skipped") or {}).get(t, ""))}">{escape(t)}</span>'
         for t in state.get("tickers", []))
@@ -66,36 +64,28 @@ def html(st: dict, prices: dict | None = None, now: datetime | None = None) -> s
         msg += f'<div class="pp-note">{escape(state["note"])}</div>'
     if st.get("push_error"):
         msg += f'<div class="pp-note bad">The Sheet did not accept the last save: {escape(st["push_error"])}</div>'
+    m = pl.money(book.cash, book.start, book.positions, prices or {})
+    tests = [t for t in book.trades if t["status"] == "CLOSED" and str(t.get("exit_reason") or "").startswith("forced sell")]
     opens = []
     for t in book.trades:
-        if t["status"] != "OPEN":
+        pos = book.positions.get(t["ticker"])
+        if t["status"] != "OPEN" or not pos:
             continue
-        px = (prices or {}).get(t["ticker"])
-        pos = book.positions.get(t["ticker"], {})
-        move = (px / t["entry"] - 1) * 100 if px else None
-        pnl = (px - t["entry"]) * pos.get("shares", t["shares"]) if px else None
-        span = (t["target1"] or t["entry"]) - t["stop"]
-        spot = max(0, min(100, ((px or t["entry"]) - t["stop"]) / span * 100)) if span else 50
-        opens.append(
-            f'<div class="pp-t"><div class="pp-th"><b>{escape(t["ticker"])}</b>{'<span class="pp-tag o">STRETCHING</span> ' if pos.get("stretch") else ""}<span class="pp-tag o">OPEN</span></div>'
-            f'<div class="pp-m">Bought {escape(t["opened"])} · {pos.get("shares", t["shares"])} sh @ {_usd(t["entry"])}</div>'
-            f'<div class="pp-bar"><i style="left:{spot:.0f}%"></i></div>'
-            f'<div class="pp-lb"><span>Stop {_usd(pos.get("stop", t["stop"]))}</span>'
-            f'<span class="{"up" if (pnl or 0) >= 0 else "dn"}"><b>{_signed(pnl)}{"" if move is None else f" · {move:+.1f}%"}</b></span>'
-            f'<span>Target {_usd(t["target1"])}</span></div><div class="pp-why">{escape(t["reason"])}</div></div>')
+        call = str(t["reason"]).split(":")[0].strip()
+        tags = ([(f"{call} CALL", "o")] if call in ("BUY", "ADD") else []) + ([("STRETCHING", "o")] if pos.get("stretch") else [])
+        opens.append(pl.open_card(t, pos, (prices or {}).get(t["ticker"]), tags, now, why=t["reason"]))
     closed = [t for t in reversed(book.trades) if t["status"] == "CLOSED"][:12]
-    rows = "".join(
-        f'<div class="pp-row"><span><b>{escape(t["ticker"])}</b> <span class="pp-tag {"w" if t["result"] > 0 else "l"}">{"WIN" if t["result"] > 0 else "LOSS"}</span><br>'
-        f'<small>{escape(t["exit_reason"] or "")} · {escape(t["closed"] or "")}</small></span>'
-        f'<span class="{"up" if t["result"] > 0 else "dn"}"><b>{_signed(t["result"])} · {_r(t["r"])}</b></span></div>' for t in closed)
+    rows = "".join(pl.closed_row(t, [("TEST SELL", "n")] if str(t.get("exit_reason") or "").startswith("forced sell") else [],
+                                 t["result"] / (t["entry"] * t["shares"]) * 100 if t.get("entry") and t.get("shares") else None,
+                                 f'{t["exit_reason"] or ""} · {_r(t.get("r"))}') for t in closed)
     blocked = "".join(f'<div class="pp-row"><span><b>{escape(b["ticker"])}</b> <small>{escape(b["time"])}</small><br><small>{escape(b["reason"])}</small></span>'
                       f'<span>{_usd(b["price"])}</span></div>' for b in reversed(book.blocked[-8:]))
     sg = rep["stretch_gain"]
     stretch_line = "" if sg is None else f" · versus selling all at the first target: {_signed(sg)}"
     return (f'<style>{CSS}</style><div class="pp"><div class="pp-c"><div class="pp-h">Paper trading</div>'
             f'<div class="pp-m">A fake account follows the rules. Nothing here is real money.</div>{msg}'
-            f'<div class="pp-k pp-k4"><div><small>Account</small><b>{_usd(eq)}</b></div><div><small>Since start</small>'
-            f'<b class="{"up" if eq >= day_start else "dn"}">{_signed(eq - day_start)}</b></div><div><small>Open</small><b>{rep["open"]} trades</b></div>'
+            f'{pl.summary_html(m, rep["closed"] - len(tests), len(tests), sum(t["result"] for t in tests))}'
+            f'<div class="pp-k pp-k2"><div><small>Open</small><b>{rep["open"]} trades</b></div>'
             f'<div><small>Winning · losing</small><b>{wl(rep)[0]} · {wl(rep)[1]}</b><small>{rep["wins"]} won · {rep["closed"] - rep["wins"]} lost</small></div></div>'
             f'<div class="pp-hd">Test list · {len(state.get("tickers", []))} stocks</div><div class="pp-chs">{chips or "<small>" + empty_reason(st) + "</small>"}</div>{skipped}</div>'
             f'<div class="pp-c"><div class="pp-h">Open now</div>{"".join(opens) or "<div class=pp-m>No open trades.</div>"}</div>'
@@ -108,7 +98,7 @@ def html(st: dict, prices: dict | None = None, now: datetime | None = None) -> s
             f'<div class="pp-hd">Buys the entry gates held back</div>{blocked or "<div class=pp-m>None yet.</div>"}</div></div>')
 
 
-CSS = """
+CSS = pl.CSS + """
 .pp-c{background:var(--dz-surface,#121a25);border:1px solid var(--dz-line,#243041);border-radius:16px;padding:14px;margin-bottom:12px;color:var(--dz-ink,#e9eef5)}
 .pp-h{font-size:1.1rem;font-weight:800}.pp-m,.pp-c small{color:var(--dz-muted,#8b95a7);font-size:.74rem}
 .pp-note{margin:8px 0;padding:8px 10px;border-radius:10px;font-size:.78rem;border:1px solid var(--dz-watch,#ffc267);background:color-mix(in srgb,var(--dz-watch,#ffc267) 12%,transparent)}
