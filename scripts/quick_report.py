@@ -29,6 +29,10 @@ def line(t, sectors):
             f"[{sectors.get(t['ticker'], '?')}] {str(t.get('exit_reason'))[:48]}")
 
 
+def is_hand(t) -> bool:
+    return str(t.get("exit_reason") or "").startswith("owner override")
+
+
 def main() -> None:
     from datetime import datetime
     from stockwatch import quick, rotation, sectors
@@ -46,7 +50,8 @@ def main() -> None:
     except Exception as e:
         print(f"(latest prices or sectors not read: {e})")
     trades = book["trades"]
-    closed = [t for t in trades if t.get("status") == "CLOSED"]
+    hand = [t for t in trades if t.get("status") == "CLOSED" and is_hand(t)]
+    closed = [t for t in trades if t.get("status") == "CLOSED" and not is_hand(t)]
     openp = [t for t in trades if t.get("status") != "CLOSED"]
     res = [t["result"] for t in closed]
     wins, losses = [x for x in res if x > 0], [x for x in res if x < 0]
@@ -85,6 +90,11 @@ def main() -> None:
         print(line(t, secof))
     cut = [t for t in closed if t["result"] > 0 and (t.get("best") or 0) - (t.get("pct") or 0) >= 1.5]
     print(f"WINNERS THAT GAVE BACK 1.5% OR MORE OF THEIR PEAK: {len(cut)}, peak minus exit averaging {sum((t.get('best') or 0) - (t.get('pct') or 0) for t in cut) / len(cut) if cut else 0:.1f}%")
+    print(f"\nSOLD BY HAND (owner override: {len(hand)}). Left out of every table above, so the rules are judged on their own.")
+    for t in hand:
+        now_px = prices.get(t["ticker"])
+        after = f"; since the sale the price is {now_px:,.2f}, so keeping it would have made {(now_px - t['exit']) * t['shares']:+,.2f}" if now_px and t.get("exit") else ""
+        print(f"  {t['ticker']:<6} {t['kind']} in {str(t['opened'])[:16]} at {t['entry']:,.2f}, sold {str(t['closed'])[:16]} at {t['exit']:,.2f}: {t['result']:+,.2f}{after}. Why it entered: {str(t.get('reason'))[:80]}")
     print("\nOPEN POSITIONS")
     for tk, p in sorted(book["positions"].items()):
         px = prices.get(tk) or p["entry"]

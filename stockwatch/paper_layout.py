@@ -11,6 +11,19 @@ NY, RIYADH = ZoneInfo("America/New_York"), ZoneInfo("Asia/Riyadh")
 SLOW_MIN = 5                      # in profit and no new high for this long: the move is slowing (display only)
 
 
+OVERRIDE = "owner override"      # exit reason of a trade the owner sold by hand because the entry looked like a mistake
+TEST = "forced sell"             # exit reason of the old test button
+
+
+def is_override(t: dict) -> bool:
+    return str(t.get("exit_reason") or "").startswith(OVERRIDE)
+
+
+def sold_tags(t: dict) -> list[tuple[str, str]]:
+    r = str(t.get("exit_reason") or "")
+    return [("SOLD BY HAND", "o")] if r.startswith(OVERRIDE) else [("TEST SELL", "n")] if r.startswith(TEST) else []
+
+
 def usd(v, d: int = 2) -> str:
     return "—" if v is None else f'{"-" if v < 0 else ""}${abs(v):,.{d}f}'
 

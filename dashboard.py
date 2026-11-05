@@ -720,6 +720,42 @@ def _candidates_block() -> None:
         st.caption("A log only: both accounts still trade any stock they qualify. \"S&P only\" stocks are outside your watchlist: no live data, no earnings check, and neither account can trade them.")
 
 
+def _hand_sell_ask(prefix, ticker):
+    st.session_state[f"{prefix}_pending"] = ticker
+
+
+def _hand_sell_cancel(prefix):
+    st.session_state[f"{prefix}_pending"] = None
+
+
+def _hand_sell_do(prefix, ticker, fn):
+    st.session_state[f"{prefix}_pending"] = None
+    st.session_state[f"{prefix}_msg"] = fn(store, ticker)["note"]
+
+
+def _open_with_sell_buttons(prefix, top, opens, rest, fn):
+    """The account page in pieces: a sell-by-hand button under each open trade, with a confirm step so a stray tap cannot sell. Works on
+    session state and on_click callbacks, so the page's auto-reload does not lose the tap."""
+    st.markdown(f"<style>{paper_view.CSS}</style><div class='pp'>{top}</div>", unsafe_allow_html=True)
+    st.markdown("<div class='pp'><div class='pp-c'><div class='pp-h'>Open now</div><div class='pp-m'>If an entry looks like an obvious mistake, "
+                "sell it by hand under its card. It is kept apart from the rules' results, and the stock is not bought back today.</div></div></div>",
+                unsafe_allow_html=True)
+    if st.session_state.get(f"{prefix}_msg"):
+        st.info(st.session_state[f"{prefix}_msg"])
+    if not opens:
+        st.caption("No open trades.")
+    for ticker, card in opens:
+        st.markdown(f"<div class='pp'><div class='pp-c' style='margin-bottom:4px'>{card}</div></div>", unsafe_allow_html=True)
+        if st.session_state.get(f"{prefix}_pending") == ticker:
+            st.warning(f"Sell {ticker} now at the latest price? This cannot be undone.")
+            c1, c2 = st.columns(2)
+            c1.button(f"Yes, sell {ticker}", key=f"{prefix}_yes_{ticker}", on_click=_hand_sell_do, args=(prefix, ticker, fn), type="primary", use_container_width=True)
+            c2.button("Cancel", key=f"{prefix}_no_{ticker}", on_click=_hand_sell_cancel, args=(prefix,), use_container_width=True)
+        else:
+            st.button(f"Sell {ticker} by hand", key=f"{prefix}_ask_{ticker}", on_click=_hand_sell_ask, args=(prefix, ticker), use_container_width=True)
+    st.markdown(f"<div class='pp'>{rest}</div>", unsafe_allow_html=True)
+
+
 if view == "paper":
     # the main Paper account and the whole-watchlist account were switched off on 30 Oct (owner): their stored history stays in the database
     st.markdown("**New call test account** · the technical-first call on every tracked stock")
@@ -731,7 +767,8 @@ if view == "paper":
             px, _, _live = ui._now(sn)
             if px == px and px is not None:
                 npx[t] = float(px)
-    st.markdown(paper_view.html(nst, npx), unsafe_allow_html=True)
+    _top, _opens, _rest = paper_view.parts(nst, npx)
+    _open_with_sell_buttons("nc_hand", _top, _opens, _rest, paper_newcall.sell_by_hand)
     def _force_sell():
         st.session_state["nc_force_msg"] = paper_newcall.force_sell_now(store)["note"]
     st.button("Force sell all New call trades now (test)", key="nc_force", on_click=_force_sell,
@@ -746,7 +783,8 @@ if view == "paper":
 if view == "quick":
     qst = quick.status(store)
     qpx = quick.prices_of(store, [t["ticker"] for t in qst["book"]["trades"] if t["status"] == "OPEN"])
-    st.markdown(quick_view.html(qst, qpx), unsafe_allow_html=True)
+    _top, _opens, _rest = quick_view.parts(qst, qpx)
+    _open_with_sell_buttons("qk_hand", _top, _opens, _rest, quick.sell_by_hand)
     st.caption("A test account with loose rules, to watch how it behaves. Fills are simulated at the latest price, so they are approximate. Build: quick-1.")
     _candidates_block()
 

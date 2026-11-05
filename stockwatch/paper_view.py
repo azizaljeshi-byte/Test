@@ -50,7 +50,8 @@ def empty_reason(st: dict) -> str:
     return "The list was read but has no rows with Paper = yes (check the Ticker and Paper headers in the Test list tab)."
 
 
-def html(st: dict, prices: dict | None = None, now: datetime | None = None) -> str:
+def parts(st: dict, prices: dict | None = None, now: datetime | None = None) -> tuple[str, list, str]:
+    """(top, [(ticker, card)], rest): the page in pieces, so the dashboard can put a sell button under each open card."""
     book: paper.Book = st["book"]
     state = st.get("state") or {}
     rep = paper.report(book, prices or {})
@@ -73,29 +74,38 @@ def html(st: dict, prices: dict | None = None, now: datetime | None = None) -> s
             continue
         call = str(t["reason"]).split(":")[0].strip()
         tags = ([(f"{call} CALL", "o")] if call in ("BUY", "ADD") else []) + ([("STRETCHING", "o")] if pos.get("stretch") else [])
-        opens.append(pl.open_card(t, pos, (prices or {}).get(t["ticker"]), tags, now, why=t["reason"]))
+        opens.append((t["ticker"], pl.open_card(t, pos, (prices or {}).get(t["ticker"]), tags, now, why=t["reason"])))
     closed = [t for t in reversed(book.trades) if t["status"] == "CLOSED"][:12]
-    rows = "".join(pl.closed_row(t, [("TEST SELL", "n")] if str(t.get("exit_reason") or "").startswith("forced sell") else [],
+    rows = "".join(pl.closed_row(t, pl.sold_tags(t),
                                  t["result"] / (t["entry"] * t["shares"]) * 100 if t.get("entry") and t.get("shares") else None,
                                  f'{t["exit_reason"] or ""} · {_r(t.get("r"))}') for t in closed)
     blocked = "".join(f'<div class="pp-row"><span><b>{escape(b["ticker"])}</b> <small>{escape(b["time"])}</small><br><small>{escape(b["reason"])}</small></span>'
                       f'<span>{_usd(b["price"])}</span></div>' for b in reversed(book.blocked[-8:]))
     sg = rep["stretch_gain"]
     stretch_line = "" if sg is None else f" · versus selling all at the first target: {_signed(sg)}"
-    return (f'<style>{CSS}</style><div class="pp"><div class="pp-c"><div class="pp-h">Paper trading</div>'
+    top = (f'<div class="pp-c"><div class="pp-h">Paper trading</div>'
             f'<div class="pp-m">A fake account follows the rules. Nothing here is real money.</div>{msg}'
             f'{pl.summary_html(m, rep["closed"] - len(tests), len(tests), sum(t["result"] for t in tests))}'
             f'<div class="pp-k pp-k2"><div><small>Open</small><b>{rep["open"]} trades</b></div>'
             f'<div><small>Winning · losing</small><b>{wl(rep)[0]} · {wl(rep)[1]}</b><small>{rep["wins"]} won · {rep["closed"] - rep["wins"]} lost</small></div></div>'
-            f'<div class="pp-hd">Test list · {len(state.get("tickers", []))} stocks</div><div class="pp-chs">{chips or "<small>" + empty_reason(st) + "</small>"}</div>{skipped}</div>'
-            f'<div class="pp-c"><div class="pp-h">Open now</div>{"".join(opens) or "<div class=pp-m>No open trades.</div>"}</div>'
-            f'<div class="pp-c"><div class="pp-h">Closed</div>{rows or "<div class=pp-m>No closed trades yet.</div>"}</div>'
+            f'<div class="pp-hd">Test list · {len(state.get("tickers", []))} stocks</div><div class="pp-chs">{chips or "<small>" + empty_reason(st) + "</small>"}</div>{skipped}</div>')
+    rest = (f'<div class="pp-c"><div class="pp-h">Closed</div>{rows or "<div class=pp-m>No closed trades yet.</div>"}</div>'
             f'<div class="pp-c"><div class="pp-h">Report</div><div class="pp-k2"><div><small>Closed</small><b>{rep["closed"]}</b></div>'
             f'<div><small>Winning</small><b>{wl(rep)[0]}</b><small>{rep["wins"]} trades</small></div><div><small>Losing</small><b>{wl(rep)[1]}</b><small>{rep["closed"] - rep["wins"]} trades</small></div><div><small>Average R</small><b>{_r(rep["avg_r"])}</b></div>'
             f'<div><small>Buys held back</small><b>{rep["blocked"]}</b></div></div>'
             f'<div class="pp-m">Stretched trades: {rep["stretched"]}{stretch_line}</div>'
             f'<div class="pp-v">{escape(rep["verdict"])}</div>'
-            f'<div class="pp-hd">Buys the entry gates held back</div>{blocked or "<div class=pp-m>None yet.</div>"}</div></div>')
+            f'<div class="pp-hd">Buys the entry gates held back</div>{blocked or "<div class=pp-m>None yet.</div>"}</div>')
+    return top, opens, rest
+
+
+def open_html(opens: list) -> str:
+    return '<div class="pp-c"><div class="pp-h">Open now</div>' + ("".join(c for _t, c in opens) or "<div class=pp-m>No open trades.</div>") + '</div>'
+
+
+def html(st: dict, prices: dict | None = None, now: datetime | None = None) -> str:
+    top, opens, rest = parts(st, prices, now)
+    return f'<style>{CSS}</style><div class="pp">{top}{open_html(opens)}{rest}</div>'
 
 
 CSS = pl.CSS + """

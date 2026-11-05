@@ -27,6 +27,21 @@ def is_test(t) -> bool:
     return str(t.get("exit_reason") or "").startswith("forced sell")
 
 
+def is_hand(t) -> bool:
+    return str(t.get("exit_reason") or "").startswith("owner override")
+
+
+def hand_section(hand, prices) -> None:
+    """The entries the owner rejected by hand: what each cost, and what the stock did after (price now against the price it was sold at)."""
+    print(f"\nSOLD BY HAND (owner override: {len(hand)}). Left out of every table above, so the rules are judged on their own.")
+    for t in hand:
+        now_px = prices.get(t["ticker"])
+        after = f"; since the sale the price is {now_px:,.2f}, so keeping it would have made {(now_px - t['exit']) * t['shares']:+,.2f}" if now_px and t.get("exit") else ""
+        print(f"  {t['ticker']:<6} in {str(t['opened'])[:16]} at {t['entry']:,.2f}, sold {str(t['closed'])[:16]} at {t['exit']:,.2f}: {t['result']:+,.2f}{after}")
+    if hand:
+        print(f"  Total {sum(t['result'] for t in hand):+,.2f}. Entry reason of each: " + " | ".join(f"{t['ticker']}: {str(t.get('reason'))[:70]}" for t in hand))
+
+
 def main() -> None:
     from datetime import datetime
     from stockwatch import paper_newcall, rotation
@@ -45,7 +60,8 @@ def main() -> None:
     trades = book.trades
     test = [t for t in trades if t.get("status") == "CLOSED" and is_test(t)]
     print(f"Left out of every table below: {len(test)} 'forced sell (owner test)' trades ({sum(t['result'] for t in test):,.2f}), which test the buttons, not the rules.\n")
-    closed = [t for t in trades if t.get("status") == "CLOSED" and not is_test(t)]
+    hand = [t for t in trades if t.get("status") == "CLOSED" and is_hand(t)]
+    closed = [t for t in trades if t.get("status") == "CLOSED" and not is_test(t) and not is_hand(t)]
     openp = [t for t in trades if t.get("status") != "CLOSED"]
     res = [t["result"] for t in closed]
     wins, losses = [x for x in res if x > 0], [x for x in res if x < 0]
@@ -71,6 +87,7 @@ def main() -> None:
     print("WORST 5")
     for t in sorted(closed, key=lambda t: t["result"])[:5]:
         print(f"  {t['ticker']:<6} {t['result']:>9,.2f}  {str(t['opened'])[:16]} -> {str(t['closed'])[:16]}  {str(t.get('exit_reason'))[:60]}")
+    hand_section(hand, prices)
     top = sorted(res, reverse=True)[:3]
     print(f"\nShare of the total from the 3 best trades: {sum(top):,.2f} of {sum(res):,.2f}")
 

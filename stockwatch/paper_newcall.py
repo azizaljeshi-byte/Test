@@ -26,6 +26,7 @@ from . import decision, paper, paper_live, quick, volpace
 from .data import NY, us_session
 
 BOOK_KEY, STATE_KEY = "paper_newcall_book", "paper_newcall_state"
+OVERRIDE = "owner override"
 MAX_POSITIONS = 10
 SIZE_CAP_PCT = 15.0
 BLACKOUT_MIN = 5          # owner, 4 Nov: start trading 5 minutes after the open (was 60: the first hour)
@@ -354,6 +355,8 @@ def step(book: paper.Book, snaps: dict, prices: dict, now: datetime, force: bool
     late = now.time() >= decision.DECIDE
     gate = quick.market_gate(snaps)                                   # most tracked stocks down and the median down 1% or more
     cands: list = []
+    by_hand = {t["ticker"] for t in book.trades if t["status"] == "CLOSED" and str(t.get("exit_reason") or "").startswith(OVERRIDE)
+               and str(t.get("closed") or "").startswith(now.strftime("%Y-%m-%d"))}
     for ticker, snap in snaps.items():
         price, pos, oc = prices.get(ticker), book.positions.get(ticker), _call_of(snap)
         if not price or mins is None:
@@ -401,6 +404,9 @@ def step(book: paper.Book, snaps: dict, prices: dict, now: datetime, force: bool
             if t:
                 done.append({"ticker": ticker, "action": "ENTER", "price": price, "reason": t["reason"], "time": paper._ts(now)})
         elif oc and oc["call"] in ("BUY", "ADD") and mins >= BLACKOUT_MIN and not late and len(book.positions) < MAX_POSITIONS:
+            if ticker in by_hand:
+                _hold_back(book, ticker, price, now, "BUY held back: you sold it by hand today")
+                continue
             if gate:
                 _hold_back(book, ticker, price, now, f"BUY held back: {gate}")
                 continue
@@ -459,6 +465,25 @@ def force_sell_now(store, now: datetime | None = None) -> dict:
         store.set_setting(BOOK_KEY, json.dumps(book.to_dict(), default=str))
     left = [t for t in book.positions]
     return {"sold": [d["ticker"] for d in did], "note": f"sold {len(did)}" + (f"; no fresh price yet for {', '.join(left)}" if left else "")}
+
+
+def sell_by_hand(store, ticker: str, now: datetime | None = None) -> dict:
+    """The owner's override (5 Nov): sell one open trade at the latest fresh price because the entry looked like a mistake. Recorded as
+    'owner override', apart from the rules; the stock is not bought back that day (step). Needs the regular session and a fresh price."""
+    now = (now or datetime.now(NY)).astimezone(NY)
+    if us_session() != "REGULAR":
+        return {"ok": False, "note": "The market is closed: nothing trades outside the regular session."}
+    book = load_book(store)
+    if ticker not in book.positions:
+        return {"ok": False, "note": f"{ticker} is not open any more."}
+    snap = store.snapshot(ticker)
+    price, why = paper_live.fresh_price(snap, now) if snap else (None, "no reading for this stock")
+    if price is None:
+        return {"ok": False, "note": f"No fresh price for {ticker} ({why}), so it was not sold. Try again in a minute."}
+    trade = next(t for t in book.trades if t["id"] == book.positions[ticker]["trade"])
+    paper._sell(book, ticker, price, 1.0, now, f"{OVERRIDE}: sold by hand at {price:.2f}")
+    store.set_setting(BOOK_KEY, json.dumps(book.to_dict(), default=str))
+    return {"ok": True, "note": f"Sold {ticker} by hand at {price:.2f}: {trade['result']:+,.2f}."}
 
 
 def tick(store, now: datetime | None = None, force_session: bool = False) -> dict:

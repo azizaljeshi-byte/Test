@@ -569,6 +569,27 @@ def tick(store, now: datetime | None = None, force_session: bool = False) -> dic
     return state
 
 
+def sell_by_hand(store, ticker: str, now: datetime | None = None) -> dict:
+    """The owner's override (5 Nov): sell one open trade at the latest fresh price because the entry looked like a mistake. It is recorded as
+    'owner override', apart from the rules, so the rules' results and the overrides can be studied separately. Quick never re-enters a stock on
+    the day it traded, so the stock is not bought back. Runs from the page; needs the regular session and a fresh price."""
+    from . import paper_live
+    now = (now or datetime.now(NY)).astimezone(NY)
+    if us_session() != "REGULAR":
+        return {"ok": False, "note": "The market is closed: nothing trades outside the regular session."}
+    book = load_book(store, migrate=False)
+    if ticker not in book["positions"]:
+        return {"ok": False, "note": f"{ticker} is not open any more."}
+    snap = store.snapshot(ticker)
+    price, why = paper_live.fresh_price(snap, now) if snap else (None, "no reading for this stock")
+    if price is None:
+        return {"ok": False, "note": f"No fresh price for {ticker} ({why}), so it was not sold. Try again in a minute."}
+    _exit(book, ticker, price, now, f"owner override: sold by hand at {price:.2f}")
+    save_book(store, book)
+    t = next(x for x in book["trades"] if x["ticker"] == ticker and x["status"] == "CLOSED" and x["closed"] == now.strftime("%Y-%m-%d %H:%M"))
+    return {"ok": True, "note": f"Sold {ticker} by hand at {price:.2f}: {t['result']:+,.2f} ({t['pct']:+.1f}%)."}
+
+
 def report(book: dict, prices: dict | None = None) -> dict:
     closed = [t for t in book["trades"] if t["status"] == "CLOSED"]
     wins = [t for t in closed if t["result"] > 0]
