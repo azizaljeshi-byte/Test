@@ -103,6 +103,17 @@ def main() -> None:
         print(f"  {lab:<12} {len(grp):>4} trades  wins {pct(len([x for x in r if x > 0]), len(grp)):>4}  total {sum(r):>9,.2f}")
     for t in sorted(again, key=lambda t: t["result"])[:10]:
         print(f"  {t['ticker']:<6} try #{t['nth_today']} in {str(t['opened'])[5:16]}: {t['result']:+,.2f} ({str(t.get('exit_reason'))[:40]}); the try before ended {t.get('prev_result') if t.get('prev_result') is not None else '?'} ({str(t.get('prev_exit'))[:40]})")
+    rk = [x for x in book.get("ranked", []) if x.get("day") == today]
+    print(f"\nRANKING TODAY ({len(rk)} qualifying setups logged; the best-scored is entered first, the limits cut the rest)")
+    for x in sorted(rk, key=lambda x: (x["time"], x["rank"]))[:60]:
+        parts = " ".join(f"{k} {v:+.1f}" for k, v in (x.get("parts") or {}).items())
+        print(f"  {x['time']} #{x['rank']} of {x['of']}  {x['ticker']:<6} {x['kind']:<8} grade {x['grade']} score {x['score']:>5}  {'TAKEN' if x['taken'] else 'passed over: ' + str(x['why_not'])[:60]}  [{parts}]")
+    ranked_trades = [t for t in closed if t.get("rank")]
+    if ranked_trades:
+        print("RESULTS OF TRADES BY THEIR RANK WHEN ENTERED (rank 1 = the best-scored of that moment)")
+        for lab, grp in (("rank 1", [t for t in ranked_trades if t["rank"] == 1]), ("rank 2 or lower", [t for t in ranked_trades if t["rank"] > 1])):
+            r = [t["result"] for t in grp]
+            print(f"  {lab:<16} {len(grp):>4} trades  wins {pct(len([x for x in r if x > 0]), len(grp)):>4}  total {sum(r):>9,.2f}")
     print("\nOPEN POSITIONS")
     for tk, p in sorted(book["positions"].items()):
         px = prices.get(tk) or p["entry"]

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import logging
 import os
 import threading
@@ -405,6 +406,41 @@ def _agent_entry(book: dict, ticker: str, kind: str, why: str, m: dict, price: f
     return t
 
 
+RANK_KEEP = 600
+
+
+def rank_score(kind: str, chart: dict, pace: float | None, tech, sector_healthy, daily_call) -> tuple[float, dict]:
+    """How strong a setup is, so that when several qualify together the best is entered first (owner, 5 Nov: Quick calls good candidates but did
+    not pick the best; it took whichever came first in the watchlist). It never changes what qualifies, only the order. First version, to be
+    judged on the logged outcomes. Parts, each shown in the ranking log:
+      volume   volume against normal for this time (0 to 3)
+      move     a bounce: how far it has turned off the low and how deep the fall was (0 to 2.5); a breakout: how far up on the day (0 to 2)
+      sector   the stock's sector is healthy +1, weak -1, unread 0
+      tech     the stock's technical score (0 to 2)
+      daily    the daily New call agrees (BUY or ADD) +1, disagrees (EXIT or AVOID) -1"""
+    parts = {"volume": round(min(max(pace or 0.0, 0.0), 3.0), 2)}
+    if kind == "bounce":
+        parts["move"] = round(min(chart["off_low"], 1.5) / 1.5 * 1.5 + min(chart["drop"], 2.0) / 2.0, 2)
+    else:
+        parts["move"] = round(min(max(chart["up_day"], 0.0), 2.0), 2)
+    parts["sector"] = 0.0 if sector_healthy is None else (1.0 if sector_healthy else -1.0)
+    parts["tech"] = round(max(0.0, min(tech, 100.0)) / 50, 2) if isinstance(tech, (int, float)) and not isinstance(tech, bool) and tech == tech else 0.0
+    parts["daily"] = 1.0 if daily_call in ("BUY", "ADD") else -1.0 if daily_call in ("EXIT", "AVOID") else 0.0
+    return round(sum(parts.values()), 2), parts
+
+
+def _rank_log(book: dict, now: datetime, c: dict, rank: int, n: int, taken: bool, no: str) -> None:
+    """One line per stock, setup and outcome a day, so the ranked candidates, the one taken and the ones passed over can be studied."""
+    day = now.date().isoformat()
+    key = (day, c["ticker"], c["kind"], taken, re.sub(r"[\d.]+", "#", no))
+    log = book.setdefault("ranked", [])
+    if any((x["day"], x["ticker"], x["kind"], x["taken"], re.sub(r"[\d.]+", "#", x["why_not"])) == key for x in log[-150:]):
+        return
+    log.append({"day": day, "time": now.strftime("%H:%M"), "ticker": c["ticker"], "kind": c["kind"], "grade": c["grade"], "score": c["score"], "rank": rank,
+                "of": n, "taken": taken, "why_not": no, "price": c["price"], "parts": c["parts"]})
+    book["ranked"] = log[-RANK_KEEP:]
+
+
 def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setups: dict | None = None,
          orders: list | None = None, results: dict | None = None) -> list[dict]:
     """One cycle for every stock in `snaps` with a price in `prices`. `now` is New York time. Returns what it did.
@@ -414,6 +450,9 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
     results = results if results is not None else {}
     mins = minutes_in(now)
     gate = market_gate(snaps)
+    from . import sectors
+    secs = sectors.read(snaps)                                  # for the ranking only: it no longer blocks a trade
+    cands: list = []
     by_hand = {t["ticker"] for t in book["trades"] if str(t.get("exit_reason") or "").startswith("owner override")
                and str(t.get("closed") or "").startswith(now.strftime("%Y-%m-%d"))}
     for ticker, snap in snaps.items():
@@ -464,7 +503,8 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
         q = p.get("quote") or {}
         chg = _num(q.get("live_change"))
         prev = price / (1 + chg) if chg is not None and chg > -0.9 else None
-        kind, why = setup(read_chart(m, price, prev, atr))
+        chart = read_chart(m, price, prev, atr)
+        kind, why = setup(chart)
         if orders is not None:
             t = _agent_entry(book, ticker, kind, why, m, price, atr, mins, gate, prices, now, (p.get("events") or {}).get("days_to_earnings"),
                              orders, results)
@@ -478,31 +518,46 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
         if kind == "bounce" and mins < BOUNCE_FIRST_MIN:
             continue                                             # the opening move: not a floor yet
         g, g_why = grade(kind, volpace.pace(snap, mins))
-        days = (p.get("events") or {}).get("days_to_earnings")
+        score, parts = rank_score(kind, chart, volpace.pace(snap, mins), snap.get("technical_score"), (secs.get(sectors.sector_of(snap)) or {}).get("healthy"),
+                                  ((p.get("technical") or {}).get("one_call") or {}).get("call"))
+        cands.append({"ticker": ticker, "kind": kind, "why": why, "g": g, "grade": g, "g_why": g_why, "price": price, "lo": m["lo"], "atr": atr,
+                      "days": (p.get("events") or {}).get("days_to_earnings"), "score": score, "parts": parts})
+    cands.sort(key=lambda c: -c["score"])                        # the best setup first; the limits below then cut the weakest, not the last in the list
+    for rank, c in enumerate(cands, 1):
+        ticker, kind, g, price = c["ticker"], c["kind"], c["g"], c["price"]
         today = _today_trades(book, now)
         lost = day_result(book, prices, now)
         if ticker in by_hand:
-            _skip(book, ticker, kind, "you sold it by hand today", price, now)
+            no = "you sold it by hand today"
         elif lost <= -book["start"] * DAY_LOSS_PCT / 100:
-            _skip(book, ticker, kind, f"daily loss stop: down ${abs(lost):,.0f} today (limit ${book['start'] * DAY_LOSS_PCT / 100:,.0f})", price, now)
+            no = f"daily loss stop: down ${abs(lost):,.0f} today (limit ${book['start'] * DAY_LOSS_PCT / 100:,.0f})"
         elif len(today) >= MAX_PER_DAY:
-            _skip(book, ticker, kind, f"day limit: {MAX_PER_DAY} entries today", price, now)
+            no = f"day limit: {MAX_PER_DAY} entries today"
         elif kind == "bounce" and gate:
-            _skip(book, ticker, kind, f"no bounce: {gate}", price, now)
+            no = f"no bounce: {gate}"
         elif g is None:
-            _skip(book, ticker, kind, f"no trade: {g_why}", price, now)
+            no = f"no trade: {c['g_why']}"
         elif mins >= OPEN_FREE_MIN and _new_in_window(book, now) >= MAX_NEW:
-            _skip(book, ticker, kind, f"pace limit: {MAX_NEW} new entries in the last {NEW_WINDOW_MIN} minutes", price, now)
-        elif days is not None and days <= 1:
-            _skip(book, ticker, kind, f"earnings in {days} day{'s' if days != 1 else ''}", price, now)
+            no = f"pace limit: {MAX_NEW} new entries in the last {NEW_WINDOW_MIN} minutes (ranked #{rank} of {len(cands)})"
+        elif c["days"] is not None and c["days"] <= 1:
+            no = f"earnings in {c['days']} day{'s' if c['days'] != 1 else ''}"
         elif len(book["positions"]) >= MAX_OPEN:
-            _skip(book, ticker, kind, f"already {MAX_OPEN} open", price, now)
+            no = f"already {MAX_OPEN} open"
         else:
-            t = _enter(book, ticker, kind, f"{why}; {g_why}", price, m["lo"], atr, now, SIZE_PCT[g], g)
-            if t:
-                done.append({"ticker": ticker, "action": "ENTER", "price": price, "reason": f"{kind} (grade {g}): {why}; {g_why}", "time": now.strftime("%H:%M")})
-            else:
-                _skip(book, ticker, kind, "not enough cash for a share", price, now)
+            no = ""
+        if no:
+            _skip(book, ticker, kind, no, price, now)
+            _rank_log(book, now, c, rank, len(cands), False, no)
+            continue
+        t = _enter(book, ticker, kind, f"{c['why']}; {c['g_why']}", price, c["lo"], c["atr"], now, SIZE_PCT[g], g)
+        if t:
+            t["rank"], t["of"], t["score"] = rank, len(cands), c["score"]
+            done.append({"ticker": ticker, "action": "ENTER", "price": price, "reason": f"{kind} (grade {g}, ranked #{rank} of {len(cands)}): {c['why']}; {c['g_why']}",
+                         "time": now.strftime("%H:%M")})
+            _rank_log(book, now, c, rank, len(cands), True, "")
+        else:
+            _skip(book, ticker, kind, "not enough cash for a share", price, now)
+            _rank_log(book, now, c, rank, len(cands), False, "not enough cash for a share")
     book["log"] = (book["log"] + done)[-200:]
     return done
 

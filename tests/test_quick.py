@@ -261,3 +261,25 @@ def test_a_re_entry_is_logged_with_how_the_first_try_ended():
     t = quick._enter(book, "AAA", "bounce", "second", 99.0, 98.0, 1.0, T0 + timedelta(minutes=50))
     assert t["nth_today"] == 2 and t["prev_exit"] == "stop hit (-2.0%)" and t["prev_result"] < 0
     assert "nth_today" not in book["trades"][0]
+
+
+def test_the_best_ranked_setup_is_entered_first_not_the_first_in_the_list(monkeypatch):
+    """Owner, 5 Nov: with room for one new entry, the strongest setup takes it, whatever its place in the watchlist."""
+    monkeypatch.setattr(quick, "MAX_NEW", 1)
+    monkeypatch.setattr(quick, "OPEN_FREE_MIN", 0)
+    vols = {"AAA": 190_000.0, "BBB": 230_000.0, "CCC": 480_000.0}              # CCC has by far the strongest volume, and is last in the list
+    book = multi(ENTRY, list(vols), lambda t: snap(vol=vols[t]))
+    assert [t["ticker"] for t in book["trades"]] == ["CCC"]
+    assert book["trades"][0]["rank"] == 1 and book["trades"][0]["of"] == 3
+    log = {x["ticker"]: x for x in book["ranked"]}
+    assert log["CCC"]["taken"] and not log["AAA"]["taken"] and not log["BBB"]["taken"]
+    assert "ranked #" in log["AAA"]["why_not"] and log["CCC"]["score"] > log["BBB"]["score"] > log["AAA"]["score"]
+    assert set(log["CCC"]["parts"]) == {"volume", "move", "sector", "tech", "daily"}
+
+
+def test_rank_parts_reward_a_healthy_sector_and_an_agreeing_daily_call_but_never_block():
+    chart = {"off_low": 0.6, "drop": 0.9, "up_day": 0.0}
+    good, _ = quick.rank_score("bounce", chart, 2.0, 60, True, "BUY")
+    bad, parts = quick.rank_score("bounce", chart, 2.0, 60, False, "EXIT")
+    assert good - bad == 4.0 and parts["sector"] == -1.0 and parts["daily"] == -1.0
+    assert quick.rank_score("bounce", chart, None, None, None, None)[0] > 0            # unknown parts count as zero, never an error
