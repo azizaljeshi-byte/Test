@@ -307,6 +307,45 @@ def add_size(book: dict, price: float, oc: dict, held: bool, snap: dict, prices:
     return sh if sh * price >= MIN_ADD_USD else 0.0
 
 
+# ---------------------------------------------------------------- suggested adds (display only)
+
+SUGGEST_MAX = 8
+
+
+def suggestions(book: dict, snaps: dict, prices: dict) -> list[dict]:
+    """Stocks the account does NOT hold that pass the quality tests (fundamentals, undervalued, risk), with the right entry point. Display only: buying
+    is still done by the add rules or by the owner's Approve on a pick. State: 'zone' (price inside the entry zone, call BUY/ADD), 'price' (above
+    the zone: wait for it to come down), 'turn' (the call or chart is not there yet: wait for a turn), 'not yet' never shown."""
+    out = []
+    for t, snap in snaps.items():
+        price = prices.get(t)
+        if not price or t in book["positions"]:
+            continue
+        fs = _num(snap.get("fundamental_score"))
+        if fs is None or fs < FUND_NEW:
+            continue
+        ok, why = undervalued(snap, price)
+        oc = _call_of(snap) or {}
+        if not ok or (oc.get("risk") or {}).get("grade") in ("High", "Extreme"):
+            continue
+        plan = (snap.get("payload") or {}).get("plan") or {}
+        lo, hi, stop = _num(plan.get("entry_low")), _num(plan.get("entry_high")), _num(plan.get("stop"))
+        tg = ((plan.get("targets") or [{}])[0] or {}).get("price")
+        line = _num(oc.get("exit_line"))
+        turned = oc.get("call") in ("BUY", "ADD") and not weak_reason(snap) and (line is None or price > line)
+        if lo and hi and price > hi * 1.005:
+            state, note = "price", f"Wait for the price: buy between {lo:.2f} and {hi:.2f}"
+        elif not turned:
+            state, note = "turn", ("Wait for the turn: it needs a close back above " + f"{line:.2f}" if line and price <= line else "Wait for the turn: the call is "
+                                   + str(oc.get("call", "unknown")))
+        else:
+            state, note = "zone", "In the buy zone, the call is " + str(oc.get("call"))
+        out.append({"ticker": t, "state": state, "note": note, "price": price, "zone": [lo, hi] if lo and hi else None, "stop": stop, "target": _num(tg),
+                    "fund": fs, "why": why, "order": {"zone": 0, "price": 1, "turn": 2}[state] * 1000 - fs})
+    out.sort(key=lambda r: r["order"])
+    return out[:SUGGEST_MAX]
+
+
 # ---------------------------------------------------------------- doing things
 
 def _sell(book: dict, ticker: str, n: float, price: float, now: datetime, action: str, why: str) -> dict:
@@ -656,6 +695,10 @@ def tick(store, now: datetime | None = None, force_session: bool = False) -> dic
             continue
         snaps[t], prices[t] = s, price
     state["watching"] = len(snaps)
+    try:
+        state["suggested"] = suggestions(book, snaps, prices)
+    except Exception:
+        log.exception("portfolio suggestions failed")
     gate = quick.market_gate(snaps)
     state["gate"] = gate
     before = json.dumps(book, default=str, sort_keys=True)

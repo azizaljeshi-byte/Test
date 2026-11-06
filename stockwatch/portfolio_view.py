@@ -104,8 +104,16 @@ def parts(st: dict, prices: dict | None = None, now=None) -> tuple[str, list, st
     rules = (f'<div class="pp-m">Trim: the call is EXIT or AVOID and the chart is weak, checked at 15:45 New York, 25% then 25% again, never below half of the most '
              f'it held. Add: fundamentals {portfolio.FUND_ADD:.0f}+, fair value {portfolio.FAIR_UP * 100:.0f}% above the price and the analyst '
              f'target {portfolio.ANALYST_UP * 100:.0f}% above, the call BUY or ADD, risk not High, no earnings in {portfolio.EARN_DAYS} days, turning up with normal volume, '
-             f'the market gate open. About {portfolio.RISK_PCT:g}% at risk per add, at most {portfolio.MAX_ADDS_DAY} adds a day. First version: it will be adjusted as it runs.</div>')
-    rest = (f'<div class="pp-c"><div class="pp-h">What it did</div>{_actions(book)}</div>'
+             f'the market gate open. About {portfolio.RISK_PCT:g}% at risk per add, at most {portfolio.MAX_ADDS_DAY} adds a day. Your picks (KEEP or PICK in the Notes): half is core and never sold by it; trims are proposed to you, the buy-back after an approved trim is automatic. First version: it will be adjusted as it runs.</div>')
+    sug = ""
+    for r in state.get("suggested") or []:
+        z = f'buy {r["zone"][0]:.2f} to {r["zone"][1]:.2f}' if r.get("zone") else "no entry zone"
+        extra = (f' · stop {r["stop"]:.2f}' if r.get("stop") else "") + (f' · first target {r["target"]:.2f}' if r.get("target") else "")
+        sug += (f'<div class="pp-row"><span><b>{link(r["ticker"])}</b> <small>{pl.usd(r["price"])} · fundamentals {r["fund"]:.0f}</small><br>'
+                f'<small>{escape(r["note"])} ({z}{extra})</small></span></div>')
+    sug = (f'<div class="pp-c"><div class="pp-h">Suggested adds</div><div class="pp-m">Stocks you do not hold, with strong fundamentals and a price under fair value. '
+           f'Tap one to open it. For a stock you want anyway, flag it PICK in your Sheet.</div>{sug or "<div class=pp-m>None right now.</div>"}</div>')
+    rest = (f'{sug}<div class="pp-c"><div class="pp-h">What it did</div>{_actions(book)}</div>'
             f'<div class="pp-c"><div class="pp-h">Adds it held back</div>{held or "<div class=pp-m>None yet.</div>"}</div>'
             f'<div class="pp-c"><div class="pp-h">Rules</div>{rules}</div>')
     return top, opens, rest

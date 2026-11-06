@@ -354,3 +354,15 @@ def test_an_old_book_without_the_pick_keys_still_loads():
     store.s[portfolio.BOOK_KEY] = json.dumps({"cash": 1.0, "start": 1.0, "positions": {}, "actions": [], "blocked": [], "proposals": {}})
     b = portfolio.load_book(store)
     assert b["picks"] == {} and b["rebuys"] == {} and b["pick_props"] == {}
+
+
+def test_suggested_adds_show_the_entry_state_for_stocks_not_held():
+    b = book_with(AAA=(10.0, 50.0))
+    far = snap("FAR", price=100.0); far["payload"]["plan"] = {"entry_low": 90.0, "entry_high": 95.0, "stop": 85.0, "targets": [{"price": 120.0}]}
+    here = snap("HERE", price=100.0); here["payload"]["plan"] = {"entry_low": 98.0, "entry_high": 102.0, "stop": 92.0, "targets": [{"price": 115.0}]}
+    wait = snap("WAIT", call="AVOID", chart="breakdown", mom="falling", price=100.0, line=104.0)
+    cheap = snap("PRICEY", price=100.0, fair=0.0)
+    sn = {"FAR": far, "HERE": here, "WAIT": wait, "PRICEY": cheap, "AAA": snap("AAA")}
+    out = {r["ticker"]: r for r in portfolio.suggestions(b, sn, {t: 100.0 for t in sn})}
+    assert out["FAR"]["state"] == "price" and out["HERE"]["state"] == "zone" and out["WAIT"]["state"] == "turn"
+    assert "PRICEY" not in out and "AAA" not in out
