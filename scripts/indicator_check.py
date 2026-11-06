@@ -29,7 +29,6 @@ def report(h: pd.DataFrame, ticker: str) -> str:
 
 if __name__ == "__main__":
     t = (sys.argv[1] if len(sys.argv) > 1 else "CRM").upper()
-    peek = data.peek_history(t) if hasattr(data, "peek_history") else None
-    text = report(peek if peek is not None else data.history(t), t)
+    text = report(data.get_provider("yahoo").history(t), t)
     Path(__file__).resolve().parents[1].joinpath("data", "indicator_check.txt").write_text(text, encoding="utf-8")
     print(text)
