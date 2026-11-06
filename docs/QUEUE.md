@@ -9,7 +9,7 @@ Kept by Claude for the owner. Nothing here is changed until the date shown. No s
 | Thu 29 Oct, 05:00 | Deploy staged fixes (held-back count, lighter sweep). Cards show only two calls: Quick and New call. Old calls hidden, not deleted. One restart before the 16:30 open. Also hide the old Trade plan card (owner, 28 Oct: it shows a stop above the price and an entry 60% away, so it makes no sense). Also Quick: $50,000 account (top up the existing one, keep its trades) and more open positions (proposed: 5% of the account per trade, up to 15 open). |
 | Thu 29 Oct, 05:30 | Indicator check against Investing.com daily (GOOG): Stochastic, CCI, ADX, Highs/Lows. Report which formula matches. Ask before switching. |
 | Fri 30 Oct, 23:30 | Review of the New call paper account (trades, win rate, held-back buys, band vs hard line, stale quotes). |
-| Fri 6 Nov, 10:00 | Start item 34: the Portfolio tab (design note first, owner confirms thresholds, build Sat to Sun, deploy Sunday, ready before Monday's open). |
+| Fri 6 Nov, 10:00 | Item 34 (Portfolio tab): design confirmed by the owner, built and tested the same day (docs/PORTFOLIO_DESIGN.md). Deploy while the market is closed, then adjust thresholds as it runs. |
 | After item 34 | Item 33: Quick scans the whole market and ranks (was Sat 7 Nov). |
 
 ## Rules for the test until Friday

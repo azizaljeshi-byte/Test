@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import crash, extended, testlist, ask_ai, ask_ai_view, candidates, stockhead, rotation, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import crash, portfolio as portfolio_acct, portfolio_view, extended, testlist, ask_ai, ask_ai_view, candidates, stockhead, rotation, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -241,7 +241,7 @@ controls()
 # ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
 # Turbo and the Briefing are switched off (owner, 30 Oct): not on the tab bar and their addresses open the Radar. Their code is kept.
 VIEWS = {"radar": "◉ Radar", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log",
-         "fleet": "+ Fleet", "research": "⚗ Research", "paper": "◈ Paper", "quick": "⏱ Quick", "ai": "✧ Ask the AI", "rotate": "↻ Rotate", "ext": "☾ Extended", "tests": "☑ Test list"}
+         "fleet": "+ Fleet", "research": "⚗ Research", "paper": "◈ Paper", "quick": "⏱ Quick", "portfolio": "▣ Portfolio", "ai": "✧ Ask the AI", "rotate": "↻ Rotate", "ext": "☾ Extended", "tests": "☑ Test list"}
 HIDDEN_VIEWS = ("fleet", "research")          # off the tab bar for now (owner); both still open at ?view=fleet and ?view=research
 SHOWN_VIEWS = [v for v in VIEWS if v not in HIDDEN_VIEWS]
 current = st.query_params.get("view", "radar")
@@ -763,6 +763,33 @@ def _crash_banner(acct):
         st.caption(f"{name}: you chose to keep trading through the fall." if state == "kept" else f"{name}: trading again after your resume.")
 
 
+def _pf_sell_ok(ticker, fn):
+    st.session_state["pf_prop_pending"] = None
+    st.session_state["pf_msg"] = fn(store, ticker)["note"]
+
+
+def _pf_ask(ticker):
+    st.session_state["pf_prop_pending"] = ticker
+
+
+def _pf_cancel():
+    st.session_state["pf_prop_pending"] = None
+
+
+def _pf_keep(ticker):
+    st.session_state["pf_msg"] = portfolio_acct.keep_it(store, ticker)["note"]
+
+
+def _pf_reseed(step):
+    if step == "ask":
+        st.session_state["pf_reseed"] = True
+    elif step == "cancel":
+        st.session_state["pf_reseed"] = None
+    else:
+        st.session_state["pf_reseed"] = None
+        st.session_state["pf_msg"] = portfolio_acct.seed(store)["note"]
+
+
 def _hand_sell_ask(prefix, ticker):
     st.session_state[f"{prefix}_pending"] = ticker
 
@@ -776,12 +803,12 @@ def _hand_sell_do(prefix, ticker, fn):
     st.session_state[f"{prefix}_msg"] = fn(store, ticker)["note"]
 
 
-def _open_with_sell_buttons(prefix, top, opens, rest, fn):
+def _open_with_sell_buttons(prefix, top, opens, rest, fn, intro=None, css=None):
     """The account page in pieces: a sell-by-hand button under each open trade, with a confirm step so a stray tap cannot sell. Works on
     session state and on_click callbacks, so the page's auto-reload does not lose the tap."""
-    st.markdown(f"<style>{paper_view.CSS}</style><div class='pp'>{top}</div>", unsafe_allow_html=True)
-    st.markdown("<div class='pp'><div class='pp-c'><div class='pp-h'>Open now</div><div class='pp-m'>If an entry looks like an obvious mistake, "
-                "sell it by hand under its card. It is kept apart from the rules' results, and the stock is not bought back today.</div></div></div>",
+    st.markdown(f"<style>{css or paper_view.CSS}</style><div class='pp'>{top}</div>", unsafe_allow_html=True)
+    st.markdown("<div class='pp'><div class='pp-c'><div class='pp-h'>Open now</div><div class='pp-m'>" + (intro or "If an entry looks like an obvious mistake, "
+                "sell it by hand under its card. It is kept apart from the rules' results, and the stock is not bought back today.") + "</div></div></div>",
                 unsafe_allow_html=True)
     if st.session_state.get(f"{prefix}_msg"):
         st.info(st.session_state[f"{prefix}_msg"])
@@ -823,6 +850,37 @@ if view == "paper":
     with st.expander("Why stocks are not bought · all tracked stocks"):
         st.markdown(whynot.html(whynot.study(store.latest_snapshots())), unsafe_allow_html=True)
     _candidates_block()
+
+if view == "portfolio":
+    pst = portfolio_acct.status(store)
+    ppx = portfolio_acct.prices_of(store, list(pst["book"]["positions"]))
+    _now_ny = datetime.now(NY)
+    _top, _opens, _rest = portfolio_view.parts(pst, ppx, _now_ny)
+    if st.session_state.get("pf_msg"):
+        st.info(st.session_state["pf_msg"])
+    st.markdown(f"<style>{portfolio_view.CSS}</style><div class='pp'>{_top}</div>", unsafe_allow_html=True)
+    for _t, _p in pst["book"]["proposals"].items():
+        st.markdown(f"<div class='pp'><div class='pf-prop'><b>{portfolio_view.link(_t)}: sell the rest?</b><br><small>{portfolio_view.escape(_p['why'])}. "
+                    f"It stays until you answer.</small></div></div>", unsafe_allow_html=True)
+        if st.session_state.get("pf_prop_pending") == _t:
+            st.warning(f"Sell all of {_t} now at the latest price? This cannot be undone.")
+            _c1, _c2 = st.columns(2)
+            _c1.button(f"Yes, sell {_t}", key=f"pf_yes_{_t}", on_click=_pf_sell_ok, args=(_t, portfolio_acct.sell_by_hand), type="primary", use_container_width=True)
+            _c2.button("Cancel", key=f"pf_no_{_t}", on_click=_pf_cancel, use_container_width=True)
+        else:
+            _c1, _c2 = st.columns(2)
+            _c1.button(f"Sell the rest of {_t}", key=f"pf_sell_{_t}", on_click=_pf_ask, args=(_t,), type="primary", use_container_width=True)
+            _c2.button("Keep it", key=f"pf_keep_{_t}", on_click=_pf_keep, args=(_t,), use_container_width=True)
+    _open_with_sell_buttons("pf_hand", "", _opens, _rest, portfolio_acct.sell_by_hand, css=portfolio_view.CSS,
+                            intro="Each card is one of your holdings. The account never sells one to zero by itself; if you want out, tap the button under it.")
+    if st.session_state.get("pf_reseed"):
+        st.warning("Read your holdings from the Sheet again and restart the fake account? Everything it did so far is cleared.")
+        _c1, _c2 = st.columns(2)
+        _c1.button("Yes, restart from the Sheet", key="pf_re_yes", on_click=_pf_reseed, args=("do",), type="primary", use_container_width=True)
+        _c2.button("Cancel", key="pf_re_no", on_click=_pf_reseed, args=("cancel",), use_container_width=True)
+    else:
+        st.button("Restart from my Sheet (after I change my holdings)", key="pf_re_ask", on_click=_pf_reseed, args=("ask",), use_container_width=True)
+    st.caption("A fake account built from the holdings in your Sheet, at your cost, with a 10% cash reserve. Fills are simulated at the latest price, so they are approximate. Build: portfolio-1.")
 
 if view == "quick":
     qst = quick.status(store)

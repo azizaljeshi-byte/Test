@@ -69,7 +69,7 @@ def money(cash: float, start: float, positions: dict, prices: dict) -> dict:
             "profit": worth - start, "start": start, "n": len(positions), "cost_priced": sum(p["shares"] * p["entry"] for p in priced.values())}
 
 
-def summary_html(m: dict, closed: int, tests: int = 0, test_sum: float = 0.0) -> str:
+def summary_html(m: dict, closed: int, tests: int = 0, test_sum: float = 0.0, closed_label: str = "closed trades") -> str:
     pct = lambda a, b: "" if not b else f'{"+" if a >= 0 else "−"}{abs(a / b * 100):.2f}%'      # noqa: E731
     note = f'<small>includes {signed(test_sum)} from {tests} button test{"s" if tests != 1 else ""}</small>' if tests else ""
     miss = f'<small>{m["unpriced"]} open without a price now, left out</small>' if m["unpriced"] else "<small>open positions, right now</small>"
@@ -77,7 +77,7 @@ def summary_html(m: dict, closed: int, tests: int = 0, test_sum: float = 0.0) ->
             f'<div><small>Total profit</small><b class="{_cls(m["profit"])}">{signed(m["profit"])}</b><small>{pct(m["profit"], m["start"])} since {usd(m["start"], 0)}</small></div></div>'
             f'<div class="pl-k"><div><small>Cash at hand</small><b>{usd(m["cash"])}</b><small>{m["cash"] / m["total"] * 100:.0f}% of the account</small></div>'
             f'<div><small>Cash used</small><b>{usd(m["used"])}</b><small>{m["n"]} open position{"s" if m["n"] != 1 else ""}, at cost</small></div>'
-            f'<div><small>Realized profit</small><b class="{_cls(m["realized"])}">{signed(m["realized"])}</b><small>{closed} closed trades{"<br>" if note else ""}</small>{note}</div>'
+            f'<div><small>Realized profit</small><b class="{_cls(m["realized"])}">{signed(m["realized"])}</b><small>{closed} {closed_label}{"<br>" if note else ""}</small>{note}</div>'
             f'<div><small>Unrealized profit</small><b class="{_cls(m["unreal"])}">{signed(m["unreal"])}</b>{miss}</div></div>')
 
 

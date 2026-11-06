@@ -194,6 +194,11 @@ class Tracker:
                     except Exception:
                         log.exception("quick trading step failed")
                     try:
+                        from . import portfolio
+                        portfolio.tick(store)                                  # the Portfolio tab's fake account, built from the owner's holdings
+                    except Exception:
+                        log.exception("portfolio step failed")
+                    try:
                         from . import candidates
                         candidates.tick(store)                                 # the shared list of stocks worth watching, and what each account did with them
                     except Exception:
