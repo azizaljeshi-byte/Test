@@ -15,7 +15,7 @@ CSS = PAPER_CSS + """
 """
 
 ACTION_WORDS = {"TRIM": ("TRIMMED", "o"), "SIZE DOWN": ("SIZED DOWN", "o"), "ADD": ("ADDED", "p"), "NEW NAME": ("NEW NAME", "p"),
-                "PROPOSE EXIT": ("PROPOSAL", "l"), "SELL ALL": ("SOLD", "l"), "KEPT": ("KEPT", "n"), "SEED": ("STARTED", "n"), "CASH": ("CASH SET", "n"),
+                "PROPOSE EXIT": ("PROPOSAL", "l"), "SELL ALL": ("SOLD", "l"), "KEPT": ("KEPT", "n"), "SEED": ("STARTED", "n"), "CASH": ("CASH SET", "n"), "HARD STOP": ("STOP HIT", "l"), "PROFIT EXIT": ("PROFIT EXIT", "p"),
                 "PROPOSAL WITHDRAWN": ("WITHDRAWN", "n"),
                 "PROPOSE TRIM": ("PROPOSAL", "l"), "PROPOSE STARTER": ("PROPOSAL", "l"), "PROPOSE DIP": ("PROPOSAL", "l"), "DIP ADD": ("ADDED", "p"), "STARTER": ("STARTER", "p"), "REBUY": ("BOUGHT BACK", "p"),
                 "REMINDER": ("STILL FALLING", "o"), "SKIPPED": ("SKIPPED", "n"), "REBUY DROPPED": ("DROPPED", "n")}
@@ -42,9 +42,20 @@ def card(ticker: str, pos: dict, px, tags: list, proposal: dict | None, share: f
         sub.append(f'<span>core {pos["core"]:g} (never sold by it) · trading {max(0.0, shares - pos["core"]):g}</span>')
     if pos.get("trims"):
         sub.append(f'<span>trimmed {pos["trims"]}×</span>')
+    lines = []
+    if pos.get("stop"):
+        gap = (px / pos["stop"] - 1) * 100 if px else None
+        lock = " · break-even or better" if pos["stop"] >= pos["entry"] else ""
+        lines.append(f'<span>Hard stop {pl.usd(pos["stop"])}{lock}' + (f' · {gap:.1f}% away' if gap is not None else "") + '</span>')
+    if pos.get("target"):
+        lines.append(f'<span>Profit exit {pl.usd(pos["target"])} (resistance)</span>')
+    elif pos.get("stop") and px and px > pos["entry"]:
+        lines.append('<span>No resistance read above: only the stop</span>')
+    broker = ('<span class="pl-tag p">BROKER STOP SET</span>' if pos.get("broker_stop") else '<span class="pl-tag l">NO BROKER STOP</span>') if pos.get("stop") else ""
+    sub += lines
     why = f'<div class="pl-why">Proposed: sell the rest. {escape(proposal["why"])}</div>' if proposal else ""
     return (f'<div class="pl-t"><div class="pl-th"><b>{link(ticker)}</b><span class="pl-tag {k}">{word}</span></div>'
-            f'<div class="pl-tags">{chips}</div>'
+            f'<div class="pl-tags">{chips}{broker}</div>'
             f'<div class="pl-g"><div><small>Shares</small><b>{shares:g}</b></div><div><small>Average cost</small><b>{pl.usd(entry)}</b></div>'
             f'<div><small>Price now</small><b>{pl.usd(px)}</b></div><div><small>Amount</small><b>{pl.usd(shares * entry, 0)}</b></div></div>'
             f'<div class="pl-res"><span>{verb}</span><b class="{pl._cls(pnl)}">{fig}</b></div>'
@@ -80,11 +91,18 @@ def parts(st: dict, prices: dict | None = None, now=None) -> tuple[str, list, st
     top = (f'<div class="pp-c"><div class="pp-h">Portfolio</div>'
            f'<div class="pp-m">A fake account that mirrors the stocks you hold, at your cost, and manages them carefully. It trims poor positions in steps, '
            f'sizes down big ones and adds only to undervalued stocks with very strong fundamentals. It never sells one to zero without your yes. '
-           f'Stocks you flag KEEP or PICK in the Notes column are yours: half is a core it never sells, the other half is traded only when you tap Approve. '
+           f'Stocks you flag KEEP or PICK in the Notes column are yours: half is a core that trims never touch, the other half is traded only when you tap Approve; only the hard stop or your own tap sells the core. '
            f'Nothing here is real money.</div>{msg}'
            f'{pl.summary_html(m, sales, closed_label="trim or sale" if sales == 1 else "trims and sales")}'
            f'<div class="pp-m" style="margin-top:8px">Started {pl.riyadh(book["seeded"])} Riyadh time · {today} · '
            f'{"adds paused: " + escape(gate) if gate else "adds allowed"} · watching {state.get("watching", 0)} stocks.</div></div>')
+    ss = portfolio.stop_summary(book)
+    if ss["total"]:
+        top += (f'<div class="pp-c"><div class="pp-h">Hard stops</div><div class="pp-m">Every position has a hard stop and sells all when the price touches it. '
+                f'In profit the stop sits at your cost or higher, so a winner cannot turn into a loss, and the stock sells at its resistance. '
+                f'<b>Broker stops set: {ss["set"]} of {ss["total"]}.</b>'
+                + (f' Not set: {", ".join(link(t) for t in ss["none"][:14])}{"…" if len(ss["none"]) > 14 else ""}.' if ss["none"] else "")
+                + (" Move up: " + ", ".join(f'{link(t)} to {pl.usd(a)} (was {pl.usd(b)})' for t, a, b in ss["move"]) + "." if ss["move"] else "") + '</div></div>')
     total = m["total"] or 1.0
     opens = []
     for ticker, pos in sorted(book["positions"].items(), key=lambda kv: -(kv[1]["shares"] * (prices.get(kv[0]) or kv[1]["entry"]))):
@@ -106,7 +124,7 @@ def parts(st: dict, prices: dict | None = None, now=None) -> tuple[str, list, st
     rules = (f'<div class="pp-m">Trim: the call is EXIT or AVOID and the chart is weak, checked at 15:45 New York, 25% then 25% again, never below half of the most '
              f'it held. Add: fundamentals {portfolio.FUND_ADD:.0f}+, fair value {portfolio.FAIR_UP * 100:.0f}% above the price and the analyst '
              f'target {portfolio.ANALYST_UP * 100:.0f}% above, the call BUY or ADD, risk not High, no earnings in {portfolio.EARN_DAYS} days, turning up with normal volume, '
-             f'the market gate open. About {portfolio.RISK_PCT:g}% at risk per add, at most {portfolio.MAX_ADDS_DAY} adds a day. Your picks (KEEP or PICK in the Notes): half is core and never sold by it; trims are proposed to you, the buy-back after an approved trim is automatic. First version: it will be adjusted as it runs.</div>')
+             f'the market gate open. About {portfolio.RISK_PCT:g}% at risk per add, at most {portfolio.MAX_ADDS_DAY} adds a day. Your picks (KEEP or PICK in the Notes): half is core, never trimmed by it (only the hard stop or you sell it); trims are proposed to you, the buy-back after an approved trim is automatic. First version: it will be adjusted as it runs.</div>')
     sug = ""
     for r in state.get("suggested") or []:
         z = f'buy {r["zone"][0]:.2f} to {r["zone"][1]:.2f}' if r.get("zone") else "no entry zone"

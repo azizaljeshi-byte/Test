@@ -40,3 +40,12 @@ No change to scoring, signals, verdicts or the existing accounts' rules. Every a
 ## Plan
 Fri 6 Nov note and thresholds; Sat to Sun 8 Nov build and tests; deploy Sunday while the market is closed; Monday check at the open.
 Codex could take: the "undervalued and very strong" screen (a function that scores fundamentals and fair value from the stored snapshots).
+
+
+## Hard stop and profit exit (owner, 6 Nov)
+Every open position has a hard stop and sells ALL the moment the price touches it, KEEP stocks included. The stop is the New call's exit line (kept within 15% of the
+price; two daily ranges under the price when the line is not usable). It is set once and only moves up. While the position is in profit it trails the support and never
+sits under the owner's cost, so a winner cannot turn into a loss. In profit the position also sells all at the nearest resistance (first target of the trade plan).
+After a stop or profit exit the name is locked for 3 trading days. Every new buy gets its stop at once and says it in the log. The owner ticks "broker stop set" per
+position (the tab shows how many are set and when the line has moved above what he ticked) and can enter the price his broker really filled a sale at; the fake sale,
+its result and the cash are corrected by the difference. Paper-account rules only; no other account or score changes.

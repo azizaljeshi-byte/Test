@@ -785,6 +785,15 @@ def _pf_pick(ticker, do):
     st.session_state["pf_msg"] = fn(store, ticker)["note"]
 
 
+def _pf_broker(ticker):
+    portfolio_acct.set_broker_stop(store, ticker, bool(st.session_state.get(f"pf_bs_{ticker}")))
+
+
+def _pf_close():
+    _id = st.session_state.get("pf_close_pick")
+    st.session_state["pf_msg"] = portfolio_acct.record_close(store, int(_id), float(st.session_state.get("pf_close_px") or 0))["note"] if _id else "Pick a sale first."
+
+
 def _pf_cash():
     st.session_state["pf_msg"] = portfolio_acct.set_cash(store, float(st.session_state.get("pf_cash_set") or 0))["note"]
 
@@ -891,6 +900,22 @@ if view == "portfolio":
         _c2.button("Skip", key=f"pf_sk_{_t}", on_click=_pf_pick, args=(_t, "no"), use_container_width=True)
     _open_with_sell_buttons("pf_hand", "", _opens, _rest, portfolio_acct.sell_by_hand, css=portfolio_view.CSS,
                             intro="Each card is one of your holdings. The account never sells one to zero by itself; if you want out, tap the button under it.")
+    with st.expander("Broker stops: tick each one when it is set on your broker account"):
+        for _t, _p in pst["book"]["positions"].items():
+            if _p.get("stop"):
+                st.checkbox(f"{_t} · stop {_p['stop']:.2f}" + (f" · profit exit {_p['target']:.2f}" if _p.get("target") else ""), value=bool(_p.get("broker_stop")),
+                            key=f"pf_bs_{_t}", on_change=_pf_broker, args=(_t,))
+        if not any(_p.get("stop") for _p in pst["book"]["positions"].values()):
+            st.caption("The stops are set at the next market session, when prices are fresh.")
+    _sales = [a for a in reversed(pst["book"]["actions"]) if a["action"] in portfolio_acct.SALES][:15]
+    with st.expander("Record the price my broker really closed at"):
+        if _sales:
+            st.selectbox("Which sale", [a["id"] for a in _sales], key="pf_close_pick",
+                         format_func=lambda i: next(f"{a['ticker']} · {a['shares']:g} at {a['price']:.2f} · {a['time']}" for a in _sales if a["id"] == i))
+            st.number_input("Price I really closed at", min_value=0.0, step=0.01, key="pf_close_px")
+            st.button("Save my close", key="pf_close_btn", on_click=_pf_close, use_container_width=True)
+        else:
+            st.caption("No sales yet.")
     _c1, _c2 = st.columns([2, 1])
     _c1.number_input("Cash in the account (your real figure)", min_value=0.0, step=1.0, key="pf_cash_set")
     _c2.button("Set cash", key="pf_cash_btn", on_click=_pf_cash, use_container_width=True)
@@ -902,7 +927,7 @@ if view == "portfolio":
         _c2.button("Cancel", key="pf_re_no", on_click=_pf_reseed, args=("cancel",), use_container_width=True)
     else:
         st.button("Restart from my Sheet (after I change my holdings)", key="pf_re_ask", on_click=_pf_reseed, args=("ask",), use_container_width=True)
-    st.caption("A fake account built from the holdings in your Sheet, at your cost, with a 10% cash reserve. Fills are simulated at the latest price, so they are approximate. Build: portfolio-3.")
+    st.caption("A fake account built from the holdings in your Sheet, at your cost, with a 10% cash reserve. Fills are simulated at the latest price, so they are approximate. Build: portfolio-4.")
 
 if view == "quick":
     qst = quick.status(store)

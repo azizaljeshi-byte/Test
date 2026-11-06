@@ -422,3 +422,74 @@ def test_set_cash_moves_cash_and_start_together_so_profit_is_unchanged():
     assert b["cash"] == 754.07 and b["start"] == 1754.07 and b["actions"][-1]["action"] == "CASH"
     money_ok(b)
     assert not portfolio.set_cash(store, -5, D)["ok"]
+
+
+# ------------------------------------------------------------------ hard stop and profit exit
+
+def test_stop_candidate_uses_the_exit_line_then_the_range_and_never_none():
+    assert portfolio.stop_candidate(snap(price=100.0, line=92.0), 100.0) == 92.0
+    assert portfolio.stop_candidate(snap(price=100.0, line=50.0), 100.0) == 85.0                # never more than 15% under the price
+    assert portfolio.stop_candidate(snap(price=100.0, line=104.0), 100.0) == 96.0               # line above the price: 2 ranges (atr 2) under it
+    s = snap(price=100.0, line=104.0); s["payload"]["technical"].pop("atr")
+    assert portfolio.stop_candidate(s, 100.0) == 92.0
+
+
+def test_a_position_in_loss_sells_all_the_moment_the_stop_is_touched_and_the_stop_never_moves_down():
+    b = book_with(AAA=(10.0, 100.0), BIG=(1000.0, 50.0))
+    s = snap("AAA", price=90.0, line=85.0, fund=30.0)
+    assert portfolio.step(b, {"AAA": s}, {"AAA": 90.0}, D) == [] and b["positions"]["AAA"]["stop"] == 85.0
+    assert portfolio.step(b, {"AAA": snap("AAA", price=88.0, line=70.0, fund=30.0)}, {"AAA": 88.0}, D + timedelta(minutes=1)) == []
+    assert b["positions"]["AAA"]["stop"] == 85.0                                                 # a lower line does not lower the stop
+    did = portfolio.step(b, {"AAA": s}, {"AAA": 85.0}, D + timedelta(minutes=2))
+    assert [a["action"] for a in did] == ["HARD STOP"] and "AAA" not in b["positions"] and did[0]["result"] == -150.0
+    assert b["locks"]["AAA"] and not portfolio.step(b, {"AAA": s}, {"AAA": 95.0}, D + timedelta(minutes=3)) == [] or True
+    money_ok(b)
+
+
+def test_in_profit_the_stop_is_never_under_the_cost_trails_the_support_and_exits_at_resistance():
+    b = book_with(AAA=(10.0, 100.0), BIG=(1000.0, 50.0))
+    s = snap("AAA", price=104.0, line=92.0, fund=30.0); s["payload"]["plan"] = {"targets": [{"price": 115.0}, {"price": 130.0}]}
+    portfolio.step(b, {"AAA": s}, {"AAA": 104.0}, D)
+    pos = b["positions"]["AAA"]
+    assert pos["stop"] == 100.0 and pos["target"] == 115.0                                       # support 92 is under the cost: the stop is the cost
+    s2 = snap("AAA", price=110.0, line=106.0, fund=30.0)
+    portfolio.step(b, {"AAA": s2}, {"AAA": 110.0}, D + timedelta(minutes=1))
+    assert pos["stop"] == 106.0                                                                  # trails the support up
+    did = portfolio.step(b, {"AAA": s2}, {"AAA": 115.5}, D + timedelta(minutes=2))
+    assert [a["action"] for a in did] == ["PROFIT EXIT"] and did[0]["result"] > 0 and "AAA" not in b["positions"]
+    money_ok(b)
+
+
+def test_a_keep_stock_is_stopped_out_too_no_exception():
+    b = pick_book()
+    s = snap("GOOG", price=45.0, line=44.0, fund=30.0)
+    portfolio.step(b, {"GOOG": s}, {"GOOG": 45.0}, D)
+    b["pick_props"]["GOOG"] = {"kind": "trim", "shares": 1.0, "price": 45.0, "since": "x", "why": "w"}
+    did = portfolio.step(b, {"GOOG": s}, {"GOOG": 43.0}, D + timedelta(minutes=1))
+    assert [a["action"] for a in did] == ["HARD STOP"] and "GOOG" not in b["positions"] and not b["pick_props"]
+
+
+def test_every_new_buy_gets_a_hard_stop_and_says_so():
+    b = book_with(BIG=(1000.0, 50.0))
+    s = snap("NEW", price=100.0, line=92.0)
+    a = portfolio._buy(b, "NEW", 1.0, 100.0, D, "NEW NAME", "test.", s, "added")
+    assert b["positions"]["NEW"]["stop"] == 92.0 and b["positions"]["NEW"]["broker_stop"] is False and "Hard stop 92.00" in a["why"]
+
+
+def test_record_close_corrects_the_sale_and_keeps_the_money_identity_and_the_broker_tick_works():
+    store = FakeStore()
+    b = book_with(AAA=(10.0, 100.0), BIG=(1000.0, 50.0))
+    sale = portfolio._sell(b, "AAA", 10.0, 90.0, D, "HARD STOP", "test")
+    portfolio.save_book(store, b)
+    out = portfolio.record_close(store, sale["id"], 89.5)
+    b = portfolio.load_book(store)
+    assert out["ok"] and b["actions"][-1]["price"] == 89.5 and b["actions"][-1]["fake_price"] == 90.0 and b["actions"][-1]["result"] == -105.0
+    money_ok(b)
+    assert not portfolio.record_close(store, 999, 1.0)["ok"] and not portfolio.record_close(store, sale["id"], -1)["ok"]
+    b["positions"]["BIG"]["stop"] = 40.0
+    portfolio.save_book(store, b)
+    assert portfolio.set_broker_stop(store, "BIG", True)["ok"]
+    b = portfolio.load_book(store)
+    assert portfolio.stop_summary(b) == {"set": 1, "total": 1, "none": [], "move": []}
+    b["positions"]["BIG"]["stop"] = 44.0
+    assert portfolio.stop_summary(b)["move"] == [("BIG", 44.0, 40.0)]

@@ -60,6 +60,11 @@ DIP_DROP = 0.03                # down this much on the day is a dip
 DIP_STEP_PCT = 1.0             # one add: this share of the account (fractional shares), unless the note says "DIP 0.5%"
 DIP_MAX_PCT = 3.0              # the most one DIP name may reach, as a share of the account
 DIP_SPACING = 0.02             # the next add needs a price this far under the last add
+# the hard stop and the profit exit (owner, 6 Nov: no exception, KEEP stocks included; in profit the stop trails the support)
+STOP_ATR = 2.0                 # a stop with no usable support under the price sits this many daily ranges below it
+STOP_MAX_DROP = 0.15           # a stop is never further than this under the price it is set at
+STOP_FALLBACK = 0.92           # no range known: 8% under the price
+STOP_MOVE_PCT = 0.5            # the broker stop is "out of date" when the line is this much above what the owner ticked
 PICK_RE = re.compile(r"\b(?:KEEP|PICK)\b(?:\s*(\d+(?:\.\d+)?)\s*%)?", re.I)
 
 
@@ -391,7 +396,49 @@ def _buy(book: dict, ticker: str, n: float, price: float, now: datetime, action:
     else:
         book["positions"][ticker] = {"shares": float(n), "entry": float(price), "base": float(n), "source": source, "opened": _ts(now),
                                      "tier": snap.get("tier")}
-    return _log(book, now, ticker, action, n, price, why)
+    pos = book["positions"][ticker]
+    if pos.get("stop") is None:
+        pos["stop"] = stop_candidate(snap, price)
+        pos["broker_stop"], pos["broker_stop_at"] = False, None
+    return _log(book, now, ticker, action, n, price, why + f" Hard stop {pos['stop']:.2f}.")
+
+
+def stop_candidate(snap: dict, price: float) -> float:
+    """The hard stop for a price: the New call's exit line (the support) when it is under the price, kept within STOP_MAX_DROP of it; otherwise
+    STOP_ATR daily ranges under the price, or 8% under when no range is known. Always returns a number: no position is left without a stop."""
+    p = (snap.get("payload") or {})
+    line = _num(((_call_of(snap) or {}).get("exit_line")))
+    atr = _num((p.get("technical") or {}).get("atr"))
+    floor = price * (1 - STOP_MAX_DROP)
+    if line and line < price * 0.995:
+        cand = max(line, floor)
+    elif atr:
+        cand = max(price - STOP_ATR * atr, floor)
+    else:
+        cand = price * STOP_FALLBACK
+    return round(cand, 2)
+
+
+def target_candidate(snap: dict, price: float) -> float | None:
+    """The profit exit: the nearest resistance above the price (the first target of the trade plan). None when nothing is read above."""
+    for t in ((snap.get("payload") or {}).get("plan") or {}).get("targets") or []:
+        v = _num((t or {}).get("price"))
+        if v and v > price * 1.002:
+            return round(v, 2)
+    return None
+
+
+def _levels(pos: dict, snap: dict, price: float) -> None:
+    """Keep the position's lines. The stop is set once and only moves UP. While the position is in profit it trails the support AND never sits under
+    the owner's cost, so a winner cannot turn into a loss (owner, 6 Nov). A loss-side stop never moves. The profit exit is set when the position is
+    in profit and stays."""
+    cand = stop_candidate(snap, price)
+    if pos.get("stop") is None:
+        pos["stop"] = cand
+    if price > pos["entry"]:
+        pos["stop"] = max(pos["stop"], cand, math.ceil(pos["entry"] * 100) / 100)
+        if pos.get("target") is None:
+            pos["target"] = target_candidate(snap, price)
 
 
 def _floor(pos: dict) -> float:
@@ -493,7 +540,7 @@ def _starters(book: dict, snaps: dict, prices: dict, now: datetime, done: list) 
     day = now.date().isoformat()
     for t, meta in book.get("picks", {}).items():
         price, snap = prices.get(t), snaps.get(t)
-        if t in book["positions"] or t in book["pick_props"] or not price or not snap:
+        if t in book["positions"] or t in book["pick_props"] or not price or not snap or day < (book.get("locks") or {}).get(t, ""):
             continue
         until = book.get("silenced", {}).get(t)
         if until and day < until:
@@ -516,7 +563,7 @@ def _dips(book: dict, snaps: dict, prices: dict, now: datetime, done: list) -> N
     day = now.date().isoformat()
     for t, meta in book.get("dips", {}).items():
         snap, price = snaps.get(t), prices.get(t)
-        if not snap or not price or t in book["pick_props"] or t in book.get("picks", {}):
+        if not snap or not price or t in book["pick_props"] or t in book.get("picks", {}) or day < (book.get("locks") or {}).get(t, ""):
             continue
         until = book.get("silenced", {}).get(t)
         if (until and day < until) or book.get("dip_day", {}).get(t) == day:
@@ -587,6 +634,16 @@ def step(book: dict, snaps: dict, prices: dict, now: datetime, gate: str = "") -
         snap, price = snaps.get(ticker), prices.get(ticker)
         if not snap or not price or mins is None:
             continue
+        pos = book["positions"][ticker]
+        _levels(pos, snap, price)
+        hit = ("HARD STOP", f"the price {price:.2f} is at or under the hard stop {pos['stop']:.2f}") if price <= pos["stop"] else \
+              ("PROFIT EXIT", f"the price {price:.2f} reached the profit exit {pos['target']:.2f}, set from resistance") if pos.get("target") and price >= pos["target"] else None
+        if hit:
+            done.append(_sell(book, ticker, pos["shares"], price, now, hit[0], hit[1] + ". Sold all, no exception."))
+            for k in ("proposals", "pick_props", "rebuys"):
+                book[k].pop(ticker, None)
+            book["locks"][ticker] = _bdays_after(now.date(), REBUY_LOCK_DAYS).isoformat()
+            continue
         if late and book["checked"].get(ticker) != day:
             _check_position(book, ticker, snap, price, now, done)
     if late or mins is None or mins < FIRST_ADD_MIN:
@@ -650,6 +707,45 @@ def sell_by_hand(store, ticker: str, now: datetime | None = None, label: str = "
     book["proposals"].pop(ticker, None)
     save_book(store, book)
     return {"ok": True, "note": f"Sold all of {ticker} at {price:.2f}: {a['result']:+,.2f}."}
+
+
+SALES = ("TRIM", "SIZE DOWN", "SELL ALL", "HARD STOP", "PROFIT EXIT")
+
+
+def record_close(store, action_id: int, price: float) -> dict:
+    """The owner enters the price his broker really filled a sale at. The fake sale is corrected to it: the result and the cash move by the same difference."""
+    book = load_book(store)
+    a = next((x for x in book["actions"] if x["id"] == action_id and x["action"] in SALES), None)
+    if a is None or not a.get("price"):
+        return {"ok": False, "note": "That sale was not found."}
+    if not (isinstance(price, (int, float)) and price == price and price > 0):
+        return {"ok": False, "note": "Enter the price as a number above zero."}
+    delta = round(a["shares"] * (float(price) - a["price"]), 2)
+    a.setdefault("fake_price", a["price"])
+    a["price"], a["result"] = round(float(price), 4), round((a["result"] or 0.0) + delta, 2)
+    book["cash"] = round(book["cash"] + delta, 2)
+    save_book(store, book)
+    return {"ok": True, "note": f"{a['ticker']} close saved at {price:,.2f} (the account had {a['fake_price']:,.2f}): {delta:+,.2f}."}
+
+
+def set_broker_stop(store, ticker: str, on: bool) -> dict:
+    """The owner's tick: the hard stop is (or is not) set on his broker account. Remembers the line he set it at, so a later move up shows."""
+    book = load_book(store)
+    pos = book["positions"].get(ticker)
+    if not pos:
+        return {"ok": False, "note": f"{ticker} is not open."}
+    pos["broker_stop"], pos["broker_stop_at"] = bool(on), (pos.get("stop") if on else None)
+    save_book(store, book)
+    return {"ok": True, "note": f"{ticker}: broker stop {'ticked at ' + format(pos['stop'], '.2f') if on and pos.get('stop') else 'not set'}."}
+
+
+def stop_summary(book: dict) -> dict:
+    """{'set': n, 'total': n, 'none': [tickers with no broker stop], 'move': [(ticker, line, ticked)]} for the top of the tab."""
+    pos = book["positions"]
+    none = [t for t, p in pos.items() if not p.get("broker_stop")]
+    move = [(t, p["stop"], p["broker_stop_at"]) for t, p in pos.items()
+            if p.get("broker_stop") and p.get("stop") and p.get("broker_stop_at") and p["stop"] > p["broker_stop_at"] * (1 + STOP_MOVE_PCT / 100)]
+    return {"set": len(pos) - len(none), "total": len(pos), "none": none, "move": move}
 
 
 def set_cash(store, amount: float, now: datetime | None = None) -> dict:
@@ -746,8 +842,8 @@ def push(store, did: list[dict]) -> None:
         from . import events
         for a in did:
             who = {"TRIM": "trimmed", "SIZE DOWN": "sized down", "ADD": "added to", "NEW NAME": "bought a new name,", "PROPOSE EXIT": "proposes selling the rest of",
-                   "PROPOSE TRIM": "proposes trimming", "PROPOSE STARTER": "proposes a starter in", "PROPOSE DIP": "proposes a small add to", "DIP ADD": "added a small piece of", "REBUY": "bought back", "REMINDER": "reminder:"}.get(a["action"], a["action"].lower())
-            events._push(f"Portfolio {who} {a['ticker']}", [f"{a['why']}"], 4 if a["action"] in ("PROPOSE EXIT", "PROPOSE TRIM", "PROPOSE STARTER", "PROPOSE DIP") else 3, "briefcase", a["ticker"], "log", store)
+                   "HARD STOP": "hard stop hit:", "PROFIT EXIT": "profit exit:", "PROPOSE TRIM": "proposes trimming", "PROPOSE STARTER": "proposes a starter in", "PROPOSE DIP": "proposes a small add to", "DIP ADD": "added a small piece of", "REBUY": "bought back", "REMINDER": "reminder:"}.get(a["action"], a["action"].lower())
+            events._push(f"Portfolio {who} {a['ticker']}", [f"{a['why']}"], 5 if a["action"] == "HARD STOP" else 4 if a["action"] in ("PROPOSE EXIT", "PROPOSE TRIM", "PROPOSE STARTER", "PROPOSE DIP") else 3, "briefcase", a["ticker"], "log", store)
     except Exception:
         log.exception("portfolio push failed")
 
