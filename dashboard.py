@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import crash, portfolio as portfolio_acct, portfolio_view, extended, testlist, ask_ai, ask_ai_view, candidates, stockhead, rotation, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import crash, portfolio as portfolio_acct, portfolio_view, extended, testlist, ask_ai, ask_ai_view, candidates, stockhead, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -241,7 +241,7 @@ controls()
 # ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
 # Turbo and the Briefing are switched off (owner, 30 Oct): not on the tab bar and their addresses open the Radar. Their code is kept.
 VIEWS = {"radar": "◉ Radar", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log",
-         "fleet": "+ Fleet", "research": "⚗ Research", "paper": "◈ Paper", "quick": "⏱ Quick", "portfolio": "▣ Portfolio", "ai": "✧ Ask the AI", "rotate": "↻ Rotate", "ext": "☾ Extended", "tests": "☑ Test list"}
+         "fleet": "+ Fleet", "research": "⚗ Research", "paper": "◈ Paper", "quick": "⏱ Quick", "portfolio": "▣ Portfolio", "ai": "✧ Ask the AI", "ext": "☾ Extended", "tests": "☑ Test list"}
 HIDDEN_VIEWS = ("fleet", "research")          # off the tab bar for now (owner); both still open at ?view=fleet and ?view=research
 SHOWN_VIEWS = [v for v in VIEWS if v not in HIDDEN_VIEWS]
 current = st.query_params.get("view", "radar")
@@ -1018,17 +1018,6 @@ if view == "ai":
     ai_ticker = (st.session_state.get("ai_ticker") or "").upper().strip()
     _ai_answer(ai_ticker)
 
-
-if view == "rotate":
-    st.markdown(ui.hero("Holdings rotation", "Testing only: it suggests, it never trades."), unsafe_allow_html=True)
-    rrows = rotation.build(store.latest_snapshots(), portfolio.holdings)
-    st.markdown(rotation.html(rrows), unsafe_allow_html=True)
-    try:
-        rotation.log(store, rrows, datetime.now(NY).date().isoformat())
-    except Exception:
-        pass
-    st.caption("A holding is flagged only when its New call turns EXIT. The money goes to a stock whose call is ADD or BUY, with strong fundamentals and technicals, "
-               "risk below High, and both scores above the holding's. Candidates come from the stocks the app tracks (watchlist and holdings). Otherwise: keep the cash.")
 
 if view == "log":
     alerts = [a for a in store.recent_alerts(150) if a["ticker"] in tickers or a["source"] == "S&P scan"]
