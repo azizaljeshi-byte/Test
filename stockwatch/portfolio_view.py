@@ -93,7 +93,7 @@ def parts(st: dict, prices: dict | None = None, now=None) -> tuple[str, list, st
     held = "".join(f'<div class="pp-row"><span><b>{link(b["ticker"])}</b> <small>{pl.riyadh(b["time"])} Riyadh time</small><br>'
                    f'<small>{escape(b["reason"])}</small></span><span>{pl.usd(b["price"])}</span></div>' for b in reversed(book["blocked"][-8:]))
     rules = (f'<div class="pp-m">Trim: the call is EXIT or AVOID and the chart is weak, checked at 15:45 New York, 25% then 25% again, never below half of the most '
-             f'it held. Add: fundamentals {portfolio.FUND_ADD:.0f}+ (new names {portfolio.FUND_NEW:.0f}+), fair value {portfolio.FAIR_UP * 100:.0f}% above the price and the analyst '
+             f'it held. Add: fundamentals {portfolio.FUND_ADD:.0f}+, fair value {portfolio.FAIR_UP * 100:.0f}% above the price and the analyst '
              f'target {portfolio.ANALYST_UP * 100:.0f}% above, the call BUY or ADD, risk not High, no earnings in {portfolio.EARN_DAYS} days, turning up with normal volume, '
              f'the market gate open. About {portfolio.RISK_PCT:g}% at risk per add, at most {portfolio.MAX_ADDS_DAY} adds a day. First version: it will be adjusted as it runs.</div>')
     rest = (f'<div class="pp-c"><div class="pp-h">What it did</div>{_actions(book)}</div>'

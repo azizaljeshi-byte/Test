@@ -1,6 +1,6 @@
 # Portfolio tab: design note (6 Nov 2026, queue item 34)
 
-Status: BUILT (shadow, fake money), thresholds confirmed by the owner on 6 Nov with one change: fundamentals 75 for a holding (not 80). Cash reserve 10% confirmed. Differences from the first proposal: new names need 80 (not 85); fair value needs at least 2 methods; adds may be fractional (the owner holds fractional shares), with a $25 minimum; the account reads the holdings when it starts and the page has a button to restart it from the Sheet after he changes his holdings. Code: stockwatch/portfolio.py (logic), portfolio_view.py (page), tests/test_portfolio.py.
+Status: BUILT (shadow, fake money), thresholds confirmed by the owner on 6 Nov with one change: fundamentals 75 (not 80), for holdings and new names alike. Cash reserve 10% confirmed. Differences from the first proposal: fair value needs at least 2 methods; adds may be fractional (the owner holds fractional shares), with a $25 minimum; the account reads the holdings when it starts and the page has a button to restart it from the Sheet after he changes his holdings. Code: stockwatch/portfolio.py (logic), portfolio_view.py (page), tests/test_portfolio.py.
 
 Original proposal:  Shadow mode only: a fake account, never real trades.
 No holdings, keys or links in this file (the repo is public); holdings are read from the owner's Sheet at run time.
@@ -18,7 +18,7 @@ No change to scoring, signals, verdicts or the existing accounts' rules. Every a
 - A trim is undone by nothing automatic: no re-buy of the trimmed shares for 3 sessions unless the call is BUY/ADD again.
 
 ## Add to a stock (all must hold)
-1. Very strong fundamentals: fundamental score 75 or more (new names 80).
+1. Very strong fundamentals: fundamental score 75 or more (holdings and new names).
 2. Undervalued: fair value (mid) at least 15% above the price AND the analyst target at least 10% above.
 3. New call is BUY or ADD, price near its exit line (not stretched).
 4. Risk grade not High or Extreme. No earnings within 2 days.
@@ -27,7 +27,7 @@ No change to scoring, signals, verdicts or the existing accounts' rules. Every a
 - Size: about 1% of the portfolio at risk from the exit line, at most 5% of the portfolio per step, at most 15% in one name, one add per name per day, two adds per day in total.
 
 ## New names (the pool is not limited to holdings)
-- The account decides alone (my reading of "full veto", not yet confirmed): same six tests, with fundamentals 80 or more, a starter of at most 3% of the portfolio.
+- The account decides alone (my reading of "full veto", not yet confirmed): same six tests, with fundamentals 75 or more, a starter of at most 3% of the portfolio.
 - First version looks across the tracked stocks (about 230, the ones with live data and scores). The rest of the S&P 500 comes with item 33 (bulk data).
 
 ## Cash

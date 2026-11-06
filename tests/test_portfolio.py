@@ -142,7 +142,7 @@ def test_a_holding_that_is_undervalued_and_strong_is_added_in_a_small_step():
 
 
 @pytest.mark.parametrize("kw,why", [
-    (dict(fund=74.0), "fundamentals 74"),
+    (dict(fund=74.0), "needs 75"),
     (dict(fair=0.10), "fair value only"),
     (dict(methods=1), "1 method"),
     (dict(analyst=0.05), "analyst target only"),
@@ -169,9 +169,10 @@ def test_timing_stops_the_opening_half_hour_the_late_session_and_a_falling_marke
     assert portfolio.add_check(s, 100.0, True, 90.0, False, "", b, D, 0.005, 1.5)[0]
 
 
-def test_a_new_name_needs_a_notch_more_and_starts_small_and_at_most_two_adds_a_day():
+def test_a_new_name_needs_the_same_bar_starts_small_and_at_most_two_adds_a_day():
     b = book_with(AAA=(10.0, 100.0), BBB=(400.0, 100.0))
-    assert not portfolio.add_check(snap("NEW", fund=78.0), 100.0, False, 90.0, False, "", b, D, 0.005, 1.5)[0]
+    assert not portfolio.add_check(snap("NEW", fund=74.0), 100.0, False, 90.0, False, "", b, D, 0.005, 1.5)[0]
+    assert portfolio.add_check(snap("NEW", fund=75.0), 100.0, False, 90.0, False, "", b, D, 0.005, 1.5)[0]
     snaps = {t: snap(t, fund=90.0) for t in ("N1", "N2", "N3")}
     did = portfolio.step(b, snaps, {t: 100.0 for t in snaps}, D)
     assert [a["action"] for a in did] == ["NEW NAME", "NEW NAME"]

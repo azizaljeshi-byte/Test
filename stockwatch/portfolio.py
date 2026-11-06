@@ -4,7 +4,7 @@ from his Sheet when the account is seeded) and manages them. It never trades rea
   * Trims a poor position in steps, never sells one to zero on its own (a full exit is only a PROPOSAL waiting for the owner's yes).
   * Sizes down a position that grew past its cap.
   * Adds only to a stock that is undervalued AND has very strong fundamentals, when the New call (daily) and Quick's timing (intraday) agree.
-    The pool is not limited to the holdings: a new name must pass the same tests, a notch stricter, and starts small.
+    The pool is not limited to the holdings: a new name must pass the same tests and starts small.
 Sells are judged at 15:45 New York on the daily call, never on an intraday dip. Every action is logged with its reasons.
 The thresholds are a first version (owner: try it, adjust as we go); all of them are the constants below.
 
@@ -36,7 +36,7 @@ CAP_PCT, CAP_HIGH_PCT = 15.0, 8.0     # the largest share of the account one nam
 REBUY_LOCK_DAYS = 3            # trading days: a trimmed stock is not added to again unless the call is BUY/ADD (adds need that anyway)
 # adding
 FUND_ADD = 75.0                # "very strong fundamentals" for a holding (owner, 6 Nov: 75)
-FUND_NEW = 80.0                # a stock not held yet must be a notch stricter
+FUND_NEW = 75.0                # a stock not held yet: the same bar as a holding (owner, 6 Nov: fundamentals 75 for both)
 FAIR_UP, ANALYST_UP, MIN_METHODS = 0.15, 0.10, 2      # undervalued: fair value (at least 2 methods) 15% above the price AND analyst target 10% above
 RISK_PCT = 1.0                 # account risk per add, from the exit line
 ADD_STEP_PCT, NEW_START_PCT = 5.0, 3.0
