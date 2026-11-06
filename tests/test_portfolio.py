@@ -366,3 +366,10 @@ def test_suggested_adds_show_the_entry_state_for_stocks_not_held():
     out = {r["ticker"]: r for r in portfolio.suggestions(b, sn, {t: 100.0 for t in sn})}
     assert out["FAR"]["state"] == "price" and out["HERE"]["state"] == "zone" and out["WAIT"]["state"] == "turn"
     assert "PRICEY" not in out and "AAA" not in out
+
+
+def test_seed_uses_the_owners_cash_when_given():
+    store = FakeStore()
+    out = portfolio.seed(store, D, [Holding("AAA", 1, 10, 100.0)], cash=250.0)
+    b = portfolio.load_book(store)
+    assert out["ok"] and b["cash"] == 250.0 and b["start"] == 1250.0 and "your cash" in b["actions"][0]["why"]

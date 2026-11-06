@@ -167,7 +167,7 @@ def trading_room(pos: dict) -> float:
 
 # ---------------------------------------------------------------- seeding
 
-def seed(store, now: datetime | None = None, holdings=None) -> dict:
+def seed(store, now: datetime | None = None, holdings=None, cash: float | None = None) -> dict:
     """Start (or restart) the account from the owner's holdings: every row with shares above 0, at its average cost, plus a cash reserve.
     The holdings are read from the Sheet now and kept only in the app's own database (never in the repo). A holding with no cost in the Sheet
     is taken at its latest price and said so. Returns {'ok', 'note'}."""
@@ -196,10 +196,10 @@ def seed(store, now: datetime | None = None, holdings=None) -> dict:
         return {"ok": False, "note": "No holdings with shares were found in the Sheet, so nothing was started."}
     _apply_picks(book, parse_picks(holdings))
     book["picks_at"] = now.isoformat()
-    book["cash"] = round(cost_total * CASH_RESERVE_PCT / 100, 2)
+    book["cash"] = round(cash, 2) if cash and cash > 0 else round(cost_total * CASH_RESERVE_PCT / 100, 2)    # the owner's real cash when he gives it
     book["start"] = round(cost_total + book["cash"], 2)
     book["seeded"] = _ts(now)
-    _log(book, now, "—", "SEED", 0.0, None, f"Started from {len(book['positions'])} holdings at cost ({cost_total:,.0f}) plus a {CASH_RESERVE_PCT:.0f}% cash reserve."
+    _log(book, now, "—", "SEED", 0.0, None, f"Started from {len(book['positions'])} holdings at cost ({cost_total:,.0f}) plus " + (f"your cash of {book['cash']:,.2f}." if cash and cash > 0 else f"a {CASH_RESERVE_PCT:.0f}% cash reserve.")
          + (" " + "; ".join(noted) + "." if noted else ""))
     save_book(store, book)
     return {"ok": True, "note": f"Started with {len(book['positions'])} holdings and ${book['cash']:,.0f} cash." + (" " + "; ".join(noted) + "." if noted else "")}

@@ -792,7 +792,8 @@ def _pf_reseed(step):
         st.session_state["pf_reseed"] = None
     else:
         st.session_state["pf_reseed"] = None
-        st.session_state["pf_msg"] = portfolio_acct.seed(store)["note"]
+        _cash = float(st.session_state.get("pf_cash") or 0)
+        st.session_state["pf_msg"] = portfolio_acct.seed(store, cash=_cash or None)["note"]
 
 
 def _hand_sell_ask(prefix, ticker):
@@ -887,6 +888,7 @@ if view == "portfolio":
                             intro="Each card is one of your holdings. The account never sells one to zero by itself; if you want out, tap the button under it.")
     if st.session_state.get("pf_reseed"):
         st.warning("Read your holdings from the Sheet again and restart the fake account? Everything it did so far is cleared.")
+        st.number_input("Cash in the account (0 = use the 10% reserve)", min_value=0.0, step=1.0, key="pf_cash")
         _c1, _c2 = st.columns(2)
         _c1.button("Yes, restart from the Sheet", key="pf_re_yes", on_click=_pf_reseed, args=("do",), type="primary", use_container_width=True)
         _c2.button("Cancel", key="pf_re_no", on_click=_pf_reseed, args=("cancel",), use_container_width=True)
