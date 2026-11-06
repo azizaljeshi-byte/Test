@@ -897,10 +897,12 @@ def _ai_candidate_selected():
         st.session_state.ai_ticker = ticker
 
 
-def _ai_submit():
-    ticker = (st.session_state.get("ai_ticker") or "").upper().strip()
+def _ai_submit(ticker: str | None = None):
+    ticker = (ticker or st.session_state.get("ai_ticker") or "").upper().strip()
     if not re.fullmatch(r"[A-Z0-9][A-Z0-9.\-]{0,9}", ticker):
         st.session_state.ai_note = "Enter a ticker of up to 10 letters, digits, dots or hyphens."
+        return
+    if (ask_ai.latest(store, ticker) or {}).get("status") == "asking":
         return
     if selected_provider(base.settings.data_provider) == "demo":
         verdict = ask_ai.sample_verdict(ticker)
@@ -924,7 +926,17 @@ def _ai_answer(ticker: str):
         st.caption(note)
     tracked = {s["ticker"] for s in store.latest_snapshots()}
     st.markdown(ask_ai_view.html(ask_ai.latest(store, ticker), tracked=tracked), unsafe_allow_html=True)
-    st.markdown(ask_ai_view.history_html(ask_ai.history(store), tracked=tracked), unsafe_allow_html=True)
+    history = ask_ai.history(store)
+    with st.container(border=True):
+        st.markdown(ask_ai_view.history_html(history, tracked=tracked), unsafe_allow_html=True)
+        # One native queue button per past stock, even if it has several saved answers.
+        past = dict.fromkeys(r.get("ticker") for r in history if r.get("status") != "asking" and r.get("ticker"))
+        for past_ticker in past:
+            label, action = st.columns([1, 2])
+            label.text(past_ticker)
+            action.button("Re-evaluate", key=f"ai_again_{past_ticker}", on_click=_ai_submit, args=(past_ticker,),
+                          disabled=(ask_ai.latest(store, past_ticker) or {}).get("status") == "asking",
+                          help="Queue a fresh answer for this stock. Places no trade.")
 
 
 if view == "tests":
