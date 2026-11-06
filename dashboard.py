@@ -785,6 +785,10 @@ def _pf_pick(ticker, do):
     st.session_state["pf_msg"] = fn(store, ticker)["note"]
 
 
+def _pf_cash():
+    st.session_state["pf_msg"] = portfolio_acct.set_cash(store, float(st.session_state.get("pf_cash_set") or 0))["note"]
+
+
 def _pf_reseed(step):
     if step == "ask":
         st.session_state["pf_reseed"] = True
@@ -887,6 +891,9 @@ if view == "portfolio":
         _c2.button("Skip", key=f"pf_sk_{_t}", on_click=_pf_pick, args=(_t, "no"), use_container_width=True)
     _open_with_sell_buttons("pf_hand", "", _opens, _rest, portfolio_acct.sell_by_hand, css=portfolio_view.CSS,
                             intro="Each card is one of your holdings. The account never sells one to zero by itself; if you want out, tap the button under it.")
+    _c1, _c2 = st.columns([2, 1])
+    _c1.number_input("Cash in the account (your real figure)", min_value=0.0, step=1.0, key="pf_cash_set")
+    _c2.button("Set cash", key="pf_cash_btn", on_click=_pf_cash, use_container_width=True)
     if st.session_state.get("pf_reseed"):
         st.warning("Read your holdings from the Sheet again and restart the fake account? Everything it did so far is cleared.")
         st.number_input("Cash in the account (0 = use the 10% reserve)", min_value=0.0, step=1.0, key="pf_cash")
@@ -895,7 +902,7 @@ if view == "portfolio":
         _c2.button("Cancel", key="pf_re_no", on_click=_pf_reseed, args=("cancel",), use_container_width=True)
     else:
         st.button("Restart from my Sheet (after I change my holdings)", key="pf_re_ask", on_click=_pf_reseed, args=("ask",), use_container_width=True)
-    st.caption("A fake account built from the holdings in your Sheet, at your cost, with a 10% cash reserve. Fills are simulated at the latest price, so they are approximate. Build: portfolio-2.")
+    st.caption("A fake account built from the holdings in your Sheet, at your cost, with a 10% cash reserve. Fills are simulated at the latest price, so they are approximate. Build: portfolio-3.")
 
 if view == "quick":
     qst = quick.status(store)

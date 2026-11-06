@@ -15,7 +15,7 @@ CSS = PAPER_CSS + """
 """
 
 ACTION_WORDS = {"TRIM": ("TRIMMED", "o"), "SIZE DOWN": ("SIZED DOWN", "o"), "ADD": ("ADDED", "p"), "NEW NAME": ("NEW NAME", "p"),
-                "PROPOSE EXIT": ("PROPOSAL", "l"), "SELL ALL": ("SOLD", "l"), "KEPT": ("KEPT", "n"), "SEED": ("STARTED", "n"),
+                "PROPOSE EXIT": ("PROPOSAL", "l"), "SELL ALL": ("SOLD", "l"), "KEPT": ("KEPT", "n"), "SEED": ("STARTED", "n"), "CASH": ("CASH SET", "n"),
                 "PROPOSAL WITHDRAWN": ("WITHDRAWN", "n"),
                 "PROPOSE TRIM": ("PROPOSAL", "l"), "PROPOSE STARTER": ("PROPOSAL", "l"), "PROPOSE DIP": ("PROPOSAL", "l"), "DIP ADD": ("ADDED", "p"), "STARTER": ("STARTER", "p"), "REBUY": ("BOUGHT BACK", "p"),
                 "REMINDER": ("STILL FALLING", "o"), "SKIPPED": ("SKIPPED", "n"), "REBUY DROPPED": ("DROPPED", "n")}
@@ -55,7 +55,7 @@ def _actions(book: dict, n: int = 25) -> str:
     rows = []
     for a in reversed(book["actions"][-n:]):
         word, c = ACTION_WORDS.get(a["action"], (a["action"], "n"))
-        what = "" if a["action"] in ("SEED", "KEPT", "PROPOSAL WITHDRAWN", "REMINDER", "REBUY DROPPED") else f' {a["shares"]:g} at {pl.usd(a["price"])}' if a.get("price") else ""
+        what = "" if a["action"] in ("SEED", "KEPT", "PROPOSAL WITHDRAWN", "REMINDER", "REBUY DROPPED", "CASH") else f' {a["shares"]:g} at {pl.usd(a["price"])}' if a.get("price") else ""
         res = "" if a.get("result") is None or a["action"] in ("ADD", "NEW NAME") else f' · {pl.signed(a["result"])}'
         who = "" if a["ticker"] == "—" else f'<b>{link(a["ticker"])}</b> '
         rows.append(f'<div class="pf-act"><span class="pl-tag {c}">{word}</span> {who}{escape(what)}{escape(res)}'

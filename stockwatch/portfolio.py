@@ -652,6 +652,24 @@ def sell_by_hand(store, ticker: str, now: datetime | None = None, label: str = "
     return {"ok": True, "note": f"Sold all of {ticker} at {price:.2f}: {a['result']:+,.2f}."}
 
 
+def set_cash(store, amount: float, now: datetime | None = None) -> dict:
+    """The owner sets the account's cash to his real figure. The start moves by the same amount, so profit and loss do not change."""
+    now = (now or datetime.now(NY)).astimezone(NY)
+    if not (isinstance(amount, (int, float)) and amount == amount and amount >= 0):
+        return {"ok": False, "note": "Enter the cash as a number, zero or more."}
+    book = load_book(store)
+    if not book["positions"]:
+        return {"ok": False, "note": "The account is not started yet."}
+    delta = round(float(amount) - book["cash"], 2)
+    if delta == 0:
+        return {"ok": True, "note": f"Cash is already {amount:,.2f}."}
+    book["cash"] = round(float(amount), 2)
+    book["start"] = round(book["start"] + delta, 2)
+    _log(book, now, "—", "CASH", 0.0, None, f"{OVERRIDE}: cash set to {amount:,.2f} ({delta:+,.2f}); the starting amount moved by the same, so profit is unchanged")
+    save_book(store, book)
+    return {"ok": True, "note": f"Cash is now {amount:,.2f}. Profit and loss are unchanged."}
+
+
 def keep_it(store, ticker: str, now: datetime | None = None) -> dict:
     """The owner says no to a proposed exit: it is not proposed again for KEEP_DAYS days."""
     now = (now or datetime.now(NY)).astimezone(NY)

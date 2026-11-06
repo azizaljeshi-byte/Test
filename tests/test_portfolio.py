@@ -410,3 +410,15 @@ def test_a_dip_name_stops_at_its_cap():
     b["dips"] = {"MU": {"pct": None}}
     dip = snap("MU", chart="breakdown", call="AVOID", mom="falling", price=90.0, line=100.0, chg=-0.06)
     assert portfolio.step(b, {"MU": dip}, {"MU": 90.0}, D) == []
+
+
+def test_set_cash_moves_cash_and_start_together_so_profit_is_unchanged():
+    store = FakeStore()
+    portfolio.seed(store, D, [Holding("AAA", 1, 10, 100.0)])
+    before = portfolio.load_book(store)
+    assert before["cash"] == 100.0 and before["start"] == 1100.0
+    assert portfolio.set_cash(store, 754.07, D)["ok"]
+    b = portfolio.load_book(store)
+    assert b["cash"] == 754.07 and b["start"] == 1754.07 and b["actions"][-1]["action"] == "CASH"
+    money_ok(b)
+    assert not portfolio.set_cash(store, -5, D)["ok"]
