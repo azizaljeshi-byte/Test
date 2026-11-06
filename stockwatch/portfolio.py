@@ -855,6 +855,10 @@ def tick(store, now: datetime | None = None, force_session: bool = False) -> dic
     state = {"at": now.isoformat(), "watching": 0, "skipped": {}, "did": [], "note": ""}
     if not (force_session or us_session() == "REGULAR"):
         state["note"] = "market closed: nothing trades outside the regular session"
+        try:
+            ensure_levels(store)
+        except Exception:
+            log.exception("portfolio levels failed")
         store.set_setting(STATE_KEY, json.dumps(state))
         return state
     book = load_book(store)
@@ -890,6 +894,28 @@ def tick(store, now: datetime | None = None, force_session: bool = False) -> dic
         save_book(store, book)
     store.set_setting(STATE_KEY, json.dumps(state, default=str))
     return state
+
+
+def ensure_levels(store) -> int:
+    """Give every open position its stop (and profit exit) from the latest saved reading, even when the market is closed. Display only: it sells
+    nothing and never moves a stop that exists. Returns how many positions were given a stop."""
+    book = load_book(store)
+    new = 0
+    for t, pos in book["positions"].items():
+        if pos.get("stop") is not None:
+            continue
+        snap = store.snapshot(t)
+        px = None
+        if snap:
+            px, _, _live = ui._now(snap)
+        if not snap or px is None or px != px:
+            continue
+        _levels(pos, snap, float(px))
+        pos.setdefault("broker_stop", False)
+        new += 1
+    if new:
+        save_book(store, book)
+    return new
 
 
 def status(store) -> dict:

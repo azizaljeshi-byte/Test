@@ -871,6 +871,10 @@ if view == "paper":
     _candidates_block()
 
 if view == "portfolio":
+    try:
+        portfolio_acct.ensure_levels(store)
+    except Exception:
+        pass
     pst = portfolio_acct.status(store)
     ppx = portfolio_acct.prices_of(store, list(pst["book"]["positions"]))
     _now_ny = datetime.now(NY)
@@ -902,11 +906,8 @@ if view == "portfolio":
                             intro="Each card is one of your holdings. The account never sells one to zero by itself; if you want out, tap the button under it.")
     with st.expander("Broker stops: tick each one when it is set on your broker account"):
         for _t, _p in pst["book"]["positions"].items():
-            if _p.get("stop"):
-                st.checkbox(f"{_t} · stop {_p['stop']:.2f}" + (f" · profit exit {_p['target']:.2f}" if _p.get("target") else ""), value=bool(_p.get("broker_stop")),
-                            key=f"pf_bs_{_t}", on_change=_pf_broker, args=(_t,))
-        if not any(_p.get("stop") for _p in pst["book"]["positions"].values()):
-            st.caption("The stops are set at the next market session, when prices are fresh.")
+            st.checkbox(f"{_t} · " + (f"stop {_p['stop']:.2f}" if _p.get("stop") else "no stop yet: no price read") + (f" · profit exit {_p['target']:.2f}" if _p.get("target") else ""),
+                        value=bool(_p.get("broker_stop")), key=f"pf_bs_{_t}", on_change=_pf_broker, args=(_t,))
     _sales = [a for a in reversed(pst["book"]["actions"]) if a["action"] in portfolio_acct.SALES][:15]
     with st.expander("Record the price my broker really closed at"):
         if _sales:

@@ -493,3 +493,12 @@ def test_record_close_corrects_the_sale_and_keeps_the_money_identity_and_the_bro
     assert portfolio.stop_summary(b) == {"set": 1, "total": 1, "none": [], "move": []}
     b["positions"]["BIG"]["stop"] = 44.0
     assert portfolio.stop_summary(b)["move"] == [("BIG", 44.0, 40.0)]
+
+
+def test_ensure_levels_gives_stops_from_saved_readings_when_the_market_is_closed():
+    sn = snap("AAA", price=90.0, line=85.0)
+    store = FakeStore([sn])
+    store.s[portfolio.BOOK_KEY] = json.dumps(book_with(AAA=(10.0, 100.0)))
+    assert portfolio.ensure_levels(store) == 1
+    b = portfolio.load_book(store)
+    assert b["positions"]["AAA"]["stop"] == 85.0 and b["positions"]["AAA"]["broker_stop"] is False and portfolio.ensure_levels(store) == 0
