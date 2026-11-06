@@ -193,7 +193,7 @@ def test_the_market_gate_pauses_bounces_when_most_stocks_are_down_and_a_thin_sam
     assert quick.market_gate({t: snap(chg=0.01) for t in fillers}) == ""                # an up market
 
 
-def test_a_stock_trades_once_a_day_the_day_stops_at_a_one_percent_loss_and_entries_are_capped(monkeypatch):
+def test_a_stock_may_trade_again_the_day_stops_at_a_one_percent_loss_and_entries_are_capped(monkeypatch):
     book, marks = run(ENTRY)
     first = book["trades"][0]
     pos = book["positions"]["AAA"]
@@ -201,7 +201,8 @@ def test_a_stock_trades_once_a_day_the_day_stops_at_a_one_percent_loss_and_entri
     quick.step(book, marks, {"AAA": snap()}, {"AAA": first["entry"] - 5.0}, opened + timedelta(minutes=2))          # stopped out
     assert book["trades"][0]["status"] == "CLOSED"
     book2, _ = run(ENTRY + [96.0] * 3, book=book, start=T0 + timedelta(minutes=30))
-    assert len(book["trades"]) == 1 and any("one trade per stock per day" in x["reason"] for x in book["skipped"])
+    assert not any("one trade per stock per day" in x["reason"] for x in book["skipped"])            # re-entry is allowed (owner, 5 Nov)
+    assert all(x.get("nth_today", 2) == 2 for x in book["trades"][1:])
     # the daily loss stop: today's result is under -1% of the account, so another stock does not enter
     book = quick.new_book()
     book["trades"].append({"ticker": "OLD", "opened": "2026-10-26 09:45", "closed": "2026-10-26 09:55", "result": -600.0, "status": "CLOSED"})
@@ -211,3 +212,74 @@ def test_a_stock_trades_once_a_day_the_day_stops_at_a_one_percent_loss_and_entri
     book = quick.new_book()
     run(ENTRY, book=book)
     assert book["trades"] == [] and any("day limit" in x["reason"] for x in book["skipped"])
+
+
+def test_after_two_percent_it_leaves_soon_after_it_stops_riding():
+    book, marks = run(ENTRY + CLIMB)
+    last = T0 + timedelta(seconds=20 * len(ENTRY + CLIMB))
+    peak = book["positions"]["AAA"]["peak"]
+    assert book["trades"][0]["best"] >= quick.TAKE_PCT
+    quick.step(book, marks, {"AAA": snap()}, {"AAA": round(peak - 0.5, 2)}, last + timedelta(minutes=5))
+    assert book["trades"][0]["status"] == "OPEN"                       # 5 minutes with no new high: still counts as riding
+    quick.step(book, marks, {"AAA": snap()}, {"AAA": round(peak - 0.5, 2)}, last + timedelta(minutes=11))
+    t = book["trades"][0]
+    assert t["status"] == "CLOSED" and "took the profit" in t["exit_reason"] and t["result"] > 0
+
+
+def test_in_the_first_thirty_minutes_there_is_no_pace_limit():
+    start = datetime(2026, 10, 26, 9, 30, tzinfo=NY)
+    book = multi(ENTRY, ["A", "B", "C", "D"], lambda t: snap(), start=start)       # the turn comes about 18 minutes in
+    assert len(book["trades"]) == 4
+    assert not any("pace limit" in x["reason"] for x in book["skipped"])
+
+
+def test_no_trade_is_held_more_than_two_percent_under_its_entry_even_with_a_wide_daily_range():
+    assert quick._first_stop("breakout", 2.98, 2.9, 0.44) >= round(2.98 * 0.98, 2)       # half a range would be 7% down
+    book, marks = quick.new_book(), {}
+    t = quick._enter(book, "AAA", "breakout", "test", 2.98, 2.9, 0.44, T0)
+    assert t["stop0"] >= 2.92
+    book["positions"]["AAA"]["stop"] = 2.76                                                # an older position with the far stop
+    quick.step(book, marks, {"AAA": snap(atr=0.44)}, {"AAA": 2.846}, T0 + timedelta(minutes=40))     # -4.5%
+    assert book["trades"][0]["status"] == "CLOSED" and "stop hit" in book["trades"][0]["exit_reason"]
+
+
+def test_a_weak_sector_no_longer_blocks_entries():
+    """Owner, 5 Nov: the sector check is logged at each entry (sectors.stamp) but does not stop a trade, so weak-sector entries can be studied."""
+    def sec_snap(chg):
+        s = snap(chg=chg)
+        s["payload"]["profile"] = {"sector": "Technology"}
+        return s
+    book = multi(ENTRY, ["A", "B", "C", "D"], lambda t: sec_snap(-0.004))          # under half up, the middle stock down: the sector is weak
+    assert len(book["trades"]) >= 1 and not any("sector check" in x["reason"] for x in book["skipped"])
+
+
+
+def test_a_re_entry_is_logged_with_how_the_first_try_ended():
+    book = quick.new_book()
+    quick._enter(book, "AAA", "bounce", "first", 100.0, 99.0, 1.0, T0)
+    quick._exit(book, "AAA", 98.0, T0 + timedelta(minutes=30), "stop hit (-2.0%)")
+    t = quick._enter(book, "AAA", "bounce", "second", 99.0, 98.0, 1.0, T0 + timedelta(minutes=50))
+    assert t["nth_today"] == 2 and t["prev_exit"] == "stop hit (-2.0%)" and t["prev_result"] < 0
+    assert "nth_today" not in book["trades"][0]
+
+
+def test_the_best_ranked_setup_is_entered_first_not_the_first_in_the_list(monkeypatch):
+    """Owner, 5 Nov: with room for one new entry, the strongest setup takes it, whatever its place in the watchlist."""
+    monkeypatch.setattr(quick, "MAX_NEW", 1)
+    monkeypatch.setattr(quick, "OPEN_FREE_MIN", 0)
+    vols = {"AAA": 190_000.0, "BBB": 230_000.0, "CCC": 480_000.0}              # CCC has by far the strongest volume, and is last in the list
+    book = multi(ENTRY, list(vols), lambda t: snap(vol=vols[t]))
+    assert [t["ticker"] for t in book["trades"]] == ["CCC"]
+    assert book["trades"][0]["rank"] == 1 and book["trades"][0]["of"] == 3
+    log = {x["ticker"]: x for x in book["ranked"]}
+    assert log["CCC"]["taken"] and not log["AAA"]["taken"] and not log["BBB"]["taken"]
+    assert "ranked #" in log["AAA"]["why_not"] and log["CCC"]["score"] > log["BBB"]["score"] > log["AAA"]["score"]
+    assert set(log["CCC"]["parts"]) == {"volume", "move", "sector", "tech", "daily"}
+
+
+def test_rank_parts_reward_a_healthy_sector_and_an_agreeing_daily_call_but_never_block():
+    chart = {"off_low": 0.6, "drop": 0.9, "up_day": 0.0}
+    good, _ = quick.rank_score("bounce", chart, 2.0, 60, True, "BUY")
+    bad, parts = quick.rank_score("bounce", chart, 2.0, 60, False, "EXIT")
+    assert good - bad == 4.0 and parts["sector"] == -1.0 and parts["daily"] == -1.0
+    assert quick.rank_score("bounce", chart, None, None, None, None)[0] > 0            # unknown parts count as zero, never an error

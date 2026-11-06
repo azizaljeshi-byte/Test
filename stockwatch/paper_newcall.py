@@ -26,9 +26,10 @@ from . import decision, paper, paper_live, quick, volpace
 from .data import NY, us_session
 
 BOOK_KEY, STATE_KEY = "paper_newcall_book", "paper_newcall_state"
+OVERRIDE = "owner override"
 MAX_POSITIONS = 10
 SIZE_CAP_PCT = 15.0
-BLACKOUT_MIN = 60
+BLACKOUT_MIN = 5          # owner, 4 Nov: start trading 5 minutes after the open (was 60: the first hour)
 MIN_PACE = 0.8        # no buy unless today's volume is at least this much of normal for the time of day (a setup that is not established)
 RIDE_ATR = 1.0        # once up this many daily ranges the stop starts to trail (the trade is "riding")
 TRAIL_ATR = 1.0       # the trailing stop sits this far under the peak, never under the entry
@@ -45,8 +46,8 @@ DIP_WATCH_MIN = 20    # still down, with no bounce off the low, after this many 
 DIP_SLIDE_PCT = 0.5   # a new low this far under where the watch began, with no bounce: falling
 DIP_BOUNCE_PCT = 0.3  # a bounce this far off the low means it is stabilising
 UP_PCT = 2.0          # up this much from the entry: is it riding or stalled?
-STALL_MIN = 45        # no new high for this long ...
-GIVEBACK_PCT = 0.5    # ... and this far under the peak: stalled (sold, locking the profit)
+STALL_MIN = 10        # no new high for this long ... (owner, 4 Nov: leave soon after +2% unless it is still riding; was 45)
+GIVEBACK_PCT = 0.3    # ... and this far under the peak: stalled (sold, locking the profit; was 0.5)
 WEAK_CHART = ("weakening", "testing_support")
 WEAK_MOMENTUM = ("falling", "weak", "fading")
 BROKEN_CHART = ("breakdown", "deep_breakdown")
@@ -181,6 +182,10 @@ def _open(book: paper.Book, ticker: str, oc: dict, price: float, now: datetime, 
              "reason": f"{oc['call']}: {oc['why']}", "status": "OPEN", "closed": None, "exit": None, "exit_reason": None,
              "result": 0.0, "r": None, "worst": 0.0, "best": 0.0, "risk": round(shares * (price - line), 2), "sold": 0,
              "proceeds": 0.0, "stretched": False, "at_target": None}
+    same = [x for x in book.trades if x["ticker"] == ticker and str(x["opened"])[:10] == trade["opened"][:10]]
+    if same:                                                      # a re-entry (owner, 5 Nov: allowed, but logged so a failed second try can be studied)
+        trade["nth_today"] = len(same) + 1
+        trade["prev_result"], trade["prev_exit"] = same[-1].get("result"), same[-1].get("exit_reason")
     book.next_id += 1
     book.trades.append(trade)
     book.positions[ticker] = {"trade": trade["id"], "shares": shares, "entry": price, "stop": oc["band_line"],
@@ -346,7 +351,7 @@ def _agent_entry(book: paper.Book, ticker: str, snap: dict, oc: dict | None, pri
 
 
 def step(book: paper.Book, snaps: dict, prices: dict, now: datetime, force: bool = False, orders: list | None = None,
-         results: dict | None = None) -> list[dict]:
+         results: dict | None = None, halt: str = "") -> list[dict]:
     """`orders` is None for the old rules; a list (maybe empty) means the agent picks the stocks (see quick.step)."""
     done = []
     results = results if results is not None else {}
@@ -354,6 +359,8 @@ def step(book: paper.Book, snaps: dict, prices: dict, now: datetime, force: bool
     late = now.time() >= decision.DECIDE
     gate = quick.market_gate(snaps)                                   # most tracked stocks down and the median down 1% or more
     cands: list = []
+    by_hand = {t["ticker"] for t in book.trades if t["status"] == "CLOSED" and str(t.get("exit_reason") or "").startswith(OVERRIDE) and "market crash stop" not in str(t.get("exit_reason"))
+               and str(t.get("closed") or "").startswith(now.strftime("%Y-%m-%d"))}
     for ticker, snap in snaps.items():
         price, pos, oc = prices.get(ticker), book.positions.get(ticker), _call_of(snap)
         if not price or mins is None:
@@ -396,11 +403,17 @@ def step(book: paper.Book, snaps: dict, prices: dict, now: datetime, force: bool
             if reason:
                 paper._sell(book, ticker, price, 1.0, now, reason)
                 done.append({"ticker": ticker, "action": "SELL_ALL", "price": price, "reason": reason, "time": paper._ts(now)})
+        elif halt:                                                    # paused by the market-crash flag: nothing is opened, the reason is logged
+            if orders is None and oc and oc["call"] in ("BUY", "ADD") and mins >= BLACKOUT_MIN and not late and len(book.positions) < MAX_POSITIONS:
+                _hold_back(book, ticker, price, now, f"BUY held back: {halt}")
         elif orders is not None:
             t = _agent_entry(book, ticker, snap, oc, price, now, mins, late, gate, orders, results)
             if t:
                 done.append({"ticker": ticker, "action": "ENTER", "price": price, "reason": t["reason"], "time": paper._ts(now)})
         elif oc and oc["call"] in ("BUY", "ADD") and mins >= BLACKOUT_MIN and not late and len(book.positions) < MAX_POSITIONS:
+            if ticker in by_hand:
+                _hold_back(book, ticker, price, now, "BUY held back: you sold it by hand today")
+                continue
             if gate:
                 _hold_back(book, ticker, price, now, f"BUY held back: {gate}")
                 continue
@@ -461,6 +474,25 @@ def force_sell_now(store, now: datetime | None = None) -> dict:
     return {"sold": [d["ticker"] for d in did], "note": f"sold {len(did)}" + (f"; no fresh price yet for {', '.join(left)}" if left else "")}
 
 
+def sell_by_hand(store, ticker: str, now: datetime | None = None, label: str = "sold by hand") -> dict:
+    """The owner's override (5 Nov): sell one open trade at the latest fresh price because the entry looked like a mistake. Recorded as
+    'owner override', apart from the rules; the stock is not bought back that day (step). Needs the regular session and a fresh price."""
+    now = (now or datetime.now(NY)).astimezone(NY)
+    if us_session() != "REGULAR":
+        return {"ok": False, "note": "The market is closed: nothing trades outside the regular session."}
+    book = load_book(store)
+    if ticker not in book.positions:
+        return {"ok": False, "note": f"{ticker} is not open any more."}
+    snap = store.snapshot(ticker)
+    price, why = paper_live.fresh_price(snap, now) if snap else (None, "no reading for this stock")
+    if price is None:
+        return {"ok": False, "note": f"No fresh price for {ticker} ({why}), so it was not sold. Try again in a minute."}
+    trade = next(t for t in book.trades if t["id"] == book.positions[ticker]["trade"])
+    paper._sell(book, ticker, price, 1.0, now, f"{OVERRIDE}: {label} at {price:.2f}")
+    store.set_setting(BOOK_KEY, json.dumps(book.to_dict(), default=str))
+    return {"ok": True, "note": f"Sold {ticker} ({label}) at {price:.2f}: {trade['result']:+,.2f}."}
+
+
 def tick(store, now: datetime | None = None, force_session: bool = False) -> dict:
     now = (now or datetime.now(NY)).astimezone(NY)
     state = {"at": now.isoformat(), "tickers": [], "skipped": {}, "did": [], "note": "", "session": us_session()}
@@ -486,7 +518,10 @@ def tick(store, now: datetime | None = None, force_session: bool = False) -> dic
     if orders is not None:
         state["note"] = (f"the agent picks: {len(orders)} order(s) ready" if agent.has_key()
                          else "ANTHROPIC_API_KEY is not set: nothing is bought in agent mode")
-    state["did"] = step(book, snaps, prices, now, orders=orders, results=results)
+    from . import crash
+    halt = crash.check(store, "newcall", snaps, now)
+    state["halt"] = halt
+    state["did"] = step(book, snaps, prices, now, orders=orders, results=results, halt=halt)
     from . import sectors
     sectors.stamp(book.trades, state["did"], snaps, store)              # log only: what the sector check said at each entry
     agent.settle(store, results, now)

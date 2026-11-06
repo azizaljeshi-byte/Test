@@ -129,9 +129,10 @@ def html(rows: list[dict]) -> str:
         cards.append(
             f'<a class="mc-a" href="?view=target&t={escape(r["ticker"])}" target="_self"><div class="mc-li" style="--c:{c};--a:{c}">'
             f'<div class="call"><span class="mc-chip" style="--c:{c}"><b>{escape(r["action"])}</b></span>'
-            f'<span class="mc-chip" style="--c:{ui.NEWCALL_COLOR.get(r.get("call"), ui.MUTED)}"><b>New call</b> {escape(str(r.get("call", "")))}</span></div>'
+            f'<span class="mc-chip" style="--c:{ui.WARN if r.get("call") in ("ADD", "BUY") else ui.NEWCALL_COLOR.get(r.get("call"), ui.MUTED)}"><b>New call</b> {escape(str(r.get("call", "")))}</span></div>'
             f'<div class="hd"><div class="id"><span class="mc-tk">{escape(r["ticker"])}</span><span class="nm">{r["shares"]:g} shares'
             f'{" · cost " + f(r.get("cost")) if r.get("cost") else ""}</span></div><div class="mc-px">{f(r.get("price"))}</div></div>'
-            f'<div class="why">{escape(r.get("note", ""))}{escape(pl)}{" · " + escape(line) if line else ""}</div>'
+            f'<div class="why">{escape(r.get("note", ""))}{escape(pl)}{" · " + escape(line) if line else ""}'
+            + ('<br><span style="opacity:.7">Near its exit line: not a reason to add by itself.</span>' if r.get("call") in ("ADD", "BUY") else "") + '</div>'
             + box + '</div></a>')
     return "".join(cards) or '<div class="mc-d">No holdings with shares in the sheet.</div>'

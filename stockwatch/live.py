@@ -194,10 +194,25 @@ class Tracker:
                     except Exception:
                         log.exception("quick trading step failed")
                     try:
+                        from . import portfolio
+                        portfolio.tick(store)                                  # the Portfolio tab's fake account, built from the owner's holdings
+                    except Exception:
+                        log.exception("portfolio step failed")
+                    try:
                         from . import candidates
                         candidates.tick(store)                                 # the shared list of stocks worth watching, and what each account did with them
                     except Exception:
                         log.exception("candidates step failed")
+                    try:
+                        from . import jobs
+                        jobs.tick()                                            # run-once study jobs, only when data/run_job.txt exists
+                    except Exception:
+                        log.exception("job runner step failed")
+                    try:
+                        from . import testlist
+                        testlist.tick(store)                                   # the manual test list: breakouts with entry, stop and target, log only
+                    except Exception:
+                        log.exception("test list step failed")
                     try:
                         from . import agent
                         agent.tick(self.store_path)                            # the AI agent: its own thread, so a slow answer never delays a stop
@@ -213,6 +228,11 @@ class Tracker:
                         funnel.run_async(self.store_path)                      # whole-S&P sector/industry read every 5 minutes, own thread, log only
                     except Exception:
                         log.exception("funnel step failed")
+                    try:
+                        from . import extended
+                        extended.run_async(self.store_path)                    # pre-market / after-hours monitor, own thread, log only
+                    except Exception:
+                        log.exception("extended hours step failed")
                     try:
                         from . import dbtrim, store as store_module
                         dbtrim.run_async(self.store_path or store_module.DEFAULT_DB)   # hourly, own thread: keeps the database from growing
