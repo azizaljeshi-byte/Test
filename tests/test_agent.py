@@ -149,7 +149,7 @@ def test_newcall_level2_refused_when_not_above_entry():
 
 def test_newcall_hard_rules_still_apply():
     book = paper.Book()
-    _, res = run(book, 100.0, NOW.replace(hour=9, minute=45), [order()])
+    _, res = run(book, 100.0, NOW.replace(hour=9, minute=33), [order()])
     assert res["o1"][0] == "rejected" and not book.positions
     _, res = run(book, 100.0, NOW, [order()], change=-0.02)
     assert res["o1"][0] == "rejected" and not book.positions

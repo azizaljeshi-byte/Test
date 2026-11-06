@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from html import escape
 
-from . import design, ui
+from . import design, tradelevels, ui
 from .ui import nan
 
 WORDS = {"ACT": ("ACT", "#ff7a7a", "risk"), "BUY": ("BUY", "#7be3a8", "buy"), "WATCH": ("WATCH", "#ffc267", "warn"),
@@ -165,6 +165,13 @@ def assess(snap: dict) -> dict:
 
 def _change(snap: dict, w: str) -> str | None:
     lv = (ui.price_status(snap) or {}).get("levels") or {}
+    oc = (snap["payload"].get("technical") or {}).get("one_call") or {}
+    el = oc.get("exit_line") if oc.get("known") else None
+    if el is not None:                       # one number on the whole page: the exit line the ladder shows
+        if w == "ACT":
+            return f"it closes back above {el:.2f}: then hold and wait."
+        if w == "BUY":
+            return f"it closes below {el:.2f}: then don't add."
     if w == "ACT" and lv.get("support_high"):
         return f'it closes back above {lv["support_high"]:.2f}: then hold and wait.'
     if w == "BUY" and lv.get("support_low"):
@@ -208,7 +215,7 @@ def _sure_html(a: dict) -> str:
         head = (f'<div class="rd-h"><span>How sure are we this is the right move</span><b>{n} of {k} agree</b></div>'
                 f'<div class="rd-dots">{dots}</div>')
     rows = "".join(
-        f'<li class="{"y" if (c["state"] == want or c["state"] == "ok") and a["sure"] else "n"}">{escape(c["text"])}</li>'
+        f'<li class="{("y bad" if want == BEAR and c["state"] == want else "y") if (c["state"] == want or c["state"] == "ok") and a["sure"] else "n"}">{escape(c["text"])}</li>'
         for c in a["checks"])
     chg = f'<p class="rd-chg">Would change if {escape(a["change"])}</p>' if a["change"] else ""
     return f'<div class="rd-box">{head}<ul class="rd-chk">{rows}</ul>{chg}</div>'
@@ -223,8 +230,20 @@ def zones_html(snap: dict, price) -> str:
     if not (z["support"] or z["resistance"]):
         return ""
     now = (f'<div class="rd-now"><span>Price now {ui.num(price)}</span></div>' if not nan(price) else "")
-    rows = "".join(design.zone_row("resistance", x["low"], x["high"], x["grade"], x["reasons"]) for x in reversed(z["resistance"]))
-    rows += now + "".join(design.zone_row("support", x["low"], x["high"], x["grade"], x["reasons"]) for x in z["support"])
+    oc = (snap["payload"].get("technical") or {}).get("one_call")
+    atr = tradelevels.atr_of(oc)
+
+    def away(level):
+        n = tradelevels.swings_away(price, level, atr) if not nan(price) else None
+        return "" if n is None else f"{n:.1f} swings away"
+    rows = "".join(design.zone_row("resistance", x["low"], x["high"], x["grade"], x["reasons"], away(x["low"])) for x in reversed(z["resistance"]))
+    rows += now + "".join(design.zone_row("support", x["low"], x["high"], x["grade"], x["reasons"], away(x["high"])) for x in z["support"])
+    try:
+        chart = tradelevels.html(tradelevels.build(oc, z, price if not nan(price) else None))
+    except Exception:       # a bad stored result must never break the page
+        chart = ""
+    if chart:               # one ladder replaces the separate zone cards
+        return chart
     return f'<div class="rd-h"><span>Where it may stop or turn</span></div>{rows}'
 
 
@@ -503,7 +522,7 @@ def render(snaps: list[dict], changed: dict[str, str] | None = None, brief: str 
     held = [s for s in snaps if not s["payload"]["watchlist"]]
     watch = [s for s in snaps if s["payload"]["watchlist"]]
     need, close, calm = split(snaps)
-    parts = [f'<style>{CSS}</style><div class="rd">', headline(len(need), len(close), len(calm)), movers(snaps)]
+    parts = [f'<style>{CSS}{tradelevels.CSS}</style><div class="rd">', headline(len(need), len(close), len(calm)), movers(snaps)]
     if SHOW_MAP:
         parts.append(dot_map(snaps))
     if brief:
@@ -560,7 +579,7 @@ CSS = """
 .rd-dots{display:flex;gap:4px;margin:7px 0}.rd-dots i{flex:1;height:6px;border-radius:9px;background:var(--dz-line)}.rd-dots .y{background:var(--dz-buy)}
 .rd-chk{list-style:none;margin:0;padding:0;font-size:.82rem}.rd-chk li{padding:3px 0 3px 20px;position:relative}
 .rd-chk li:before{position:absolute;left:0;font-weight:800}.rd-chk .y:before{content:"✓";color:var(--dz-buy)}
-.rd-chk .n:before{content:"–";color:var(--dz-muted)}.rd-chk .n{color:var(--dz-soft)}
+.rd-chk .y.bad:before{content:"!";color:var(--dz-act)}.rd-chk .n:before{content:"–";color:var(--dz-muted)}.rd-chk .n{color:var(--dz-soft)}
 .rd-chg{margin:7px 0 0;font-size:.78rem;color:var(--dz-watch)}
 .rd-now{text-align:center;font-size:.74rem;color:var(--dz-muted);margin:2px 0 8px}
 .rd-go{display:block;text-align:center;margin-top:12px;padding:10px;border-radius:11px;background:var(--dz-ink);color:var(--dz-bg);font-weight:700;text-decoration:none}

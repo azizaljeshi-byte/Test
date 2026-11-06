@@ -32,9 +32,9 @@ def test_a_moving_average_read_is_price_above_or_below_and_short_history_is_na()
 def test_oscillator_reads_and_atr_is_not_a_vote():
     ev = tv.evidence(bars(300, drift=1.0))
     names = {r["name"]: r for r in ev["indicators"]}
-    assert len(names) == 12 and names["RSI (14)"]["read"] == "Sell"           # a steady climb is overbought
+    assert len(names) == 13 and names["RSI (14)"]["read"] == "Sell"           # a steady climb is overbought
     total = ev["ind_summary"]["buy"] + ev["ind_summary"]["sell"] + ev["ind_summary"]["neutral"]
-    assert total == 11 and names["ATR (14)"]["read"] in ("Less volatility", "High volatility")
+    assert total == 11 and names["MACD histogram"]["read"] in ("Rising", "Falling", "Flat") and names["ATR (14)"]["read"] in ("Less volatility", "High volatility")
 
 
 def test_too_few_bars_says_so_and_today_is_dropped_while_open():
@@ -59,3 +59,11 @@ def test_cci_uses_the_mean_deviation_around_the_current_window():
     expected = (w.iloc[-1] - w.mean()) / (0.015 * np.abs(w - w.mean()).mean())
     got = float(next(r["value"] for r in tv.indicators(h) if r["name"] == "CCI (14)"))
     assert abs(got - expected) < 0.01
+
+
+def test_macd_histogram_row_carries_the_last_five_sessions():
+    from stockwatch import technical_view as tv
+    row = {"name": "MACD histogram", "value": "-1.47", "bars": [0.76, 0.4, -0.1, -0.9, -1.47], "read": "Falling", "rule": "x"}
+    h = tv._bars(row["bars"])
+    assert h.count("tv-hc") == 5 and "-1.47" in h and "+0.76" in h and "dn" in h and "up" in h
+    assert tv._bars(None) == "" and tv._bars([1.0]) == ""

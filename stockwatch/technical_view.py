@@ -16,7 +16,8 @@ from . import technical as ta
 
 BUY, SELL, NEUTRAL, NA = "Buy", "Sell", "Neutral", "n/a"
 MA_PERIODS = (5, 10, 20, 50, 100, 200)
-CLS = {BUY: "buy", SELL: "sell", NEUTRAL: "neu", NA: "na"}
+CONTEXT_ONLY = ("ATR (14)", "MACD histogram")     # shown, never counted as a Buy or Sell vote
+CLS = {BUY: "buy", SELL: "sell", NEUTRAL: "neu", NA: "na", "Rising": "neu", "Falling": "neu", "Flat": "neu"}
 
 
 def completed(hist: pd.DataFrame, today=None, session_open: bool = False) -> pd.DataFrame:
@@ -105,6 +106,13 @@ def indicators(h: pd.DataFrame) -> list[dict]:
     m, _ = ta.macd(c)
     mv = float(m.iloc[-1])
     add("MACD (12,26)", mv, BUY if mv > 0 else SELL if mv < 0 else NEUTRAL, "above zero Buy, below zero Sell")
+    line, sig = ta.macd(c)
+    hist = line - sig
+    hv, h3 = float(hist.iloc[-1]), float(hist.iloc[-4]) if len(hist) > 4 else float("nan")
+    if hv == hv and h3 == h3:
+        rows.append({"name": "MACD histogram", "value": f"{hv:+.2f}", "bars": [float(x) for x in hist.iloc[-5:]],
+                     "read": "Rising" if hv > h3 else "Falling" if hv < h3 else "Flat",
+                     "rule": "MACD minus its 9-day signal line. Context only, not a vote. Rising: momentum is improving"})
     adx, pdi, mdi = _adx(h)
     add("ADX (14)", adx, (BUY if pdi > mdi else SELL) if adx > 25 else NEUTRAL, "over 25 is a trend: Buy if up-pressure leads, else Sell")
     ll, hh = h["Low"].rolling(14).min(), h["High"].rolling(14).max()
@@ -154,12 +162,23 @@ def evidence(hist: pd.DataFrame, today=None, session_open: bool = False) -> dict
     mas = moving_averages(h)
     inds = indicators(h)
     ma_reads = [r[k] for r in mas for k in ("simple_read", "exp_read")]
-    ind_reads = [r["read"] for r in inds if r["name"] != "ATR (14)"]
+    ind_reads = [r["read"] for r in inds if r["name"] not in CONTEXT_ONLY]
     return {"as_of": str(pd.Timestamp(h.index[-1]).date()), "price": float(h["Close"].iloc[-1]), "pivots": pivots(h), "mas": mas,
             "indicators": inds, "ma_summary": tally(ma_reads), "ind_summary": tally(ind_reads), "overall": tally(ma_reads + ind_reads)}
 
 
 # ---------------------------------------------------------------- rendering
+
+def _bars(vals) -> str:
+    """The last few sessions of a histogram as small bars (green above zero, red below) with the numbers, oldest to newest."""
+    if not vals or len(vals) < 2:
+        return ""
+    top = max(abs(v) for v in vals) or 1.0
+    cols = "".join(
+        f'<div class="tv-hc"><div class="tv-hb"><i class="{"up" if v >= 0 else "dn"}" style="height:{max(4, abs(v) / top * 46):.0f}%"></i></div>'
+        f'<small>{v:+.2f}</small></div>' for v in vals)
+    return f'<div class="tv-hs"><span>Last {len(vals)} sessions, oldest to newest</span><div class="tv-hr">{cols}</div></div>'
+
 
 def _chip(read: str) -> str:
     return f'<span class="tv-r {CLS.get(read, "neu")}">{escape(read)}</span>'
@@ -193,7 +212,7 @@ def html(ev: dict | None) -> str:
     mrows = "".join(f'<div class="tv-ma"><b>{r["period"]}</b><span>{_px(r["simple"])}</span>{_chip(r["simple_read"])}'
                     f'<span>{_px(r["exp"])}</span>{_chip(r["exp_read"])}</div>' for r in ev["mas"])
     irows = "".join(f'<div class="tv-i"><div><b>{escape(r["name"])}</b><small>{escape(r["rule"])}</small></div>'
-                    f'<span class="tv-v">{escape(r["value"])}</span>{_chip(r["read"])}</div>' for r in ev["indicators"])
+                    f'<span class="tv-v">{escape(r["value"])}</span>{_chip(r["read"])}</div>' + _bars(r.get("bars")) for r in ev["indicators"])
     return (f'<style>{CSS}</style><div class="tv"><div class="tv-h">Technical evidence</div>'
             f'<div class="tv-sub">From daily bars to {escape(ev["as_of"])}. Evidence only: it does not change the call.</div>'
             f'<div class="tv-sums">{_summary("Overall", ev["overall"])}{_summary("Moving averages", ev["ma_summary"])}{_summary("Indicators", ev["ind_summary"])}</div>'
@@ -221,4 +240,9 @@ CSS = """
 .tv-ma.hd{font-size:.64rem;color:var(--dz-muted,#8b95a7);border-top:0}.tv-r{font-size:.7rem;font-weight:800;text-align:right}
 .tv-i{display:grid;grid-template-columns:1fr auto 70px;gap:8px;align-items:center;padding:7px 0;border-top:1px solid color-mix(in srgb,var(--dz-line,#243041) 60%,transparent)}
 .tv-i b{font-size:.84rem}.tv-i small{display:block;font-size:.64rem;color:var(--dz-muted,#8b95a7);line-height:1.25}.tv-v{font-size:.82rem;font-variant-numeric:tabular-nums}
+.tv-hs{padding:2px 0 10px}.tv-hs>span{display:block;font-size:.64rem;color:var(--dz-muted,#8b95a7);margin-bottom:4px}
+.tv-hr{display:flex;gap:6px}.tv-hc{flex:1;text-align:center}.tv-hb{position:relative;height:56px}
+.tv-hb:after{content:'';position:absolute;left:0;right:0;top:50%;border-top:1px solid var(--dz-line,#4a5568)}
+.tv-hb i{position:absolute;left:15%;width:70%;background:var(--dz-buy,#3dffa8)}.tv-hb i.up{bottom:50%;border-radius:2px 2px 0 0}.tv-hb i.dn{top:50%;border-radius:0 0 2px 2px;background:var(--dz-act,#ff697b)}
+.tv-hc small{font-size:.66rem;font-variant-numeric:tabular-nums;color:var(--dz-soft,#aab4c5)}
 """

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import logging
 import os
 import threading
@@ -40,6 +41,7 @@ DROP_ATR = 0.7                 # the flush behind a bounce, in daily ranges
 TURN_ATR = 0.15                # how far off the low the turn must be
 TRAIL_ATR = 0.45               # the trailing stop sits this far under the peak
 LOCK_ATR = 0.30                # once up this much the stop is at least the entry
+MAX_LOSS_PCT = 2.0               # owner, 4 Nov: no trade is held more than this far under its entry, however wide half a daily range is (CYPH sat 7% from its stop)
 STOP_ATR = 0.5                 # widest first stop under the entry (was 0.9: every stop hit lost 1.8% on average)
 STALL_MIN = 120                # backstop: minutes with no progress before it leaves
 NO_PROGRESS_MIN = 60           # leaves after this long if it never got +0.5% (frees the cash for the next setup)
@@ -47,14 +49,18 @@ NO_PROGRESS_PCT = 0.5
 DRY_MIN = 45                   # leaves after this long if the volume has dried up and the price is not clearly up
 DRY_PACE = 0.6
 HOLD_MIN = 10.0                # a bounce counts only after the low has held this long, with two higher lows after it
-BOUNCE_FIRST_MIN = 15          # no bounce entries in the first 15 minutes: the opening move is not a floor
-MAX_NEW, NEW_WINDOW_MIN = 3, 10  # at most this many new entries in any window, so one move cannot fill the account
+BOUNCE_FIRST_MIN = 5           # owner, 4 Nov: bounce entries too start 5 minutes after the open (was 15)
+OPEN_FREE_MIN = 30                # owner, 4 Nov: in the first 30 minutes after the open Quick takes as many entries as the setups give (the other brakes stay) ...
+MAX_NEW, NEW_WINDOW_MIN = 3, 10  # ... then at most this many new entries in any window, so one move cannot fill the account
 GATE_DOWN_SHARE, GATE_MEDIAN = 0.6, -0.01   # market gate: this share of stocks down and the median at least this far down: no bounces
 GATE_MIN_STOCKS = 20
 MAX_PER_DAY = 40               # new entries in a day: only a runaway guard now (owner, 2 Nov: 15 missed good ones; was 15 after 30 Oct: 68 trades, 9 wins of 53 closed, -$867). The real brakes stay: MAX_NEW per NEW_WINDOW_MIN and the day-loss stop
 DAY_LOSS_PCT = 1.0             # no new entries once today's closed result plus open positions is this far under the start (percent of the account)
 SIZE_PCT = {"A": 5.0, "B": 3.0}  # a C setup is not traded
 FIRST_MIN, LAST_MIN = 5, 385   # minutes into the session (9:35 to 15:55)
+TAKE_PCT = 2.0                 # owner, 4 Nov: once up this much, leave as soon as it stops riding ...
+TAKE_STALL_MIN = 10            # ... no new high for this long ...
+TAKE_GIVEBACK_PCT = 0.3        # ... and this far under the peak. While it keeps making new highs it is riding and stays.
 FIXED_PCT = 2.5                # only to compare riding with a fixed exit; not a rule
 LEVEL_PCT = 2.5                # the agent's entries come in levels of this size (percent of the account): level 1, level 2, one more on a pullback
 MAX_LEVELS = 3
@@ -267,7 +273,7 @@ def grade(kind: str, pace: float | None) -> tuple[str | None, str]:
 
 def _first_stop(kind: str, price: float, lo: float, atr: float) -> float:
     base = lo - 0.1 * atr if kind == "bounce" else price - 0.6 * atr
-    return round(max(base, price - STOP_ATR * atr), 2)
+    return round(max(base, price - STOP_ATR * atr, price * (1 - MAX_LOSS_PCT / 100)), 2)
 
 
 def _enter(book: dict, ticker: str, kind: str, why: str, price: float, lo: float, atr: float, now: datetime, pct: float = POSITION_PCT,
@@ -284,6 +290,10 @@ def _enter(book: dict, ticker: str, kind: str, why: str, price: float, lo: float
          "size": round(shares * price, 2), "stop0": stop, "reason": why, "status": "OPEN", "closed": None, "exit": None,
          "exit_reason": None, "result": 0.0, "pct": None, "best": 0.0, "worst": 0.0, "atr": round(atr, 4), "minutes": None,
          "grade": grade_, "levels": 1}
+    same = [x for x in book["trades"] if x["ticker"] == ticker and str(x["opened"])[:10] == t["opened"][:10]]
+    if same:                                                      # a re-entry (owner, 5 Nov: allowed, but logged so a failed second try can be studied)
+        t["nth_today"] = len(same) + 1
+        t["prev_result"], t["prev_exit"] = same[-1].get("result"), same[-1].get("exit_reason")
     book["next_id"] += 1
     book.setdefault("entry_times", []).append(now.isoformat())
     book["entry_times"] = book["entry_times"][-50:]
@@ -376,7 +386,7 @@ def _agent_entry(book: dict, ticker: str, kind: str, why: str, m: dict, price: f
         no = f"no bounce: {gate}"
     elif days is not None and days <= 1:
         no = f"earnings in {days} day{'s' if days != 1 else ''}"
-    elif _new_in_window(book, now) >= MAX_NEW:
+    elif mins >= OPEN_FREE_MIN and _new_in_window(book, now) >= MAX_NEW:
         no = f"pace limit: {MAX_NEW} new entries in the last {NEW_WINDOW_MIN} minutes"
     elif len(book["positions"]) >= MAX_OPEN:
         no = f"already {MAX_OPEN} open"
@@ -396,8 +406,43 @@ def _agent_entry(book: dict, ticker: str, kind: str, why: str, m: dict, price: f
     return t
 
 
+RANK_KEEP = 600
+
+
+def rank_score(kind: str, chart: dict, pace: float | None, tech, sector_healthy, daily_call) -> tuple[float, dict]:
+    """How strong a setup is, so that when several qualify together the best is entered first (owner, 5 Nov: Quick calls good candidates but did
+    not pick the best; it took whichever came first in the watchlist). It never changes what qualifies, only the order. First version, to be
+    judged on the logged outcomes. Parts, each shown in the ranking log:
+      volume   volume against normal for this time (0 to 3)
+      move     a bounce: how far it has turned off the low and how deep the fall was (0 to 2.5); a breakout: how far up on the day (0 to 2)
+      sector   the stock's sector is healthy +1, weak -1, unread 0
+      tech     the stock's technical score (0 to 2)
+      daily    the daily New call agrees (BUY or ADD) +1, disagrees (EXIT or AVOID) -1"""
+    parts = {"volume": round(min(max(pace or 0.0, 0.0), 3.0), 2)}
+    if kind == "bounce":
+        parts["move"] = round(min(chart["off_low"], 1.5) / 1.5 * 1.5 + min(chart["drop"], 2.0) / 2.0, 2)
+    else:
+        parts["move"] = round(min(max(chart["up_day"], 0.0), 2.0), 2)
+    parts["sector"] = 0.0 if sector_healthy is None else (1.0 if sector_healthy else -1.0)
+    parts["tech"] = round(max(0.0, min(tech, 100.0)) / 50, 2) if isinstance(tech, (int, float)) and not isinstance(tech, bool) and tech == tech else 0.0
+    parts["daily"] = 1.0 if daily_call in ("BUY", "ADD") else -1.0 if daily_call in ("EXIT", "AVOID") else 0.0
+    return round(sum(parts.values()), 2), parts
+
+
+def _rank_log(book: dict, now: datetime, c: dict, rank: int, n: int, taken: bool, no: str) -> None:
+    """One line per stock, setup and outcome a day, so the ranked candidates, the one taken and the ones passed over can be studied."""
+    day = now.date().isoformat()
+    key = (day, c["ticker"], c["kind"], taken, re.sub(r"[\d.]+", "#", no))
+    log = book.setdefault("ranked", [])
+    if any((x["day"], x["ticker"], x["kind"], x["taken"], re.sub(r"[\d.]+", "#", x["why_not"])) == key for x in log[-150:]):
+        return
+    log.append({"day": day, "time": now.strftime("%H:%M"), "ticker": c["ticker"], "kind": c["kind"], "grade": c["grade"], "score": c["score"], "rank": rank,
+                "of": n, "taken": taken, "why_not": no, "price": c["price"], "parts": c["parts"]})
+    book["ranked"] = log[-RANK_KEEP:]
+
+
 def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setups: dict | None = None,
-         orders: list | None = None, results: dict | None = None) -> list[dict]:
+         orders: list | None = None, results: dict | None = None, halt: str = "") -> list[dict]:
     """One cycle for every stock in `snaps` with a price in `prices`. `now` is New York time. Returns what it did.
     `orders` is None for the old rules (they pick the stocks); a list (maybe empty) means the agent picks: entries open only on its
     orders, and the old setups are logged in book["baseline"]. Exits, stops and every limit work the same either way."""
@@ -405,6 +450,11 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
     results = results if results is not None else {}
     mins = minutes_in(now)
     gate = market_gate(snaps)
+    from . import sectors
+    secs = sectors.read(snaps)                                  # for the ranking only: it no longer blocks a trade
+    cands: list = []
+    by_hand = {t["ticker"] for t in book["trades"] if str(t.get("exit_reason") or "").startswith("owner override") and "market crash stop" not in str(t.get("exit_reason"))
+               and str(t.get("closed") or "").startswith(now.strftime("%Y-%m-%d"))}
     for ticker, snap in snaps.items():
         price = prices[ticker]
         m = mark(marks, ticker, price, now)
@@ -418,12 +468,13 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
             t["best"], t["worst"] = max(t["best"], round(move, 2)), min(t["worst"], round(move, 2))
             if price > pos["peak"]:
                 pos["peak"], pos["best_at"] = price, now.isoformat()
+            pos["stop"] = max(pos["stop"], round(pos["entry"] * (1 - MAX_LOSS_PCT / 100), 2))      # also for trades opened before the cap
             if price >= pos["entry"] + LOCK_ATR * atr:
                 pos["stop"] = round(max(pos["stop"], pos["entry"], pos["peak"] - TRAIL_ATR * atr), 2)
             held = (now - datetime.fromisoformat(pos["opened"])).total_seconds() / 60
             since_best = (now - datetime.fromisoformat(pos["best_at"])).total_seconds() / 60
             if price <= pos["stop"]:
-                reason = "trailing stop hit, riding ended" if pos["stop"] > pos["entry"] else "stop hit"
+                reason = "trailing stop hit, riding ended" if pos["stop"] > pos["entry"] else f"stop hit ({move:+.1f}%)"
             elif mins is not None and mins >= LAST_MIN:
                 reason = "end of day: no overnight"
             elif held >= NO_PROGRESS_MIN and t["best"] < NO_PROGRESS_PCT and price < pos["entry"] + 0.2 * atr:
@@ -432,6 +483,8 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
                 reason = f"volume dried up after {held:.0f} minutes and the price is not moving"
             elif held >= STALL_MIN and price < pos["entry"] + 0.2 * atr:
                 reason = f"went nowhere for {held:.0f} minutes"
+            elif t["best"] >= TAKE_PCT and since_best >= TAKE_STALL_MIN and price < pos["peak"] * (1 - TAKE_GIVEBACK_PCT / 100) and price > pos["entry"]:
+                reason = f"took the profit: was up {t['best']:.1f}%, no new high for {since_best:.0f} minutes and not riding any more ({move:+.1f}%)"
             elif since_best >= 45 and price < pos["peak"] - 0.25 * atr and price > pos["entry"]:
                 reason = "momentum faded: no new high for 45 minutes"
             elif orders:
@@ -450,7 +503,10 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
         q = p.get("quote") or {}
         chg = _num(q.get("live_change"))
         prev = price / (1 + chg) if chg is not None and chg > -0.9 else None
-        kind, why = setup(read_chart(m, price, prev, atr))
+        chart = read_chart(m, price, prev, atr)
+        kind, why = setup(chart)
+        if halt and orders is not None:
+            continue                                             # paused by the market-crash flag: the agent opens nothing
         if orders is not None:
             t = _agent_entry(book, ticker, kind, why, m, price, atr, mins, gate, prices, now, (p.get("events") or {}).get("days_to_earnings"),
                              orders, results)
@@ -464,31 +520,48 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
         if kind == "bounce" and mins < BOUNCE_FIRST_MIN:
             continue                                             # the opening move: not a floor yet
         g, g_why = grade(kind, volpace.pace(snap, mins))
-        days = (p.get("events") or {}).get("days_to_earnings")
+        score, parts = rank_score(kind, chart, volpace.pace(snap, mins), snap.get("technical_score"), (secs.get(sectors.sector_of(snap)) or {}).get("healthy"),
+                                  ((p.get("technical") or {}).get("one_call") or {}).get("call"))
+        cands.append({"ticker": ticker, "kind": kind, "why": why, "g": g, "grade": g, "g_why": g_why, "price": price, "lo": m["lo"], "atr": atr,
+                      "days": (p.get("events") or {}).get("days_to_earnings"), "score": score, "parts": parts})
+    cands.sort(key=lambda c: -c["score"])                        # the best setup first; the limits below then cut the weakest, not the last in the list
+    for rank, c in enumerate(cands, 1):
+        ticker, kind, g, price = c["ticker"], c["kind"], c["g"], c["price"]
         today = _today_trades(book, now)
         lost = day_result(book, prices, now)
-        if any(t["ticker"] == ticker for t in today):
-            _skip(book, ticker, kind, "one trade per stock per day: it already traded today", price, now)
+        if halt:
+            no = halt
+        elif ticker in by_hand:
+            no = "you sold it by hand today"
         elif lost <= -book["start"] * DAY_LOSS_PCT / 100:
-            _skip(book, ticker, kind, f"daily loss stop: down ${abs(lost):,.0f} today (limit ${book['start'] * DAY_LOSS_PCT / 100:,.0f})", price, now)
+            no = f"daily loss stop: down ${abs(lost):,.0f} today (limit ${book['start'] * DAY_LOSS_PCT / 100:,.0f})"
         elif len(today) >= MAX_PER_DAY:
-            _skip(book, ticker, kind, f"day limit: {MAX_PER_DAY} entries today", price, now)
+            no = f"day limit: {MAX_PER_DAY} entries today"
         elif kind == "bounce" and gate:
-            _skip(book, ticker, kind, f"no bounce: {gate}", price, now)
+            no = f"no bounce: {gate}"
         elif g is None:
-            _skip(book, ticker, kind, f"no trade: {g_why}", price, now)
-        elif _new_in_window(book, now) >= MAX_NEW:
-            _skip(book, ticker, kind, f"pace limit: {MAX_NEW} new entries in the last {NEW_WINDOW_MIN} minutes", price, now)
-        elif days is not None and days <= 1:
-            _skip(book, ticker, kind, f"earnings in {days} day{'s' if days != 1 else ''}", price, now)
+            no = f"no trade: {c['g_why']}"
+        elif mins >= OPEN_FREE_MIN and _new_in_window(book, now) >= MAX_NEW:
+            no = f"pace limit: {MAX_NEW} new entries in the last {NEW_WINDOW_MIN} minutes (ranked #{rank} of {len(cands)})"
+        elif c["days"] is not None and c["days"] <= 1:
+            no = f"earnings in {c['days']} day{'s' if c['days'] != 1 else ''}"
         elif len(book["positions"]) >= MAX_OPEN:
-            _skip(book, ticker, kind, f"already {MAX_OPEN} open", price, now)
+            no = f"already {MAX_OPEN} open"
         else:
-            t = _enter(book, ticker, kind, f"{why}; {g_why}", price, m["lo"], atr, now, SIZE_PCT[g], g)
-            if t:
-                done.append({"ticker": ticker, "action": "ENTER", "price": price, "reason": f"{kind} (grade {g}): {why}; {g_why}", "time": now.strftime("%H:%M")})
-            else:
-                _skip(book, ticker, kind, "not enough cash for a share", price, now)
+            no = ""
+        if no:
+            _skip(book, ticker, kind, no, price, now)
+            _rank_log(book, now, c, rank, len(cands), False, no)
+            continue
+        t = _enter(book, ticker, kind, f"{c['why']}; {c['g_why']}", price, c["lo"], c["atr"], now, SIZE_PCT[g], g)
+        if t:
+            t["rank"], t["of"], t["score"] = rank, len(cands), c["score"]
+            done.append({"ticker": ticker, "action": "ENTER", "price": price, "reason": f"{kind} (grade {g}, ranked #{rank} of {len(cands)}): {c['why']}; {c['g_why']}",
+                         "time": now.strftime("%H:%M")})
+            _rank_log(book, now, c, rank, len(cands), True, "")
+        else:
+            _skip(book, ticker, kind, "not enough cash for a share", price, now)
+            _rank_log(book, now, c, rank, len(cands), False, "not enough cash for a share")
     book["log"] = (book["log"] + done)[-200:]
     return done
 
@@ -527,7 +600,10 @@ def tick(store, now: datetime | None = None, force_session: bool = False) -> dic
     if orders is not None:
         state["note"] = (f"the agent picks: {len(orders)} order(s) ready" if agent.has_key()
                          else "ANTHROPIC_API_KEY is not set: nothing is bought in agent mode")
-    state["did"] = step(book, marks, snaps, prices, now, state["setups"], orders, results)
+    from . import crash
+    halt = crash.check(store, "quick", snaps, now)
+    state["halt"] = halt
+    state["did"] = step(book, marks, snaps, prices, now, state["setups"], orders, results, halt)
     from . import sectors
     sectors.stamp(book["trades"], state["did"], snaps, store)           # log only: what the sector check said at each entry
     agent.settle(store, results, now)
@@ -540,6 +616,27 @@ def tick(store, now: datetime | None = None, force_session: bool = False) -> dic
     store.set_setting(MARKS_KEY, json.dumps(marks))
     store.set_setting(STATE_KEY, json.dumps(state, default=str))
     return state
+
+
+def sell_by_hand(store, ticker: str, now: datetime | None = None, label: str = "sold by hand") -> dict:
+    """The owner's override (5 Nov): sell one open trade at the latest fresh price because the entry looked like a mistake. It is recorded as
+    'owner override', apart from the rules, so the rules' results and the overrides can be studied separately. Quick never re-enters a stock on
+    the day it traded, so the stock is not bought back. Runs from the page; needs the regular session and a fresh price."""
+    from . import paper_live
+    now = (now or datetime.now(NY)).astimezone(NY)
+    if us_session() != "REGULAR":
+        return {"ok": False, "note": "The market is closed: nothing trades outside the regular session."}
+    book = load_book(store, migrate=False)
+    if ticker not in book["positions"]:
+        return {"ok": False, "note": f"{ticker} is not open any more."}
+    snap = store.snapshot(ticker)
+    price, why = paper_live.fresh_price(snap, now) if snap else (None, "no reading for this stock")
+    if price is None:
+        return {"ok": False, "note": f"No fresh price for {ticker} ({why}), so it was not sold. Try again in a minute."}
+    _exit(book, ticker, price, now, f"owner override: {label} at {price:.2f}")
+    save_book(store, book)
+    t = next(x for x in book["trades"] if x["ticker"] == ticker and x["status"] == "CLOSED" and x["closed"] == now.strftime("%Y-%m-%d %H:%M"))
+    return {"ok": True, "note": f"Sold {ticker} ({label}) at {price:.2f}: {t['result']:+,.2f} ({t['pct']:+.1f}%)."}
 
 
 def report(book: dict, prices: dict | None = None) -> dict:

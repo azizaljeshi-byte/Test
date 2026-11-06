@@ -184,13 +184,14 @@ def icon_key() -> str:
         f'<span><i class="dz-ic dz-k-{k}">{g}</i>{escape(n)}</span>' for k, (g, n) in ICONS.items()) + "</div>"
 
 
-def zone_row(kind: str, low: float, high: float | None, grade: str, reasons: list[str] | None = None) -> str:
+def zone_row(kind: str, low: float, high: float | None, grade: str, reasons: list[str] | None = None, away: str = "") -> str:
     """A support or resistance zone with its plain-English recommendation (no HIGH / MEDIUM / LOW on screen)."""
     words, tone = zone_words(kind, grade)
     price = f"{low:.2f}" + (f" to {high:.2f}" if high is not None and abs(high - low) > 1e-9 else "")
     why = f'<small>{escape(" · ".join(reasons))}</small>' if reasons else ""
+    far = f'<small class="dz-away">{escape(away)}</small>' if away else ""
     return (f'<div class="dz-zone dz-{kind}"><div><small>{"Support" if kind == "support" else "Resistance"}</small>'
-            f'<b>{price}</b>{why}</div><em class="dz-t-{tone}">{escape(words)}</em></div>')
+            f'<b>{price}</b>{far}{why}</div><em class="dz-t-{tone}">{escape(words)}</em></div>')
 
 
 def news_line(tier: str, headline: str, age: str = "", source: str = "") -> str:
@@ -246,8 +247,8 @@ COMPONENTS = """
 .dz-zone{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;
   margin-bottom:7px;background:var(--dz-surface);border-left:4px solid var(--dz-c)}
 .dz-zone.dz-support{--dz-c:var(--dz-buy)}.dz-zone.dz-resistance{--dz-c:var(--dz-act)}
-.dz-zone small{display:block;color:var(--dz-muted);font-size:.72rem}.dz-zone b{font-size:1.02rem;color:var(--dz-ink)}
-.dz-zone em{font-style:normal;font-size:.74rem;font-weight:700;text-align:right;max-width:140px;line-height:1.25}
+.dz-zone>div{flex:1;min-width:0;overflow-wrap:anywhere}.dz-zone small{display:block;color:var(--dz-muted);font-size:.72rem}.dz-zone small.dz-away{color:var(--dz-soft)}.dz-zone b{font-size:1.02rem;color:var(--dz-ink)}
+.dz-zone em{font-style:normal;font-size:.74rem;font-weight:700;text-align:right;flex:0 0 120px;line-height:1.25}
 .dz-t-good{color:var(--dz-buy)}.dz-t-mid{color:var(--dz-watch)}.dz-t-weak{color:var(--dz-muted)}
 .dz-ln{display:flex;gap:8px;align-items:center;font-size:.78rem;margin-top:8px;padding-top:8px;
   border-top:1px solid var(--dz-line);white-space:nowrap;overflow:hidden}
