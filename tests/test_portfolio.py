@@ -502,3 +502,17 @@ def test_ensure_levels_gives_stops_from_saved_readings_when_the_market_is_closed
     assert portfolio.ensure_levels(store) == 1
     b = portfolio.load_book(store)
     assert b["positions"]["AAA"]["stop"] == 85.0 and b["positions"]["AAA"]["broker_stop"] is False and portfolio.ensure_levels(store) == 0
+
+
+def test_owner_can_tighten_the_stop_but_never_loosen_it_and_edit_the_profit_exit():
+    store = FakeStore()
+    b = book_with(ORCL=(2.0, 137.25), BIG=(1000.0, 50.0))
+    b["positions"]["ORCL"]["stop"] = 100.0
+    portfolio.save_book(store, b)
+    assert not portfolio.set_levels(store, "ORCL", stop=90.0, price=118.0)["ok"]                 # loosening is refused
+    assert not portfolio.set_levels(store, "ORCL", stop=118.0, price=118.0)["ok"]                # at or over the price would sell at once
+    assert portfolio.set_levels(store, "ORCL", stop=110.0, price=118.0)["ok"]
+    assert portfolio.load_book(store)["positions"]["ORCL"]["stop"] == 110.0
+    assert not portfolio.set_levels(store, "ORCL", target=117.0, price=118.0)["ok"]
+    assert portfolio.set_levels(store, "ORCL", target=130.0, price=118.0)["ok"] and portfolio.load_book(store)["positions"]["ORCL"]["target"] == 130.0
+    assert portfolio.set_levels(store, "ORCL", clear_target=True, price=118.0)["ok"] and portfolio.load_book(store)["positions"]["ORCL"]["target"] is None

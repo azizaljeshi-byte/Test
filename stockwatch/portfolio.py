@@ -739,6 +739,39 @@ def set_broker_stop(store, ticker: str, on: bool) -> dict:
     return {"ok": True, "note": f"{ticker}: broker stop {'ticked at ' + format(pos['stop'], '.2f') if on and pos.get('stop') else 'not set'}."}
 
 
+def set_levels(store, ticker: str, stop: float | None = None, target: float | None = None, clear_target: bool = False, price: float | None = None) -> dict:
+    """The owner edits a position's lines. The hard stop may be TIGHTENED (moved up, still under the price) but never loosened; the profit exit may be set
+    to any price above the price now, or cleared. Returns {'ok', 'note'}."""
+    book = load_book(store)
+    pos = book["positions"].get(ticker)
+    if not pos:
+        return {"ok": False, "note": f"{ticker} is not open."}
+    if price is None:
+        sn = store.snapshot(ticker)
+        price = (ui._now(sn)[0] if sn else None)
+    notes = []
+    if stop is not None:
+        if pos.get("stop") is not None and stop < pos["stop"] - 0.005:
+            return {"ok": False, "note": f"{ticker}: the hard stop can be moved up, never down (it is {pos['stop']:.2f})."}
+        if price and stop >= price:
+            return {"ok": False, "note": f"{ticker}: a stop at {stop:.2f} is not under the price {price:.2f}; it would sell at once."}
+        if stop > 0 and stop != pos.get("stop"):
+            pos["stop"], pos["stop_by_owner"] = round(float(stop), 2), True
+            notes.append(f"stop {stop:.2f}")
+    if clear_target:
+        pos["target"] = None
+        notes.append("profit exit cleared")
+    elif target is not None and target > 0:
+        if price and target <= price:
+            return {"ok": False, "note": f"{ticker}: the profit exit must be above the price {price:.2f}."}
+        pos["target"] = round(float(target), 2)
+        notes.append(f"profit exit {target:.2f}")
+    if not notes:
+        return {"ok": True, "note": f"{ticker}: nothing changed."}
+    save_book(store, book)
+    return {"ok": True, "note": f"{ticker}: " + ", ".join(notes) + "."}
+
+
 def stop_summary(book: dict) -> dict:
     """{'set': n, 'total': n, 'none': [tickers with no broker stop], 'move': [(ticker, line, ticked)]} for the top of the tab."""
     pos = book["positions"]

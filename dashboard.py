@@ -785,8 +785,19 @@ def _pf_pick(ticker, do):
     st.session_state["pf_msg"] = fn(store, ticker)["note"]
 
 
-def _pf_broker(ticker):
-    portfolio_acct.set_broker_stop(store, ticker, bool(st.session_state.get(f"pf_bs_{ticker}")))
+def _pf_levels(rows):
+    """Apply the edits the owner made in the lines table: stop, profit exit, broker tick."""
+    edits = (st.session_state.get("pf_tbl") or {}).get("edited_rows", {})
+    msgs = []
+    for i, ch in edits.items():
+        t = rows[int(i)]["Stock"]
+        if "Stop" in ch or "Profit exit" in ch:
+            tgt = ch.get("Profit exit", None) if "Profit exit" in ch else None
+            r = portfolio_acct.set_levels(store, t, stop=ch.get("Stop"), target=tgt, clear_target=("Profit exit" in ch and not tgt), price=rows[int(i)]["Price now"])
+            msgs.append(r["note"])
+        if "Broker stop set" in ch:
+            portfolio_acct.set_broker_stop(store, t, bool(ch["Broker stop set"]))
+    st.session_state["pf_msg"] = " ".join(msgs) or "Saved."
 
 
 def _pf_close():
@@ -904,10 +915,15 @@ if view == "portfolio":
         _c2.button("Skip", key=f"pf_sk_{_t}", on_click=_pf_pick, args=(_t, "no"), use_container_width=True)
     _open_with_sell_buttons("pf_hand", "", _opens, _rest, portfolio_acct.sell_by_hand, css=portfolio_view.CSS,
                             intro="Each card is one of your holdings. The account never sells one to zero by itself; if you want out, tap the button under it.")
-    with st.expander("Broker stops: tick each one when it is set on your broker account"):
-        for _t, _p in pst["book"]["positions"].items():
-            st.checkbox(f"{_t} · " + (f"stop {_p['stop']:.2f}" if _p.get("stop") else "no stop yet: no price read") + (f" · profit exit {_p['target']:.2f}" if _p.get("target") else ""),
-                        value=bool(_p.get("broker_stop")), key=f"pf_bs_{_t}", on_change=_pf_broker, args=(_t,))
+    _rows = [{"Stock": _t, "Price now": ppx.get(_t), "Stop": _p.get("stop"), "Profit exit": _p.get("target"), "Broker stop set": bool(_p.get("broker_stop"))}
+             for _t, _p in pst["book"]["positions"].items()]
+    with st.expander("Stops and profit exits: edit a price, tick the broker box", expanded=False):
+        st.caption("Change the Stop or the Profit exit in any row, tick the broker box when the stop is set on your broker, then tap Save. A stop can be moved up (tightened), never down. Clear a profit exit to remove it.")
+        if _rows:
+            st.data_editor(_rows, key="pf_tbl", hide_index=True, use_container_width=True, disabled=["Stock", "Price now"],
+                           column_config={"Price now": st.column_config.NumberColumn(format="%.2f"), "Stop": st.column_config.NumberColumn(format="%.2f", step=0.01),
+                                          "Profit exit": st.column_config.NumberColumn(format="%.2f", step=0.01)})
+            st.button("Save", key="pf_tbl_save", on_click=_pf_levels, args=(_rows,), type="primary", use_container_width=True)
     _sales = [a for a in reversed(pst["book"]["actions"]) if a["action"] in portfolio_acct.SALES][:15]
     with st.expander("Record the price my broker really closed at"):
         if _sales:
