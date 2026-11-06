@@ -373,3 +373,40 @@ def test_seed_uses_the_owners_cash_when_given():
     out = portfolio.seed(store, D, [Holding("AAA", 1, 10, 100.0)], cash=250.0)
     b = portfolio.load_book(store)
     assert out["ok"] and b["cash"] == 250.0 and b["start"] == 1250.0 and "your cash" in b["actions"][0]["why"]
+
+
+def test_dip_flag_is_parsed_and_a_pick_is_never_also_a_dip():
+    hs = [Holding("A", 2, 0, None, notes="DIP"), Holding("B", 2, 0, None, notes="add on dip 0.5%"), Holding("C", 1, 5, 9.0, notes="KEEP and DIP"),
+          Holding("D", 2, 0, None, notes="dipping toes")]
+    assert portfolio.parse_dips(hs) == {"A": {"pct": None}, "B": {"pct": 0.5}}
+
+
+def test_a_dip_stock_gets_one_small_proposal_on_weakness_never_a_full_entry(monkeypatch):
+    store = FakeStore()
+    monkeypatch.setattr(portfolio, "us_session", lambda: "REGULAR")
+    b = book_with(BIG=(1000.0, 50.0))
+    b["dips"] = {"MU": {"pct": None}}
+    calm = snap("MU", price=100.0, chg=0.004, fund=30.0)
+    assert portfolio.step(b, {"MU": calm}, {"MU": 100.0}, D) == []                         # no weakness: nothing
+    dip = snap("MU", call="AVOID", chart="breakdown", mom="falling", price=95.0, line=100.0, chg=-0.05, fund=30.0)
+    did = portfolio.step(b, {"MU": dip}, {"MU": 95.0}, D)
+    assert [a["action"] for a in did] == ["PROPOSE DIP"] and "down 5.0% today" in did[0]["why"]
+    n = b["pick_props"]["MU"]["shares"]
+    assert n * 95.0 <= 0.0101 * portfolio.equity(b, {}) and "MU" not in b["positions"]    # about 1% of the account, nothing bought yet
+    assert portfolio.step(b, {"MU": dip}, {"MU": 95.0}, D + timedelta(minutes=5)) == []   # one proposal a day
+    monkeypatch.setattr(paper_live, "fresh_price", lambda s, n: (95.0, ""))
+    store._snaps = [dip]
+    portfolio.save_book(store, b)
+    assert portfolio.approve_pick(store, "MU", D)["ok"]
+    b = portfolio.load_book(store)
+    assert b["positions"]["MU"]["shares"] == n and "core" not in b["positions"]["MU"] and b["dip_last"]["MU"] == 95.0
+    lower = snap("MU", call="AVOID", chart="breakdown", mom="falling", price=94.0, line=100.0, chg=-0.06, fund=30.0)
+    assert portfolio.step(b, {"MU": lower}, {"MU": 94.0}, D + timedelta(days=1)) == []   # under 2% below the last add: waits
+    money_ok(b)
+
+
+def test_a_dip_name_stops_at_its_cap():
+    b = book_with(BIG=(1000.0, 50.0), MU=(30.0, 100.0))                                    # 30 x 100 = about 5% of the account already
+    b["dips"] = {"MU": {"pct": None}}
+    dip = snap("MU", chart="breakdown", call="AVOID", mom="falling", price=90.0, line=100.0, chg=-0.06)
+    assert portfolio.step(b, {"MU": dip}, {"MU": 90.0}, D) == []

@@ -17,7 +17,7 @@ CSS = PAPER_CSS + """
 ACTION_WORDS = {"TRIM": ("TRIMMED", "o"), "SIZE DOWN": ("SIZED DOWN", "o"), "ADD": ("ADDED", "p"), "NEW NAME": ("NEW NAME", "p"),
                 "PROPOSE EXIT": ("PROPOSAL", "l"), "SELL ALL": ("SOLD", "l"), "KEPT": ("KEPT", "n"), "SEED": ("STARTED", "n"),
                 "PROPOSAL WITHDRAWN": ("WITHDRAWN", "n"),
-                "PROPOSE TRIM": ("PROPOSAL", "l"), "PROPOSE STARTER": ("PROPOSAL", "l"), "STARTER": ("STARTER", "p"), "REBUY": ("BOUGHT BACK", "p"),
+                "PROPOSE TRIM": ("PROPOSAL", "l"), "PROPOSE STARTER": ("PROPOSAL", "l"), "PROPOSE DIP": ("PROPOSAL", "l"), "DIP ADD": ("ADDED", "p"), "STARTER": ("STARTER", "p"), "REBUY": ("BOUGHT BACK", "p"),
                 "REMINDER": ("STILL FALLING", "o"), "SKIPPED": ("SKIPPED", "n"), "REBUY DROPPED": ("DROPPED", "n")}
 
 
@@ -92,6 +92,8 @@ def parts(st: dict, prices: dict | None = None, now=None) -> tuple[str, list, st
         tags = [("HOLDING" if pos.get("source") == "holding" else "ADDED BY IT", "o")]
         if ticker in book.get("picks", {}):
             tags.insert(0, ("YOUR PICK", "p"))
+        if ticker in book.get("dips", {}):
+            tags.insert(0, ("ADDS ON DIPS", "p"))
         if ticker in book.get("rebuys", {}):
             tags.append(("BUY-BACK WAITING", "o"))
         if ticker in book["proposals"]:

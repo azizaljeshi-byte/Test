@@ -878,7 +878,8 @@ if view == "portfolio":
             _c1.button(f"Sell the rest of {_t}", key=f"pf_sell_{_t}", on_click=_pf_ask, args=(_t,), type="primary", use_container_width=True)
             _c2.button("Keep it", key=f"pf_keep_{_t}", on_click=_pf_keep, args=(_t,), use_container_width=True)
     for _t, _p in pst["book"].get("pick_props", {}).items():
-        _ask = f"Sell {_p['shares']:g} of the trading slice" if _p["kind"] == "trim" else f"Buy a starter of {_p['shares']:g}"
+        _ask = (f"Sell {_p['shares']:g} of the trading slice" if _p["kind"] == "trim" else f"Buy a starter of {_p['shares']:g}" if _p["kind"] == "starter"
+                else f"Add a small piece, {_p['shares']:g} shares")
         st.markdown(f"<div class='pp'><div class='pf-prop'><b>{portfolio_view.link(_t)}: {portfolio_view.escape(_ask)}?</b><br><small>{portfolio_view.escape(_p['why'])}. "
                     f"Your core stays. It stays here until you answer.</small></div></div>", unsafe_allow_html=True)
         _c1, _c2 = st.columns(2)

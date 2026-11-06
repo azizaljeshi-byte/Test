@@ -54,6 +54,12 @@ PICK_LOSS_PCT = 10.0           # a pick this far under the owner's cost also get
 REBUY_WAIT_DAYS = 10           # an approved trim waits this many trading days for the dip to turn before the re-buy is dropped
 REBUY_CHASE = 1.02             # the re-buy is never above the sale price by more than this (no chasing)
 PICKS_EVERY_MIN = 5            # how often the Notes are read again
+# stocks the owner flags DIP: add a small fractional piece on weakness (a drop, a weak or broken chart, testing support), never a full entry
+DIP_RE = re.compile(r"\bDIP\b(?:\s*(\d+(?:\.\d+)?)\s*%)?", re.I)
+DIP_DROP = 0.03                # down this much on the day is a dip
+DIP_STEP_PCT = 1.0             # one add: this share of the account (fractional shares), unless the note says "DIP 0.5%"
+DIP_MAX_PCT = 3.0              # the most one DIP name may reach, as a share of the account
+DIP_SPACING = 0.02             # the next add needs a price this far under the last add
 PICK_RE = re.compile(r"\b(?:KEEP|PICK)\b(?:\s*(\d+(?:\.\d+)?)\s*%)?", re.I)
 
 
@@ -68,7 +74,7 @@ def _ts(now: datetime) -> str:
 def new_book() -> dict:
     return {"cash": 0.0, "start": 0.0, "positions": {}, "actions": [], "blocked": [], "proposals": {}, "seeded": None, "next_id": 1,
             "poor": {}, "checked": {}, "locks": {}, "adds_day": {"day": "", "n": 0, "names": []},
-            "picks": {}, "pick_props": {}, "rebuys": {}, "reminded": {}}
+            "picks": {}, "pick_props": {}, "rebuys": {}, "reminded": {}, "dips": {}, "dip_last": {}}
 
 
 def load_book(store) -> dict:
@@ -129,6 +135,17 @@ def parse_picks(holdings) -> dict:
     return out
 
 
+def parse_dips(holdings) -> dict:
+    """{ticker: {'pct': step size or None}} for rows whose Notes say DIP ('DIP 0.5%' sets the step). A KEEP or PICK row is never also a DIP row."""
+    out = {}
+    for h in holdings or []:
+        n = getattr(h, "notes", None) or ""
+        m = DIP_RE.search(n)
+        if m and not PICK_RE.search(n):
+            out[h.ticker] = {"pct": float(m.group(1)) if m.group(1) else None}
+    return out
+
+
 def _apply_picks(book: dict, picks: dict) -> None:
     """Mark the core slice: half of what a pick holds is never sold by the system. Dropping the flag releases it."""
     book["picks"] = picks
@@ -137,7 +154,7 @@ def _apply_picks(book: dict, picks: dict) -> None:
             pos.setdefault("core", round(pos["shares"] * CORE_SHARE, 3))
         else:
             pos.pop("core", None)
-    for t in [t for t in book["pick_props"] if t not in picks]:
+    for t in [t for t, pr in book["pick_props"].items() if t not in picks and pr.get("kind") != "dip"]:
         book["pick_props"].pop(t)
         book["rebuys"].pop(t, None)
 
@@ -154,7 +171,9 @@ def refresh_picks(store, book: dict, now: datetime) -> bool:
     book["picks_at"] = now.isoformat()
     try:
         from . import live
-        _apply_picks(book, parse_picks(live.current_portfolio(store).holdings))
+        hs = live.current_portfolio(store).holdings
+        _apply_picks(book, parse_picks(hs))
+        book["dips"] = parse_dips(hs)
     except Exception:
         log.exception("portfolio picks read failed")
     return True
@@ -195,6 +214,7 @@ def seed(store, now: datetime | None = None, holdings=None, cash: float | None =
     if not book["positions"]:
         return {"ok": False, "note": "No holdings with shares were found in the Sheet, so nothing was started."}
     _apply_picks(book, parse_picks(holdings))
+    book["dips"] = parse_dips(holdings)
     book["picks_at"] = now.isoformat()
     book["cash"] = round(cash, 2) if cash and cash > 0 else round(cost_total * CASH_RESERVE_PCT / 100, 2)    # the owner's real cash when he gives it
     book["start"] = round(cost_total + book["cash"], 2)
@@ -490,6 +510,44 @@ def _starters(book: dict, snaps: dict, prices: dict, now: datetime, done: list) 
         done.append(_log(book, now, t, "PROPOSE STARTER", n, price, book["pick_props"][t]["why"] + ". Waiting for the owner."))
 
 
+def _dips(book: dict, snaps: dict, prices: dict, now: datetime, done: list) -> None:
+    """A DIP stock on weakness (down 3% on the day, a weak or broken chart, or testing support): one small fractional add PROPOSAL a day.
+    Never a full entry: the name stops at DIP_MAX_PCT of the account, and the next add needs a price 2% under the last one."""
+    day = now.date().isoformat()
+    for t, meta in book.get("dips", {}).items():
+        snap, price = snaps.get(t), prices.get(t)
+        if not snap or not price or t in book["pick_props"] or t in book.get("picks", {}):
+            continue
+        until = book.get("silenced", {}).get(t)
+        if (until and day < until) or book.get("dip_day", {}).get(t) == day:
+            continue
+        chg = today_change(snap)
+        code = (ui.price_status(snap) or {}).get("code")
+        reasons = []
+        if chg is not None and chg <= -DIP_DROP:
+            reasons.append(f"down {abs(chg) * 100:.1f}% today")
+        if code in BROKEN_CHART:
+            reasons.append(f"the chart reads {str(code).replace('_', ' ')}")
+        elif code in WEAK_CHART:
+            reasons.append(f"the chart reads {str(code).replace('_', ' ')}")
+        if not reasons:
+            continue
+        last = book["dip_last"].get(t)
+        if last and price > last * (1 - DIP_SPACING):
+            continue
+        eq = equity(book, prices)
+        have = book["positions"].get(t, {}).get("shares", 0.0) * price
+        room = eq * DIP_MAX_PCT / 100 - have
+        pct = meta.get("pct") or DIP_STEP_PCT
+        n = math.floor(min(eq * pct / 100, room, book["cash"]) / price * 100) / 100
+        if n * price < MIN_ADD_USD:
+            continue
+        book.setdefault("dip_day", {})[t] = day
+        book["pick_props"][t] = {"kind": "dip", "shares": n, "price": price, "since": _ts(now),
+                                 "why": f"your DIP stock: {' and '.join(reasons)}. A small piece of {pct:g}% of the account ({n:g} shares), at most {DIP_MAX_PCT:g}% in all"}
+        done.append(_log(book, now, t, "PROPOSE DIP", n, price, book["pick_props"][t]["why"] + ". Waiting for the owner."))
+
+
 def _rebuys(book: dict, snaps: dict, prices: dict, now: datetime, mins, gate: str, done: list) -> None:
     """After an approved trim, buy the sold shares back by itself when the fall has stopped and the stock turns up near its exit line."""
     day = now.date().isoformat()
@@ -535,6 +593,7 @@ def step(book: dict, snaps: dict, prices: dict, now: datetime, gate: str = "") -
         return done
     _rebuys(book, snaps, prices, now, mins, gate, done)
     _starters(book, snaps, prices, now, done)
+    _dips(book, snaps, prices, now, done)
     cands = []
     for ticker, snap in snaps.items():
         price = prices.get(ticker)
@@ -629,6 +688,13 @@ def approve_pick(store, ticker: str, now: datetime | None = None) -> dict:
         book["positions"][ticker]["trims"] = book["positions"][ticker].get("trims", 0) + 1
         book["rebuys"][ticker] = {"shares": round(n, 3), "price": price, "until": _bdays_after(now.date(), REBUY_WAIT_DAYS).isoformat()}
         note = f"Sold {n:g} of {ticker} at {price:.2f}. The core slice stays, and it buys back by itself when the fall stops."
+    elif prop["kind"] == "dip":
+        n = math.floor(min(prop["shares"], book["cash"] / price) * 100) / 100
+        if n * price < MIN_ADD_USD:
+            return {"ok": False, "note": f"Not enough cash for a small add in {ticker}."}
+        _buy(book, ticker, n, price, now, "DIP ADD", f"{OVERRIDE}: approved small add on weakness at {price:.2f}", snap, "added")
+        book["dip_last"][ticker] = price
+        note = f"Bought {n:g} {ticker} at {price:.2f}."
     else:
         n = math.floor(min(prop["shares"], book["cash"] / price) * 100) / 100
         if n * price < MIN_ADD_USD:
@@ -662,8 +728,8 @@ def push(store, did: list[dict]) -> None:
         from . import events
         for a in did:
             who = {"TRIM": "trimmed", "SIZE DOWN": "sized down", "ADD": "added to", "NEW NAME": "bought a new name,", "PROPOSE EXIT": "proposes selling the rest of",
-                   "PROPOSE TRIM": "proposes trimming", "PROPOSE STARTER": "proposes a starter in", "REBUY": "bought back", "REMINDER": "reminder:"}.get(a["action"], a["action"].lower())
-            events._push(f"Portfolio {who} {a['ticker']}", [f"{a['why']}"], 4 if a["action"] in ("PROPOSE EXIT", "PROPOSE TRIM", "PROPOSE STARTER") else 3, "briefcase", a["ticker"], "log", store)
+                   "PROPOSE TRIM": "proposes trimming", "PROPOSE STARTER": "proposes a starter in", "PROPOSE DIP": "proposes a small add to", "DIP ADD": "added a small piece of", "REBUY": "bought back", "REMINDER": "reminder:"}.get(a["action"], a["action"].lower())
+            events._push(f"Portfolio {who} {a['ticker']}", [f"{a['why']}"], 4 if a["action"] in ("PROPOSE EXIT", "PROPOSE TRIM", "PROPOSE STARTER", "PROPOSE DIP") else 3, "briefcase", a["ticker"], "log", store)
     except Exception:
         log.exception("portfolio push failed")
 
