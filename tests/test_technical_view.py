@@ -32,7 +32,7 @@ def test_a_moving_average_read_is_price_above_or_below_and_short_history_is_na()
 def test_oscillator_reads_and_atr_is_not_a_vote():
     ev = tv.evidence(bars(300, drift=1.0))
     names = {r["name"]: r for r in ev["indicators"]}
-    assert len(names) == 13 and names["RSI (14)"]["read"] == "Sell"           # a steady climb is overbought
+    assert len(names) == 13 and names["RSI (14)"]["read"] == "Overbought"           # a steady climb is overbought: a grey watch, not a Sell
     total = ev["ind_summary"]["buy"] + ev["ind_summary"]["sell"] + ev["ind_summary"]["neutral"]
     assert total == 11 and names["MACD histogram"]["read"] in ("Rising", "Falling", "Flat") and names["ATR (14)"]["read"] in ("Less volatility", "High volatility")
 
@@ -67,3 +67,15 @@ def test_macd_histogram_row_carries_the_last_five_sessions():
     h = tv._bars(row["bars"])
     assert h.count("tv-hc") == 5 and "-1.47" in h and "+0.76" in h and "dn" in h and "up" in h
     assert tv._bars(None) == "" and tv._bars([1.0]) == ""
+
+
+def test_midline_reads_like_investing_com():
+    """Owner, 6 Nov (CRM): RSI 39 is a Sell, a Stochastic of 31 is a Sell, CCI under -100 is a Sell; the extremes are only 'Oversold' / 'Overbought'."""
+    import inspect
+    src = inspect.getsource(tv.indicators)
+    assert "mid(r, 30, 50, 70)" in src and "mid(k, 20, 50, 80)" in src and "cci < -100 else NEUTRAL" in src
+    t = tv.tally([tv.OVERSOLD, tv.OVERBOUGHT, tv.BUY, tv.SELL])
+    assert (t["buy"], t["sell"], t["neutral"]) == (1, 1, 2)
+    down = tv.evidence(bars(300, drift=-0.3))
+    r = {x["name"]: x["read"] for x in down["indicators"]}
+    assert r["RSI (14)"] in ("Sell", "Oversold") and "Buy" not in (r["RSI (14)"], r["CCI (14)"])

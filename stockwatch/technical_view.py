@@ -2,7 +2,8 @@
 or Neutral read, with a summary. Display only: computed from the stock's own daily bars (completed days only), it feeds no
 score, call, plan or alert.
 
-Rules for each read are the usual textbook ones and are written next to each indicator below. A line that cannot be
+Rules for each read are written next to each indicator below. Since 6 Nov (owner) the bounded oscillators read like Investing.com: above the
+midline (50) is Buy, below is Sell, and the extremes (under 30 or over 70) are shown as a grey Oversold or Overbought, a watch and not a vote. A line that cannot be
 computed (too few bars) is "n/a", never a Buy or Sell. ATR is shown for context and is not counted as a vote.
 """
 from __future__ import annotations
@@ -15,9 +16,10 @@ import pandas as pd
 from . import technical as ta
 
 BUY, SELL, NEUTRAL, NA = "Buy", "Sell", "Neutral", "n/a"
+OVERSOLD, OVERBOUGHT = "Oversold", "Overbought"
 MA_PERIODS = (5, 10, 20, 50, 100, 200)
 CONTEXT_ONLY = ("ATR (14)", "MACD histogram")     # shown, never counted as a Buy or Sell vote
-CLS = {BUY: "buy", SELL: "sell", NEUTRAL: "neu", NA: "na", "Rising": "neu", "Falling": "neu", "Flat": "neu"}
+CLS = {BUY: "buy", SELL: "sell", NEUTRAL: "neu", NA: "na", "Rising": "neu", "Falling": "neu", "Flat": "neu", OVERSOLD: "neu", OVERBOUGHT: "neu"}
 
 
 def completed(hist: pd.DataFrame, today=None, session_open: bool = False) -> pd.DataFrame:
@@ -96,13 +98,17 @@ def indicators(h: pd.DataFrame) -> list[dict]:
     def osc(v, lo, hi):
         return BUY if v < lo else SELL if v > hi else NEUTRAL
 
+    def mid(v, lo, m, hi):
+        """Midline reading (Investing.com style): extremes are a grey watch, otherwise above the midline Buy, below it Sell."""
+        return OVERSOLD if v < lo else OVERBOUGHT if v > hi else BUY if v > m else SELL if v < m else NEUTRAL
+
     r = float(ta.rsi(c).iloc[-1])
-    add("RSI (14)", r, osc(r, 30, 70), "under 30 Buy, over 70 Sell")
+    add("RSI (14)", r, mid(r, 30, 50, 70), "over 50 Buy, under 50 Sell; under 30 Oversold, over 70 Overbought (watch)")
     k = float(_stoch(h).iloc[-1])
-    add("Stochastic (9,6)", k, osc(k, 20, 80), "under 20 Buy, over 80 Sell")
+    add("Stochastic (9,6)", k, mid(k, 20, 50, 80), "over 50 Buy, under 50 Sell; under 20 Oversold, over 80 Overbought (watch)")
     rs = ta.rsi(c)
     srsi = float((100 * (rs - rs.rolling(14).min()) / (rs.rolling(14).max() - rs.rolling(14).min()).replace(0, np.nan)).iloc[-1])
-    add("Stochastic RSI (14)", srsi, osc(srsi, 20, 80), "under 20 Buy, over 80 Sell")
+    add("Stochastic RSI (14)", srsi, mid(srsi, 20, 50, 80), "over 50 Buy, under 50 Sell; under 20 Oversold, over 80 Overbought (watch)")
     m, _ = ta.macd(c)
     mv = float(m.iloc[-1])
     add("MACD (12,26)", mv, BUY if mv > 0 else SELL if mv < 0 else NEUTRAL, "above zero Buy, below zero Sell")
@@ -117,19 +123,19 @@ def indicators(h: pd.DataFrame) -> list[dict]:
     add("ADX (14)", adx, (BUY if pdi > mdi else SELL) if adx > 25 else NEUTRAL, "over 25 is a trend: Buy if up-pressure leads, else Sell")
     ll, hh = h["Low"].rolling(14).min(), h["High"].rolling(14).max()
     wr = float((-100 * (hh - c) / (hh - ll).replace(0, np.nan)).iloc[-1])
-    add("Williams %R (14)", wr, osc(wr, -80, -20), "under -80 Buy, over -20 Sell")
+    add("Williams %R (14)", wr, mid(wr, -80, -50, -20), "over -50 Buy, under -50 Sell; under -80 Oversold, over -20 Overbought (watch)")
     tp = (h["High"] + h["Low"] + c) / 3
     sma = tp.rolling(14).mean()
     dev = tp.rolling(14).apply(lambda w: np.abs(w - w.mean()).mean(), raw=True)     # mean deviation around the window's own average
     cci = float(((tp - sma) / (0.015 * dev.replace(0, np.nan))).iloc[-1])
-    add("CCI (14)", cci, osc(cci, -100, 100), "under -100 Buy, over 100 Sell")
+    add("CCI (14)", cci, BUY if cci > 100 else SELL if cci < -100 else NEUTRAL, "over 100 Buy (strong up-move), under -100 Sell (strong down-move)")
     atr = float(ta.atr(h).iloc[-1])
     rows.append({"name": "ATR (14)", "value": f"{atr:.2f} ({atr / price * 100:.1f}%)",
                  "read": "High volatility" if atr / price > 0.04 else "Less volatility", "rule": "context only, not a vote"})
     hl = price - float(h["High"].rolling(14).mean().iloc[-1])
     add("Highs/Lows (14)", hl, BUY if hl > 0 else SELL, "close above the average of the last 14 highs: Buy")
     uo = _uo(h)
-    add("Ultimate Oscillator", uo, osc(uo, 30, 70), "under 30 Buy, over 70 Sell")
+    add("Ultimate Oscillator", uo, mid(uo, 30, 50, 70), "over 50 Buy, under 50 Sell; under 30 Oversold, over 70 Overbought (watch)")
     roc = float((100 * (c / c.shift(12) - 1)).iloc[-1])
     add("ROC (12)", roc, BUY if roc > 0 else SELL if roc < 0 else NEUTRAL, "above zero Buy, below zero Sell", "{:+.2f}%")
     e13 = ta.ema(c, 13)
@@ -146,7 +152,7 @@ def indicators(h: pd.DataFrame) -> list[dict]:
 
 
 def tally(reads: list[str]) -> dict:
-    b, s, n = reads.count(BUY), reads.count(SELL), reads.count(NEUTRAL)
+    b, s, n = reads.count(BUY), reads.count(SELL), reads.count(NEUTRAL) + reads.count(OVERSOLD) + reads.count(OVERBOUGHT)
     k = b + s + n
     if not k:
         return {"buy": 0, "sell": 0, "neutral": 0, "word": "n/a", "cls": "na"}
