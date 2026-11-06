@@ -262,3 +262,95 @@ def test_the_page_renders_every_part_and_escapes_text():
     assert "?view=target&t=AAA" in html and "EXIT PROPOSED" in html and "TRIMMED" in html or "1 trim or sale" in html
     assert "&lt;b&gt;" in html and "<b>and</b>" not in html
     assert "Not started yet" in pv.html({"book": portfolio.new_book(), "state": None})
+
+
+# ------------------------------------------------------------------ the owner's picks (KEEP / PICK)
+
+def pick_book():
+    b = book_with(GOOG=(100.0, 50.0), BIG=(1000.0, 50.0))
+    portfolio._apply_picks(b, {"GOOG": {"pct": None}})
+    return b
+
+
+def test_notes_flag_picks_and_half_of_a_pick_is_core():
+    hs = [Holding("A", 1, 10, 5.0, notes="my favourite, KEEP"), Holding("B", 1, 10, 5.0, notes="pick 3%"), Holding("C", 1, 10, 5.0, notes="keeper later"),
+          Holding("D", 1, 10, 5.0)]
+    assert portfolio.parse_picks(hs) == {"A": {"pct": None}, "B": {"pct": 3.0}}
+    b = pick_book()
+    assert b["positions"]["GOOG"]["core"] == 50.0 and "core" not in b["positions"]["BIG"]
+    portfolio._apply_picks(b, {})
+    assert "core" not in b["positions"]["GOOG"]
+
+
+def test_a_poor_pick_is_never_trimmed_alone_it_is_proposed_and_reminded_once_a_day():
+    b = pick_book()
+    poor = snap("GOOG", call="EXIT", chart="weakening", mom="falling", price=40.0, line=42.0)
+    did = portfolio.step(b, {"GOOG": poor}, {"GOOG": 40.0}, LATE)
+    assert sorted(a["action"] for a in did) == ["PROPOSE TRIM", "REMINDER"]
+    assert b["positions"]["GOOG"]["shares"] == 100.0                                    # nothing sold
+    assert b["pick_props"]["GOOG"]["shares"] == 25.0 and "-20%" in did[0]["why"] + did[1]["why"]
+    assert portfolio.step(b, {"GOOG": poor}, {"GOOG": 40.0}, LATE + timedelta(seconds=30)) == []
+    nxt = portfolio.step(b, {"GOOG": poor}, {"GOOG": 40.0}, LATE + timedelta(days=1))
+    assert [a["action"] for a in nxt] == ["REMINDER"]                                   # one reminder a day, still one proposal
+    money_ok(b)
+
+
+def test_approved_trim_sells_only_the_trading_slice_then_rebuys_by_itself_when_it_turns(monkeypatch):
+    store = FakeStore([snap("GOOG", price=40.0)])
+    monkeypatch.setattr(portfolio, "us_session", lambda: "REGULAR")
+    monkeypatch.setattr(paper_live, "fresh_price", lambda s, n: (40.0, ""))
+    b = pick_book()
+    b["pick_props"]["GOOG"] = {"kind": "trim", "shares": 25.0, "price": 40.0, "since": "x", "why": "w"}
+    portfolio.save_book(store, b)
+    assert portfolio.approve_pick(store, "GOOG", D)["ok"]
+    b = portfolio.load_book(store)
+    assert b["positions"]["GOOG"]["shares"] == 75.0 and b["rebuys"]["GOOG"]["shares"] == 25.0 and not b["pick_props"]
+    falling = snap("GOOG", call="EXIT", chart="weakening", mom="falling", price=38.0, line=37.0, chg=-0.02)
+    assert portfolio.step(b, {"GOOG": falling}, {"GOOG": 38.0}, D + timedelta(days=1)) == []      # still falling: waits
+    turned = snap("GOOG", call="ADD", chart="strong_uptrend", price=40.5, line=37.0, chg=0.01, fund=50.0)    # weak fundamentals: no fresh add on top
+    did = portfolio.step(b, {"GOOG": turned}, {"GOOG": 40.5}, D + timedelta(days=2))
+    assert [a["action"] for a in did] == ["REBUY"] and b["positions"]["GOOG"]["shares"] == 100.0 and not b["rebuys"]
+    money_ok(b)
+
+
+def test_the_trading_slice_is_the_most_a_trim_can_sell_and_skip_is_logged(monkeypatch):
+    store = FakeStore([snap("GOOG", price=40.0)])
+    monkeypatch.setattr(portfolio, "us_session", lambda: "REGULAR")
+    monkeypatch.setattr(paper_live, "fresh_price", lambda s, n: (40.0, ""))
+    b = pick_book()
+    b["positions"]["GOOG"]["shares"] = 52.0                                              # only 2 shares above the core of 50
+    b["pick_props"]["GOOG"] = {"kind": "trim", "shares": 25.0, "price": 40.0, "since": "x", "why": "w"}
+    portfolio.save_book(store, b)
+    assert portfolio.approve_pick(store, "GOOG", D)["ok"]
+    assert portfolio.load_book(store)["positions"]["GOOG"]["shares"] == 50.0
+    b = portfolio.load_book(store)
+    b["pick_props"]["GOOG"] = {"kind": "trim", "shares": 1.0, "price": 40.0, "since": "x", "why": "w"}
+    portfolio.save_book(store, b)
+    assert portfolio.skip_pick(store, "GOOG", D)["ok"]
+    assert portfolio.load_book(store)["actions"][-1]["action"] == "SKIPPED"
+    portfolio.save_book(store, portfolio.load_book(store))
+
+
+def test_a_pick_not_held_gets_a_starter_proposal_even_in_breakdown_and_approving_buys_it(monkeypatch):
+    broken = snap("DELL", call="AVOID", chart="breakdown", mom="falling", price=100.0, line=110.0, fund=83.0)
+    store = FakeStore([broken])
+    monkeypatch.setattr(portfolio, "us_session", lambda: "REGULAR")
+    monkeypatch.setattr(paper_live, "fresh_price", lambda s, n: (100.0, ""))
+    b = pick_book()
+    portfolio._apply_picks(b, {"GOOG": {}, "DELL": {"pct": 3.0}})
+    did = portfolio.step(b, {"DELL": broken}, {"DELL": 100.0}, D)
+    assert [a["action"] for a in did] == ["PROPOSE STARTER"] and "DELL" not in b["positions"]
+    n = b["pick_props"]["DELL"]["shares"]
+    assert n == pytest.approx(0.03 * portfolio.equity(b, {}) / 100.0, abs=0.01)          # 3% of the account at $100
+    portfolio.save_book(store, b)
+    assert portfolio.approve_pick(store, "DELL", D)["ok"]
+    b = portfolio.load_book(store)
+    assert b["positions"]["DELL"]["shares"] == n and b["positions"]["DELL"]["core"] == pytest.approx(n / 2, abs=0.001)
+    money_ok(b)
+
+
+def test_an_old_book_without_the_pick_keys_still_loads():
+    store = FakeStore()
+    store.s[portfolio.BOOK_KEY] = json.dumps({"cash": 1.0, "start": 1.0, "positions": {}, "actions": [], "blocked": [], "proposals": {}})
+    b = portfolio.load_book(store)
+    assert b["picks"] == {} and b["rebuys"] == {} and b["pick_props"] == {}

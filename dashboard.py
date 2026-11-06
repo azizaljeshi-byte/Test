@@ -780,6 +780,11 @@ def _pf_keep(ticker):
     st.session_state["pf_msg"] = portfolio_acct.keep_it(store, ticker)["note"]
 
 
+def _pf_pick(ticker, do):
+    fn = portfolio_acct.approve_pick if do == "yes" else portfolio_acct.skip_pick
+    st.session_state["pf_msg"] = fn(store, ticker)["note"]
+
+
 def _pf_reseed(step):
     if step == "ask":
         st.session_state["pf_reseed"] = True
@@ -871,6 +876,13 @@ if view == "portfolio":
             _c1, _c2 = st.columns(2)
             _c1.button(f"Sell the rest of {_t}", key=f"pf_sell_{_t}", on_click=_pf_ask, args=(_t,), type="primary", use_container_width=True)
             _c2.button("Keep it", key=f"pf_keep_{_t}", on_click=_pf_keep, args=(_t,), use_container_width=True)
+    for _t, _p in pst["book"].get("pick_props", {}).items():
+        _ask = f"Sell {_p['shares']:g} of the trading slice" if _p["kind"] == "trim" else f"Buy a starter of {_p['shares']:g}"
+        st.markdown(f"<div class='pp'><div class='pf-prop'><b>{portfolio_view.link(_t)}: {portfolio_view.escape(_ask)}?</b><br><small>{portfolio_view.escape(_p['why'])}. "
+                    f"Your core stays. It stays here until you answer.</small></div></div>", unsafe_allow_html=True)
+        _c1, _c2 = st.columns(2)
+        _c1.button("Approve", key=f"pf_ap_{_t}", on_click=_pf_pick, args=(_t, "yes"), type="primary", use_container_width=True)
+        _c2.button("Skip", key=f"pf_sk_{_t}", on_click=_pf_pick, args=(_t, "no"), use_container_width=True)
     _open_with_sell_buttons("pf_hand", "", _opens, _rest, portfolio_acct.sell_by_hand, css=portfolio_view.CSS,
                             intro="Each card is one of your holdings. The account never sells one to zero by itself; if you want out, tap the button under it.")
     if st.session_state.get("pf_reseed"):
@@ -880,7 +892,7 @@ if view == "portfolio":
         _c2.button("Cancel", key="pf_re_no", on_click=_pf_reseed, args=("cancel",), use_container_width=True)
     else:
         st.button("Restart from my Sheet (after I change my holdings)", key="pf_re_ask", on_click=_pf_reseed, args=("ask",), use_container_width=True)
-    st.caption("A fake account built from the holdings in your Sheet, at your cost, with a 10% cash reserve. Fills are simulated at the latest price, so they are approximate. Build: portfolio-1.")
+    st.caption("A fake account built from the holdings in your Sheet, at your cost, with a 10% cash reserve. Fills are simulated at the latest price, so they are approximate. Build: portfolio-2.")
 
 if view == "quick":
     qst = quick.status(store)

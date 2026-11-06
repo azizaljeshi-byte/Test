@@ -16,7 +16,9 @@ CSS = PAPER_CSS + """
 
 ACTION_WORDS = {"TRIM": ("TRIMMED", "o"), "SIZE DOWN": ("SIZED DOWN", "o"), "ADD": ("ADDED", "p"), "NEW NAME": ("NEW NAME", "p"),
                 "PROPOSE EXIT": ("PROPOSAL", "l"), "SELL ALL": ("SOLD", "l"), "KEPT": ("KEPT", "n"), "SEED": ("STARTED", "n"),
-                "PROPOSAL WITHDRAWN": ("WITHDRAWN", "n")}
+                "PROPOSAL WITHDRAWN": ("WITHDRAWN", "n"),
+                "PROPOSE TRIM": ("PROPOSAL", "l"), "PROPOSE STARTER": ("PROPOSAL", "l"), "STARTER": ("STARTER", "p"), "REBUY": ("BOUGHT BACK", "p"),
+                "REMINDER": ("STILL FALLING", "o"), "SKIPPED": ("SKIPPED", "n"), "REBUY DROPPED": ("DROPPED", "n")}
 
 
 def link(ticker: str) -> str:
@@ -36,6 +38,8 @@ def card(ticker: str, pos: dict, px, tags: list, proposal: dict | None, share: f
     sub = [f'<span>{"Worth now " + pl.usd(shares * px) if px else "No price now"}</span>']
     if share is not None:
         sub.append(f'<span>{share:.1f}% of the account</span>')
+    if pos.get("core"):
+        sub.append(f'<span>core {pos["core"]:g} (never sold by it) · trading {max(0.0, shares - pos["core"]):g}</span>')
     if pos.get("trims"):
         sub.append(f'<span>trimmed {pos["trims"]}×</span>')
     why = f'<div class="pl-why">Proposed: sell the rest. {escape(proposal["why"])}</div>' if proposal else ""
@@ -51,7 +55,7 @@ def _actions(book: dict, n: int = 25) -> str:
     rows = []
     for a in reversed(book["actions"][-n:]):
         word, c = ACTION_WORDS.get(a["action"], (a["action"], "n"))
-        what = "" if a["action"] in ("SEED", "KEPT", "PROPOSAL WITHDRAWN") else f' {a["shares"]:g} at {pl.usd(a["price"])}' if a.get("price") else ""
+        what = "" if a["action"] in ("SEED", "KEPT", "PROPOSAL WITHDRAWN", "REMINDER", "REBUY DROPPED") else f' {a["shares"]:g} at {pl.usd(a["price"])}' if a.get("price") else ""
         res = "" if a.get("result") is None or a["action"] in ("ADD", "NEW NAME") else f' · {pl.signed(a["result"])}'
         who = "" if a["ticker"] == "—" else f'<b>{link(a["ticker"])}</b> '
         rows.append(f'<div class="pf-act"><span class="pl-tag {c}">{word}</span> {who}{escape(what)}{escape(res)}'
@@ -76,6 +80,7 @@ def parts(st: dict, prices: dict | None = None, now=None) -> tuple[str, list, st
     top = (f'<div class="pp-c"><div class="pp-h">Portfolio</div>'
            f'<div class="pp-m">A fake account that mirrors the stocks you hold, at your cost, and manages them carefully. It trims poor positions in steps, '
            f'sizes down big ones and adds only to undervalued stocks with very strong fundamentals. It never sells one to zero without your yes. '
+           f'Stocks you flag KEEP or PICK in the Notes column are yours: half is a core it never sells, the other half is traded only when you tap Approve. '
            f'Nothing here is real money.</div>{msg}'
            f'{pl.summary_html(m, sales, closed_label="trim or sale" if sales == 1 else "trims and sales")}'
            f'<div class="pp-m" style="margin-top:8px">Started {pl.riyadh(book["seeded"])} Riyadh time · {today} · '
@@ -85,6 +90,10 @@ def parts(st: dict, prices: dict | None = None, now=None) -> tuple[str, list, st
     for ticker, pos in sorted(book["positions"].items(), key=lambda kv: -(kv[1]["shares"] * (prices.get(kv[0]) or kv[1]["entry"]))):
         px = prices.get(ticker)
         tags = [("HOLDING" if pos.get("source") == "holding" else "ADDED BY IT", "o")]
+        if ticker in book.get("picks", {}):
+            tags.insert(0, ("YOUR PICK", "p"))
+        if ticker in book.get("rebuys", {}):
+            tags.append(("BUY-BACK WAITING", "o"))
         if ticker in book["proposals"]:
             tags.append(("EXIT PROPOSED", "l"))
         elif pos.get("trims"):

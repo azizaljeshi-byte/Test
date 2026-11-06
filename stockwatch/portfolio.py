@@ -47,6 +47,14 @@ EARN_DAYS = 2
 FIRST_ADD_MIN = 30             # no adds in the opening half hour
 KEEP_DAYS = 5                  # "keep it" on a proposal silences it for this many days
 MAX_LOG, MAX_BLOCKED = 300, 300
+# the owner's picks (owner, 6 Nov): flagged KEEP or PICK in the Notes column of his Sheet ("PICK 3%" sets the starter size). Maximum exposure, never an exit:
+CORE_SHARE = 0.5               # half of a pick is the core, which the system never sells (only the owner's hand button does); the other half is traded
+STARTER_PCT = 2.0              # a pick not held yet: the starter proposal, as a share of the account
+PICK_LOSS_PCT = 10.0           # a pick this far under the owner's cost also gets the daily reminder
+REBUY_WAIT_DAYS = 10           # an approved trim waits this many trading days for the dip to turn before the re-buy is dropped
+REBUY_CHASE = 1.02             # the re-buy is never above the sale price by more than this (no chasing)
+PICKS_EVERY_MIN = 5            # how often the Notes are read again
+PICK_RE = re.compile(r"\b(?:KEEP|PICK)\b(?:\s*(\d+(?:\.\d+)?)\s*%)?", re.I)
 
 
 def _num(v):
@@ -59,7 +67,8 @@ def _ts(now: datetime) -> str:
 
 def new_book() -> dict:
     return {"cash": 0.0, "start": 0.0, "positions": {}, "actions": [], "blocked": [], "proposals": {}, "seeded": None, "next_id": 1,
-            "poor": {}, "checked": {}, "locks": {}, "adds_day": {"day": "", "n": 0, "names": []}}
+            "poor": {}, "checked": {}, "locks": {}, "adds_day": {"day": "", "n": 0, "names": []},
+            "picks": {}, "pick_props": {}, "rebuys": {}, "reminded": {}}
 
 
 def load_book(store) -> dict:
@@ -68,7 +77,11 @@ def load_book(store) -> dict:
         b = json.loads(raw) if raw else None
     except ValueError:
         b = None
-    return b if isinstance(b, dict) and "positions" in b else new_book()
+    if not (isinstance(b, dict) and "positions" in b):
+        return new_book()
+    for k, v in new_book().items():
+        b.setdefault(k, v)                                          # a book saved by an older version gains the new keys
+    return b
 
 
 def save_book(store, book: dict) -> None:
@@ -104,6 +117,54 @@ def _hold_back(book: dict, now: datetime, ticker: str, price, reason: str) -> No
     book["blocked"].append({"day": day, "time": _ts(now), "ticker": ticker, "price": price, "reason": reason})
 
 
+# ---------------------------------------------------------------- the owner's picks
+
+def parse_picks(holdings) -> dict:
+    """{ticker: {'pct': starter size or None}} for every row whose Notes say KEEP or PICK (any case; 'PICK 3%' sets the starter size)."""
+    out = {}
+    for h in holdings or []:
+        m = PICK_RE.search(getattr(h, "notes", None) or "")
+        if m:
+            out[h.ticker] = {"pct": float(m.group(1)) if m.group(1) else None}
+    return out
+
+
+def _apply_picks(book: dict, picks: dict) -> None:
+    """Mark the core slice: half of what a pick holds is never sold by the system. Dropping the flag releases it."""
+    book["picks"] = picks
+    for t, pos in book["positions"].items():
+        if t in picks:
+            pos.setdefault("core", round(pos["shares"] * CORE_SHARE, 3))
+        else:
+            pos.pop("core", None)
+    for t in [t for t in book["pick_props"] if t not in picks]:
+        book["pick_props"].pop(t)
+        book["rebuys"].pop(t, None)
+
+
+def refresh_picks(store, book: dict, now: datetime) -> bool:
+    """Read the Notes again at most every PICKS_EVERY_MIN minutes (a Sheet read is slow). A failed read keeps the last picks."""
+    last = book.get("picks_at")
+    if last:
+        try:
+            if (now - datetime.fromisoformat(last)).total_seconds() < PICKS_EVERY_MIN * 60:
+                return False
+        except ValueError:
+            pass
+    book["picks_at"] = now.isoformat()
+    try:
+        from . import live
+        _apply_picks(book, parse_picks(live.current_portfolio(store).holdings))
+    except Exception:
+        log.exception("portfolio picks read failed")
+    return True
+
+
+def trading_room(pos: dict) -> float:
+    """Shares of a pick the system may trade (everything above the core); all of them for a stock that is not a pick."""
+    return max(0.0, pos["shares"] - pos.get("core", 0.0))
+
+
 # ---------------------------------------------------------------- seeding
 
 def seed(store, now: datetime | None = None, holdings=None) -> dict:
@@ -133,6 +194,8 @@ def seed(store, now: datetime | None = None, holdings=None) -> dict:
         cost_total += float(h.shares) * float(cost)
     if not book["positions"]:
         return {"ok": False, "note": "No holdings with shares were found in the Sheet, so nothing was started."}
+    _apply_picks(book, parse_picks(holdings))
+    book["picks_at"] = now.isoformat()
     book["cash"] = round(cost_total * CASH_RESERVE_PCT / 100, 2)
     book["start"] = round(cost_total + book["cash"], 2)
     book["seeded"] = _ts(now)
@@ -282,6 +345,9 @@ def _check_position(book: dict, ticker: str, snap: dict, price: float, now: date
     pos = book["positions"][ticker]
     day = now.date().isoformat()
     book["checked"][ticker] = day
+    if ticker in book.get("picks", {}):
+        _check_pick(book, ticker, snap, price, now, done)
+        return
     prices = {ticker: price}
     eq = equity(book, {**{t: p["entry"] for t, p in book["positions"].items()}, **prices})
     why = poor_reason(snap)
@@ -336,6 +402,82 @@ def _check_position(book: dict, ticker: str, snap: dict, price: float, now: date
                 done.append(_sell(book, ticker, n, price, now, "SIZE DOWN", f"it is {worth / eq * 100:.0f}% of the account, the cap is {cap:.0f}%"))
 
 
+def _check_pick(book: dict, ticker: str, snap: dict, price: float, now: datetime, done: list) -> None:
+    """The 15:45 look at an owner's pick. It never trims or exits by itself: a poor spell becomes a trim PROPOSAL (from the trading slice only) and
+    one reminder a day while the stock keeps falling. The core slice is never touched."""
+    pos = book["positions"][ticker]
+    day = now.date().isoformat()
+    why = poor_reason(snap)
+    move = (price / pos["entry"] - 1) * 100
+    props = book["pick_props"]
+    if why or move <= -PICK_LOSS_PCT:
+        if book["reminded"].get(ticker) != day:
+            book["reminded"][ticker] = day
+            note = (f"still falling: {move:+.0f}% from your cost" if move < 0 else "weak right now") + f", {why or 'under your cost'}. Core slice held, nothing sold."
+            done.append(_log(book, now, ticker, "REMINDER", pos["shares"], price, note))
+    if why:
+        room = trading_room(pos)
+        until = book.get("silenced", {}).get(ticker)
+        if ticker not in props and ticker not in book["rebuys"] and room > 0.0005 and (not until or day >= until):
+            n = round(min(pos["base"] * TRIM_STEP, room), 3)
+            if n * price >= MIN_ADD_USD or n >= room - 0.0005:
+                props[ticker] = {"kind": "trim", "shares": n, "price": price, "since": _ts(now),
+                                 "why": f"{why}. Sell {n:g} of the trading slice ({room:g} shares), then buy back when the fall stops"}
+                done.append(_log(book, now, ticker, "PROPOSE TRIM", n, price, props[ticker]["why"] + ". Waiting for the owner."))
+    elif ticker in props and props[ticker]["kind"] == "trim":
+        props.pop(ticker)
+        _log(book, now, ticker, "PROPOSAL WITHDRAWN", pos["shares"], price, "the position is no longer poor")
+
+
+def _starters(book: dict, snaps: dict, prices: dict, now: datetime, done: list) -> None:
+    """A pick the account does not hold yet (the owner wants exposure even when the system reads breakdown): one small STARTER proposal."""
+    day = now.date().isoformat()
+    for t, meta in book.get("picks", {}).items():
+        price, snap = prices.get(t), snaps.get(t)
+        if t in book["positions"] or t in book["pick_props"] or not price or not snap:
+            continue
+        until = book.get("silenced", {}).get(t)
+        if until and day < until:
+            continue
+        eq = equity(book, prices)
+        pct = meta.get("pct") or STARTER_PCT
+        n = math.floor(min(eq * pct / 100, book["cash"]) / price * 100) / 100
+        if n * price < MIN_ADD_USD:
+            continue
+        oc = _call_of(snap) or {}
+        read = f"the call is {oc['call']}" if oc.get("call") else "no call yet"
+        book["pick_props"][t] = {"kind": "starter", "shares": n, "price": price, "since": _ts(now),
+                                 "why": f"your pick, not held yet ({read}). A starter of {pct:g}% of the account: {n:g} shares"}
+        done.append(_log(book, now, t, "PROPOSE STARTER", n, price, book["pick_props"][t]["why"] + ". Waiting for the owner."))
+
+
+def _rebuys(book: dict, snaps: dict, prices: dict, now: datetime, mins, gate: str, done: list) -> None:
+    """After an approved trim, buy the sold shares back by itself when the fall has stopped and the stock turns up near its exit line."""
+    day = now.date().isoformat()
+    for t, rb in list(book["rebuys"].items()):
+        if day >= rb["until"]:
+            book["rebuys"].pop(t)
+            _log(book, now, t, "REBUY DROPPED", rb["shares"], None, "the dip did not turn within the wait; nothing bought back")
+            continue
+        snap, price = snaps.get(t), prices.get(t)
+        if not snap or not price or t not in book["positions"] or gate:
+            continue
+        if poor_reason(snap) or weak_reason(snap):
+            continue
+        chg = today_change(snap)
+        if chg is None or chg < 0 or price > rb["price"] * REBUY_CHASE:
+            continue
+        line = (_call_of(snap) or {}).get("exit_line")
+        if line and not price > line:
+            continue
+        n = math.floor(min(rb["shares"], book["cash"] / price) * 100) / 100
+        if n * price < MIN_ADD_USD:
+            continue
+        a = _buy(book, t, n, price, now, "REBUY", f"the fall stopped and it turned up (up {chg * 100:.1f}% today); buying back what the approved trim sold at {rb['price']:.2f}", snap, "holding")
+        book["rebuys"].pop(t)
+        done.append(a)
+
+
 def step(book: dict, snaps: dict, prices: dict, now: datetime, gate: str = "") -> list[dict]:
     """One cycle. `snaps`/`prices` hold the stocks with a fresh price; `now` is New York time. Returns what it did."""
     done: list[dict] = []
@@ -352,6 +494,8 @@ def step(book: dict, snaps: dict, prices: dict, now: datetime, gate: str = "") -
             _check_position(book, ticker, snap, price, now, done)
     if late or mins is None or mins < FIRST_ADD_MIN:
         return done
+    _rebuys(book, snaps, prices, now, mins, gate, done)
+    _starters(book, snaps, prices, now, done)
     cands = []
     for ticker, snap in snaps.items():
         price = prices.get(ticker)
@@ -422,6 +566,55 @@ def keep_it(store, ticker: str, now: datetime | None = None) -> dict:
     return {"ok": True, "note": f"{ticker} is kept. It will not be proposed again before {book['silenced'][ticker]}."}
 
 
+def approve_pick(store, ticker: str, now: datetime | None = None) -> dict:
+    """The owner says yes to a proposal on a pick: a trim (sells from the trading slice, then the re-buy is automatic) or a starter."""
+    now = (now or datetime.now(NY)).astimezone(NY)
+    if us_session() != "REGULAR":
+        return {"ok": False, "note": "The market is closed: nothing trades outside the regular session."}
+    book = load_book(store)
+    prop = book["pick_props"].get(ticker)
+    if not prop:
+        return {"ok": False, "note": f"There is no proposal for {ticker}."}
+    snap = store.snapshot(ticker)
+    price, why = paper_live.fresh_price(snap, now) if snap else (None, "no reading for this stock")
+    if price is None:
+        return {"ok": False, "note": f"No fresh price for {ticker} ({why}). Try again in a minute."}
+    if prop["kind"] == "trim":
+        pos = book["positions"].get(ticker)
+        n = min(prop["shares"], trading_room(pos)) if pos else 0.0
+        if n <= 0.0005:
+            book["pick_props"].pop(ticker)
+            save_book(store, book)
+            return {"ok": False, "note": f"Nothing is left in the trading slice of {ticker}."}
+        _sell(book, ticker, n, price, now, "TRIM", f"{OVERRIDE}: approved trim of the trading slice at {price:.2f}; the core slice stays")
+        book["positions"][ticker]["trims"] = book["positions"][ticker].get("trims", 0) + 1
+        book["rebuys"][ticker] = {"shares": round(n, 3), "price": price, "until": _bdays_after(now.date(), REBUY_WAIT_DAYS).isoformat()}
+        note = f"Sold {n:g} of {ticker} at {price:.2f}. The core slice stays, and it buys back by itself when the fall stops."
+    else:
+        n = math.floor(min(prop["shares"], book["cash"] / price) * 100) / 100
+        if n * price < MIN_ADD_USD:
+            return {"ok": False, "note": f"Not enough cash for a starter in {ticker}."}
+        _buy(book, ticker, n, price, now, "STARTER", f"{OVERRIDE}: approved starter in your pick at {price:.2f}", snap, "pick")
+        book["positions"][ticker]["core"] = round(n * CORE_SHARE, 3)
+        note = f"Bought {n:g} {ticker} at {price:.2f}."
+    book["pick_props"].pop(ticker, None)
+    save_book(store, book)
+    return {"ok": True, "note": note}
+
+
+def skip_pick(store, ticker: str, now: datetime | None = None) -> dict:
+    """The owner says no to a proposal on a pick: it is logged (so we can judge it later) and not proposed again before tomorrow's check."""
+    now = (now or datetime.now(NY)).astimezone(NY)
+    book = load_book(store)
+    prop = book["pick_props"].pop(ticker, None)
+    if prop is None:
+        return {"ok": False, "note": f"There is no proposal for {ticker}."}
+    book.setdefault("silenced", {})[ticker] = _bdays_after(now.date(), 1).isoformat()
+    _log(book, now, ticker, "SKIPPED", prop["shares"], prop["price"], f"you skipped the {prop['kind']} proposed at {prop['price']:.2f}: {prop['why']}")
+    save_book(store, book)
+    return {"ok": True, "note": f"Skipped. {ticker} is not proposed again before {book['silenced'][ticker]}."}
+
+
 # ---------------------------------------------------------------- the tracker's cycle and the page
 
 def push(store, did: list[dict]) -> None:
@@ -429,8 +622,9 @@ def push(store, did: list[dict]) -> None:
     try:
         from . import events
         for a in did:
-            who = {"TRIM": "trimmed", "SIZE DOWN": "sized down", "ADD": "added to", "NEW NAME": "bought a new name,", "PROPOSE EXIT": "proposes selling the rest of"}.get(a["action"], a["action"].lower())
-            events._push(f"Portfolio {who} {a['ticker']}", [f"{a['why']}"], 3 if a["action"] != "PROPOSE EXIT" else 4, "briefcase", a["ticker"], "log", store)
+            who = {"TRIM": "trimmed", "SIZE DOWN": "sized down", "ADD": "added to", "NEW NAME": "bought a new name,", "PROPOSE EXIT": "proposes selling the rest of",
+                   "PROPOSE TRIM": "proposes trimming", "PROPOSE STARTER": "proposes a starter in", "REBUY": "bought back", "REMINDER": "reminder:"}.get(a["action"], a["action"].lower())
+            events._push(f"Portfolio {who} {a['ticker']}", [f"{a['why']}"], 4 if a["action"] in ("PROPOSE EXIT", "PROPOSE TRIM", "PROPOSE STARTER") else 3, "briefcase", a["ticker"], "log", store)
     except Exception:
         log.exception("portfolio push failed")
 
@@ -465,6 +659,7 @@ def tick(store, now: datetime | None = None, force_session: bool = False) -> dic
     gate = quick.market_gate(snaps)
     state["gate"] = gate
     before = json.dumps(book, default=str, sort_keys=True)
+    refresh_picks(store, book, now)
     state["did"] = step(book, snaps, prices, now, gate)
     if state["did"]:
         push(store, state["did"])
