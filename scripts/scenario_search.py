@@ -135,8 +135,51 @@ def name(combo) -> str:
     return " and ".join(f"{c[0]} {c[1]} {c[2]:.2f}" for c in combo)
 
 
+def regimes(frames, days) -> dict:
+    """The market's day, from SPY: close against the day before (open to close for the first day in the data)."""
+    spy = frames.get("SPY")
+    out = {}
+    if spy is None:
+        return out
+    daily = {d: g for d, g in spy.groupby(spy.index.normalize())}
+    keys = sorted(daily)
+    for n, k in enumerate(keys):
+        g = daily[k]
+        base = float(daily[keys[n - 1]]["Close"].iloc[-1]) if n else float(g["Open"].iloc[0])
+        out[str(k.date())] = (float(g["Close"].iloc[-1]) / base - 1) * 100
+    return out
+
+
+def tag(chg) -> str:
+    return "?" if chg is None else ("DOWN" if chg <= -0.5 else "UP" if chg >= 0.5 else "flat")
+
+
+def table(title: str, rows: list[dict], reg: dict, days) -> None:
+    print(title)
+    for d in days:
+        sel = [r for r in rows if r["d"] == d]
+        if sel:
+            print(f"  {d}  market {reg.get(d, float('nan')):+5.2f}% {tag(reg.get(d)):<5} {stats(sel)}")
+
+
+def walk(rows: list[dict], days, label: str) -> None:
+    oos, base = [], []
+    for d in days:
+        train, test = [r for r in rows if r["d"] != d], [r for r in rows if r["d"] == d]
+        best = best_rule(train) if len(train) >= 40 else None
+        if not best or not test:
+            continue
+        sel = [r for r in test if all(ok(r, c) for c in best[1])]
+        oos += sel
+        base += test
+        print(f"  {d}: rule [{name(best[1])}]  trained {stats(best[2])}  |  held-out day: {stats(sel)}  (every setup that day: {stats(test)})")
+    print(f"  {label}: rule picks {stats(oos)}   versus every setup {stats(base)}")
+
+
 def run(book, trades, frames, days) -> None:
     rows = setups(book, trades, frames, days)
+    reg = regimes(frames, days)
+    days = [d for d in days if any(r["d"] == d for r in rows)]
     print(f"\n===== SCENARIO SEARCH: {len(rows)} setups with usable bars ({len([r for r in rows if r['took']])} Quick took, {len([r for r in rows if not r['took']])} it passed over) =====")
     if len(rows) < 30:
         print("  too few setups to say anything")
@@ -159,19 +202,22 @@ def run(book, trades, frames, days) -> None:
         a, b = vals[len(vals) // 3], vals[2 * len(vals) // 3]
         low, mid, high = [r for r in rows if r[ft] <= a], [r for r in rows if a < r[ft] <= b], [r for r in rows if r[ft] > b]
         print(f"  {ft:<9} low (<= {a:+.2f}) {stats(low)}\n  {'':<9} mid               {stats(mid)}\n  {'':<9} high (> {b:+.2f})  {stats(high)}")
-    print("\n5. Walk-forward: pick the best rule on four days, score it on the fifth (this is the honest number):")
-    oos_all, base_all = [], []
-    for d in days:
-        train, test = [r for r in rows if r["d"] != d], [r for r in rows if r["d"] == d]
-        best = best_rule(train)
-        if not best or not test:
-            print(f"  {d}: no rule found")
-            continue
-        sel = [r for r in test if all(ok(r, c) for c in best[1])]
-        oos_all += sel
-        base_all += test
-        print(f"  {d}: rule [{name(best[1])}]  trained on {stats(best[2])}  |  on the held-out day: {stats(sel)}  (every setup that day: {stats(test)})")
-    print(f"  ALL held-out days together: rule picks {stats(oos_all)}   versus every setup {stats(base_all)}")
+    print("\n5. By day and by what the market did (exit C on every setup):")
+    table("", rows, reg, days)
+    for lab in ("DOWN", "flat", "UP"):
+        sel = [r for r in rows if tag(reg.get(r["d"])) == lab]
+        if sel:
+            print(f"  {lab:<5} days together: {stats(sel)}")
+    print("\n6. Walk-forward on ALL days: pick the best rule on the other days, score it on the held-out day (this is the honest number):")
+    walk(rows, days, "ALL held-out days together")
+    calm = [d for d in days if tag(reg.get(d)) != "DOWN"]
+    print(f"\n7. The same without the down days (market -0.5% or worse): {len(days) - len(calm)} day(s) left out")
+    walk([r for r in rows if r["d"] in calm], calm, "held-out days, no down days")
     best = best_rule(rows)
     if best:
-        print(f"\n6. Best rule on all days (in-sample, expect it to look better than it is): [{name(best[1])}]  {stats(best[2])}")
+        print(f"\n8. Best rule on all days (in-sample, expect it to look better than it is): [{name(best[1])}]  {stats(best[2])}")
+        # does the in-sample rule also work on each kind of day?
+        for lab in ("DOWN", "flat", "UP"):
+            sel = [r for r in best[2] if tag(reg.get(r["d"])) == lab]
+            if sel:
+                print(f"     on {lab} days: {stats(sel)}")

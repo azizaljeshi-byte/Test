@@ -25,7 +25,7 @@ def test_the_search_runs_end_to_end_and_reports_the_honest_walk_forward(capsys):
               for d in days for i in range(8)]
     ss.run({"ranked": []}, trades, frames, days)
     out = capsys.readouterr().out
-    assert "SCENARIO SEARCH: 32 setups" in out and "5. Walk-forward" in out and "ALL held-out days together" in out and "stop 1.5% target 2.0%" in out
+    assert "SCENARIO SEARCH: 32 setups" in out and "6. Walk-forward" in out and "5. By day" in out and "ALL held-out days together" in out and "stop 1.5% target 2.0%" in out
 
 
 def test_no_future_bars_leak_into_the_features():

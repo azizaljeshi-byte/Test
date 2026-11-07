@@ -223,7 +223,7 @@ def main() -> None:
     book = quick.load_book(Store(), migrate=False)
     trades = [t for t in book["trades"] if t.get("opened")]
     days = sorted({str(t["opened"])[:10] for t in trades})
-    want = [d for d in os.getenv("GATE_DAYS", "").replace(",", " ").split() if d] or days[-5:]
+    want = [d for d in os.getenv("GATE_DAYS", "").replace(",", " ").split() if d] or days[-20:]
     plan = {}
     names = set()
     for d in want:
@@ -231,8 +231,8 @@ def main() -> None:
         sk = [s for s in book.get("skipped", []) if s.get("day") == d and s.get("price")]
         plan[d] = True
         names |= {t["ticker"] for t in todays} | {s["ticker"] for s in sk} | {r["ticker"] for r in book.get("ranked", []) if r.get("day") == d}
-    print(f"GATE REPLAY for {', '.join(want)}. Downloading {len(names)} stocks, 5-minute bars (Yahoo keeps about 5 trading days)...")
-    frames = rising.fetch(sorted(names), "5d", "5m")
+    print(f"GATE REPLAY for {', '.join(want)}. Downloading {len(names)} stocks, 5-minute bars (Yahoo keeps about a month of 5-minute bars)...")
+    frames = rising.fetch(sorted(names | {"SPY"}), "1mo", "5m")
     all_real, all_skip = [], []
     for d in want:
         todays, uniq, real, skip, actual = one_day(d, trades, book, frames, SAMPLE)
