@@ -77,6 +77,11 @@ def main() -> None:
     block("BY EXIT REASON", sorted(by_reason.items(), key=lambda kv: sum(t["result"] for t in kv[1])))
     block("BY SECTOR", sorted(by_sec.items(), key=lambda kv: sum(t["result"] for t in kv[1])))
     today = datetime.now(NY).date().isoformat()
+    have = {str(t["opened"])[:10] for t in trades} | {str(t.get("closed") or "")[:10] for t in trades} | {str(x.get("day")) for x in book.get("ranked", [])}
+    have.discard("")
+    if today not in have and have:
+        today = max(have)                  # weekend, holiday or before the first trade: report the last day that has records (owner, 7 Nov)
+    print(f"\nREPORT DAY: {today} (the sections called TODAY below are for this day)")
     tt = [t for t in trades if str(t["opened"]).startswith(today) or str(t.get("closed") or "").startswith(today)]
     print(f"\nTODAY'S TRADES ({len(tt)}, in order)")
     for t in sorted(tt, key=lambda t: str(t["opened"])):

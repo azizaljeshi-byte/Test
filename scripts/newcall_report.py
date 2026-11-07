@@ -114,6 +114,11 @@ def main() -> None:
               f"  stop {p.get('trail') or p.get('stop') or 0:,.2f}")
     print(f"  Open result right now {unreal:+,.2f}. Closed (without tests) {sum(res):+,.2f}.")
     today = datetime.now(NY).date().isoformat()
+    have = {str(t["opened"])[:10] for t in trades} | {str(t.get("closed") or "")[:10] for t in trades} | {str(b.get("day")) for b in book.blocked}
+    have.discard("")
+    if today not in have and have:
+        today = max(have)                  # weekend, holiday or before the first trade: report the last day that has records (owner, 7 Nov)
+    print(f"\nREPORT DAY: {today} (the sections called TODAY below are for this day)")
     held = [b for b in book.blocked if b.get("day") == today]
     print(f"\nHELD BACK TODAY ({len(held)} stocks the rules wanted but did not buy; one line per stock)")
     by = defaultdict(list)
