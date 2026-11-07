@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pandas as pd  # noqa: E402
 
 SIZE, STOP_PCT, TRAIL_ARM, TRAIL_PCT = 2500.0, 1.5, 1.0, 1.0
@@ -229,7 +230,7 @@ def main() -> None:
         todays = [t for t in trades if str(t["opened"])[:10] == d]
         sk = [s for s in book.get("skipped", []) if s.get("day") == d and s.get("price")]
         plan[d] = True
-        names |= {t["ticker"] for t in todays} | {s["ticker"] for s in sk}
+        names |= {t["ticker"] for t in todays} | {s["ticker"] for s in sk} | {r["ticker"] for r in book.get("ranked", []) if r.get("day") == d}
     print(f"GATE REPLAY for {', '.join(want)}. Downloading {len(names)} stocks, 5-minute bars (Yahoo keeps about 5 trading days)...")
     frames = rising.fetch(sorted(names), "5d", "5m")
     all_real, all_skip = [], []
@@ -253,6 +254,12 @@ def main() -> None:
     print("SKIPPED (random few):")
     print("\n".join(summary(all_skip)))
     exit_study(trades, book, frames, want)
+    try:
+        import scenario_search
+        scenario_search.run(book, trades, frames, want)
+    except Exception as e:                                   # the other studies stay in the report whatever happens here
+        import traceback
+        print(f"\n(scenario search failed: {e})\n{traceback.format_exc()}")
     print("\nHow to read: NOW = enter at the setup price. HOLD = a later finished 5-min bar closes at or above it with RSI and MACD rising and volume at least the recent average (cancel if a bar closes 0.5% under, or 30 min pass). "
           "HOLD2 = looser: close within 0.2% of the level, RSI or MACD rising, no volume test (cancel 1% under). PULLBACK = price dips 0.3% under the setup price, then a bar closes above the previous high (cancel if 1.5% under, or 30 min pass). "
           "Exit for all: stop 1.5% under entry, trail 1% under the peak once up 1%, out after 60 min without +0.5%, out at 15:55. The real Quick exits differ, so compare the rules with each other, not with the real number.")
