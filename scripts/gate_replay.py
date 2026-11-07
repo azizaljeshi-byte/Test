@@ -78,7 +78,18 @@ def entry_pullback(f, i, p0):
     return None, "no pullback" if dipped is None else "no bounce"
 
 
-RULES = {"NOW": entry_now, "HOLD": entry_hold, "PULLBACK": entry_pullback}
+def entry_hold2(f, i, p0):
+    """A looser HOLD: a finished bar closes within 0.2% of the level or above, RSI or MACD rising, no volume test; cancel 1% under."""
+    for k in range(i + 1, min(i + 1 + WAIT_BARS, len(f))):
+        b, a = f.iloc[k], f.iloc[k - 1]
+        if b["Close"] < p0 * (1 - 1.0 / 100):
+            return None, "broke under the level"
+        if b["Close"] >= p0 * (1 - 0.2 / 100) and (b["rsi"] > a["rsi"] or b["hist"] > a["hist"]):
+            return k, float(b["Close"])
+    return None, "never confirmed"
+
+
+RULES = {"NOW": entry_now, "HOLD": entry_hold, "HOLD2": entry_hold2, "PULLBACK": entry_pullback}
 
 
 def run_one(f: pd.DataFrame, when: pd.Timestamp, p0: float) -> dict:
@@ -127,27 +138,17 @@ def lines(title: str, items: list[dict]) -> list[str]:
     return out
 
 
-def main() -> None:
-    from stockwatch import quick, rising
-    from stockwatch.store import Store
-    book = quick.load_book(Store(), migrate=False)
-    trades = [t for t in book["trades"] if t.get("opened")]
-    days = sorted({str(t["opened"])[:10] for t in trades})
-    want = os.getenv("GATE_DAY") or days[-1]
+def one_day(want, trades, book, frames, pick_n):
     todays = [t for t in trades if str(t["opened"])[:10] == want]
     skipped = [s for s in book.get("skipped", []) if s.get("day") == want and s.get("price")]
     taken = {t["ticker"] for t in todays}
-    pool = [s for s in skipped if s["ticker"] not in taken]
     seen, uniq = set(), []
-    for s in pool:
-        if s["ticker"] not in seen:
+    for s in skipped:
+        if s["ticker"] not in taken and s["ticker"] not in seen:
             seen.add(s["ticker"])
             uniq.append(s)
     random.seed(7)
-    pick = random.sample(uniq, min(SAMPLE, len(uniq)))
-    names = sorted({t["ticker"] for t in todays} | {s["ticker"] for s in pick})
-    print(f"GATE REPLAY for {want}: {len(todays)} trades Quick took, {len(uniq)} different stocks it skipped (random {len(pick)} replayed). Downloading {len(names)} stocks, 5-minute bars...")
-    frames = rising.fetch(names, "5d", "5m")
+    pick = random.sample(uniq, min(pick_n, len(uniq)))
     real, skip = [], []
     for t in sorted(todays, key=lambda x: x["opened"]):
         f = frames.get(t["ticker"])
@@ -159,20 +160,49 @@ def main() -> None:
         t0 = pd.Timestamp(f"{want} {s['time']}").tz_localize("America/New_York")
         r = run_one(f, t0, float(s["price"])) if f is not None else {"err": "no data"}
         skip.append({"t": s["ticker"], "time": s["time"], "p0": float(s["price"]), "r": r, "real": f"skipped: {str(s.get('reason'))[:40]}"})
-    ok_real = [x["r"] for x in real if "err" not in x["r"]]
-    ok_skip = [x["r"] for x in skip if "err" not in x["r"]]
     actual = sum(t.get("result", 0) for t in todays if t.get("status") == "CLOSED")
-    print(f"\nWhat Quick really made on {want}: {actual:+,.0f} $ on {len(todays)} trades (its own exits, sizes differ).")
-    print("\nTHE TRADES QUICK TOOK, replayed (all three rules use the same simple exit, so compare them with each other, not with the real number):")
-    print("\n".join(summary(ok_real)))
-    print("\nA RANDOM FEW OF THE SKIPPED SETUPS (what it could have done):")
-    print("\n".join(summary(ok_skip)))
-    print("\nBOTH TOGETHER (if the loss stop had not blocked the later setups):")
-    print("\n".join(summary(ok_real + ok_skip)))
-    print("\n".join(lines("TAKEN, one by one", real)))
-    print("\n".join(lines("SKIPPED sample, one by one", skip)))
+    return todays, uniq, real, skip, actual
+
+
+def main() -> None:
+    from stockwatch import quick, rising
+    from stockwatch.store import Store
+    book = quick.load_book(Store(), migrate=False)
+    trades = [t for t in book["trades"] if t.get("opened")]
+    days = sorted({str(t["opened"])[:10] for t in trades})
+    want = [d for d in os.getenv("GATE_DAYS", "").replace(",", " ").split() if d] or days[-5:]
+    plan = {}
+    names = set()
+    for d in want:
+        todays = [t for t in trades if str(t["opened"])[:10] == d]
+        sk = [s for s in book.get("skipped", []) if s.get("day") == d and s.get("price")]
+        plan[d] = True
+        names |= {t["ticker"] for t in todays} | {s["ticker"] for s in sk}
+    print(f"GATE REPLAY for {', '.join(want)}. Downloading {len(names)} stocks, 5-minute bars (Yahoo keeps about 5 trading days)...")
+    frames = rising.fetch(sorted(names), "5d", "5m")
+    all_real, all_skip = [], []
+    for d in want:
+        todays, uniq, real, skip, actual = one_day(d, trades, book, frames, SAMPLE)
+        ok_r = [x["r"] for x in real if "err" not in x["r"]]
+        ok_s = [x["r"] for x in skip if "err" not in x["r"]]
+        all_real += ok_r
+        all_skip += ok_s
+        print(f"\n===== {d}: Quick took {len(todays)} trades and really made {actual:+,.0f} $ (its own exits); {len(uniq)} other stocks skipped, {len(skip)} replayed; {len(real) - len(ok_r)} trades had no usable bars =====")
+        print("TAKEN:")
+        print("\n".join(summary(ok_r)))
+        if ok_s:
+            print("SKIPPED (random few):")
+            print("\n".join(summary(ok_s)))
+        if d == want[-1] or os.getenv("GATE_DETAIL"):
+            print("\n".join(lines("TAKEN, one by one", real)))
+            print("\n".join(lines("SKIPPED sample, one by one", skip)))
+    print("\n===== ALL DAYS TOGETHER =====\nTAKEN:")
+    print("\n".join(summary(all_real)))
+    print("SKIPPED (random few):")
+    print("\n".join(summary(all_skip)))
     print("\nHow to read: NOW = enter at the setup price. HOLD = a later finished 5-min bar closes at or above it with RSI and MACD rising and volume at least the recent average (cancel if a bar closes 0.5% under, or 30 min pass). "
-          "PULLBACK = price dips 0.3% under the setup price, then a bar closes above the previous high (cancel if 1.5% under, or 30 min pass). Exit for all: stop 1.5% under entry, trail 1% under the peak once up 1%, out after 60 min without +0.5%, out at 15:55.")
+          "HOLD2 = looser: close within 0.2% of the level, RSI or MACD rising, no volume test (cancel 1% under). PULLBACK = price dips 0.3% under the setup price, then a bar closes above the previous high (cancel if 1.5% under, or 30 min pass). "
+          "Exit for all: stop 1.5% under entry, trail 1% under the peak once up 1%, out after 60 min without +0.5%, out at 15:55. The real Quick exits differ, so compare the rules with each other, not with the real number.")
 
 
 if __name__ == "__main__":
