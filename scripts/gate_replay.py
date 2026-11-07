@@ -33,16 +33,16 @@ def indicators(f: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def exit_run(f: pd.DataFrame, i0: int, entry: float) -> tuple[float, str, int]:
+def exit_run(f: pd.DataFrame, i0: int, entry: float, stop_pct: float = STOP_PCT, arm: float = TRAIL_ARM, trail: float = TRAIL_PCT) -> tuple[float, str, int]:
     """Walks bars after i0. Returns (exit price, reason, bars held)."""
-    stop, peak = entry * (1 - STOP_PCT / 100), entry
+    stop, peak = entry * (1 - stop_pct / 100), entry
     for k in range(i0 + 1, len(f)):
         b = f.iloc[k]
         if b["Low"] <= stop:
             return min(float(b["Open"]), stop), "stop", k - i0
         peak = max(peak, float(b["High"]))
-        if peak >= entry * (1 + TRAIL_ARM / 100):
-            stop = max(stop, peak * (1 - TRAIL_PCT / 100))
+        if peak >= entry * (1 + arm / 100):
+            stop = max(stop, peak * (1 - trail / 100))
         if (k - i0) >= NO_PROGRESS_BARS and peak < entry * 1.005:
             return float(b["Close"]), "no progress", k - i0
         if f.index[k].hour == 15 and f.index[k].minute >= 55:
@@ -137,6 +137,58 @@ def lines(title: str, items: list[dict]) -> list[str]:
         out.append(f"  {it['t']:<6} {it['time']} {it['p0']:>8.2f} " + " | ".join(cells) + (f"   [Quick really: {it['real']}]" if it.get("real") else ""))
     return out
 
+EXITS = {"A loose (about Quick today)": (2.2, 2.0, 1.2), "B stop 1.5, lock at +1, trail 1": (1.5, 1.0, 1.0),
+         "C stop 1.5, lock at +0.7, trail 0.7": (1.5, 0.7, 0.7), "D stop 1.2, lock at +0.7, trail 0.6": (1.2, 0.7, 0.6)}
+
+
+def exit_study(trades, book, frames, days) -> None:
+    """Same entries as Quick (NOW), different exits, with and without a pace limit of 3 new entries in any 10 minutes (best rank first)."""
+    rank = {}
+    for r in book.get("ranked", []):
+        if r.get("taken"):
+            rank[(r["day"], r["ticker"])] = r.get("rank", 99)
+    entries = []
+    for t in trades:
+        d = str(t["opened"])[:10]
+        f = frames.get(t["ticker"])
+        if d not in days or f is None:
+            continue
+        w = ny(t["opened"])
+        day = f[f.index.normalize() == w.normalize()]
+        idx = day.index[day.index <= w]
+        if len(day) < 20 or not len(idx):
+            continue
+        entries.append({"t": t["ticker"], "d": d, "w": w, "p0": float(t["entry"]), "day": day, "i": day.index.get_loc(idx[-1]), "rank": rank.get((d, t["ticker"]), 99)})
+
+    def paced(es):
+        ok, taken = [], []
+        for e in sorted(es, key=lambda x: (x["w"], x["rank"])):
+            if len([x for x in taken if x["d"] == e["d"] and (e["w"] - x["w"]).total_seconds() < 600]) < 3:
+                taken.append(e)
+                ok.append(e)
+        return ok
+
+    print("\n===== EXIT STUDY: the same entries as Quick, different exits (flat $2,500 a trade) =====")
+    print(f"  {'exit rule':<40}{'pace':<10}{'trades':>7}{'wins':>6}{'avg %':>8}{'total $':>10}{'worst %':>9}")
+    for name, (sp, arm, tr) in EXITS.items():
+        for label, es in (("none", entries), ("3 per 10m", paced(entries))):
+            res = []
+            for e in es:
+                xp, _, _ = exit_run(e["day"], e["i"], e["p0"], sp, arm, tr)
+                res.append((xp / e["p0"] - 1) * 100)
+            if res:
+                print(f"  {name:<40}{label:<10}{len(res):>7}{str(round(100 * len([x for x in res if x > 0]) / len(res))) + '%':>6}{sum(res) / len(res):>+8.2f}{sum(SIZE * x / 100 for x in res):>+10,.0f}{min(res):>+9.2f}")
+    print("  By day (exit B, no pace limit vs exit B with pace limit vs exit A):")
+    for d in days:
+        row = []
+        for nm, sel in (("A", "A loose (about Quick today)"), ("B", "B stop 1.5, lock at +1, trail 1")):
+            sp, arm, tr = EXITS[sel]
+            for label, pool in (("", entries), ("+pace", paced(entries))):
+                tot = sum(SIZE * (exit_run(e["day"], e["i"], e["p0"], sp, arm, tr)[0] / e["p0"] - 1) for e in pool if e["d"] == d)
+                row.append(f"{nm}{label} {tot:+,.0f}")
+        real = sum(t.get("result", 0) for t in trades if str(t["opened"])[:10] == d and t.get("status") == "CLOSED")
+        print(f"    {d}  real {real:+,.0f} | " + " | ".join(row))
+
 
 def one_day(want, trades, book, frames, pick_n):
     todays = [t for t in trades if str(t["opened"])[:10] == want]
@@ -200,6 +252,7 @@ def main() -> None:
     print("\n".join(summary(all_real)))
     print("SKIPPED (random few):")
     print("\n".join(summary(all_skip)))
+    exit_study(trades, book, frames, want)
     print("\nHow to read: NOW = enter at the setup price. HOLD = a later finished 5-min bar closes at or above it with RSI and MACD rising and volume at least the recent average (cancel if a bar closes 0.5% under, or 30 min pass). "
           "HOLD2 = looser: close within 0.2% of the level, RSI or MACD rising, no volume test (cancel 1% under). PULLBACK = price dips 0.3% under the setup price, then a bar closes above the previous high (cancel if 1.5% under, or 30 min pass). "
           "Exit for all: stop 1.5% under entry, trail 1% under the peak once up 1%, out after 60 min without +0.5%, out at 15:55. The real Quick exits differ, so compare the rules with each other, not with the real number.")
