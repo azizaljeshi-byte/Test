@@ -1032,41 +1032,47 @@ if view == "tests":
 
 if view == "rising":
     st.markdown("### Momentum")
-    st.caption("Stocks of the S&P 500 whose RSI is rising, MACD is improving and volume is building. Starts at 09:35 New York (17:35 Riyadh) and updates every 5 minutes. "
-               "Watching only: no trade, no signal. Brackets: change since yesterday's close. Arrows: change since the previous run.")
+    st.caption("Stocks of the S&P 500 whose RSI is rising, MACD is improving and volume is building, read on 5-minute bars like a chart. "
+               "Starts at 09:35 New York (17:35 Riyadh) and updates every 5 minutes. Watching only: no trade, no signal. "
+               "Under each price: change since yesterday's close. Under RSI: change in 15 minutes, and the daily RSI. Under MACD: change since the last bar. "
+               "Arrows: change since the previous run.")
     rs_state = rising.load_state(store)
     day_list = rising.days(store)
     if not rs_state:
         st.info("No list yet. The first run is at 17:35 Riyadh on a trading day.")
     else:
-        if rs_state.get("status") == "baseline":
-            st.info("Building today's usual-volume table for 503 stocks (about 10 minutes). The first list appears when it is done.")
+        st.markdown(f"**Updated {rising_view.stamp(rs_state)}** · {rs_state['pass']} pass all three · {len(rs_state.get('watch', []))} on watch · "
+                    f"{rs_state['read']} stocks read")
+        if rs_state.get("early"):
+            st.caption("Early run: volume is still settling in the first minutes, so read it with care.")
+        if rs_state["rows"]:
+            st.markdown(rising_view.table(rs_state["rows"]), unsafe_allow_html=True)
         else:
-            st.markdown(f"**Updated {rising_view.stamp(rs_state)}** · {rs_state['pass']} of {rs_state['read']} stocks pass"
-                        + (f" · {rs_state['unknown']} had no usable data (left out, not scored)" if rs_state.get("unknown") else ""))
-            if rs_state.get("early"):
-                st.caption("Early run: the volume is still settling in the first minutes, so read it with care.")
-            if rs_state["rows"]:
-                st.markdown(rising_view.table(rs_state["rows"]), unsafe_allow_html=True)
-            else:
-                st.info("No stock passes all three tests right now.")
-            if rising_view.left_line(rs_state):
-                st.caption(rising_view.left_line(rs_state))
+            st.info("No stock passes all three tests right now.")
+        if rising_view.left_line(rs_state):
+            st.caption(rising_view.left_line(rs_state))
+        if rs_state.get("watch"):
+            with st.expander(f"Watch: two of three tests ({len(rs_state['watch'])})"):
+                st.caption("These pass two tests and miss one, named under each stock. They may join the list on the next run.")
+                st.markdown(rising_view.table(rs_state["watch"]), unsafe_allow_html=True)
+        if rs_state.get("unknown"):
+            st.caption(f"No data this run ({rs_state['unknown']}), left out and not scored: " + ", ".join(rs_state.get("nodata", [])[:30])
+                       + (" ..." if len(rs_state.get("nodata", [])) > 30 else ""))
     if day_list:
         with st.expander("Earlier runs"):
             rs_day = st.selectbox("Day", sorted(day_list, reverse=True), key="rs_day")
-            past = rising.runs(store, rs_day)
-            ok_runs = [x for x in past if x.get("status") == "ok"]
+            ok_runs = [x for x in rising.runs(store, rs_day) if x.get("status") == "ok"]
             if not ok_runs:
                 st.caption("No run on that day.")
             else:
                 labels = {rising_view.stamp(x): x for x in reversed(ok_runs)}
-                pick = st.selectbox("Run", list(labels), key="rs_run")
-                x = labels[pick]
-                st.markdown(f"**{x['pass']} of {x['read']} stocks passed**")
+                x = labels[st.selectbox("Run", list(labels), key="rs_run")]
+                st.markdown(f"**{x['pass']} passed all three** · {len(x.get('watch', []))} on watch")
                 st.markdown(rising_view.table(x["rows"]) if x["rows"] else "No stock passed.", unsafe_allow_html=True)
                 if rising_view.left_line(x):
                     st.caption(rising_view.left_line(x))
+                if x.get("watch"):
+                    st.caption("Watch: " + "; ".join(f"{w['t']} (missing: {w['miss']})" for w in x["watch"]))
 
 
 if view == "ext":

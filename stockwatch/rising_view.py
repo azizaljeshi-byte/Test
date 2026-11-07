@@ -28,14 +28,18 @@ def table(rows: list[dict]) -> str:
             tag = ' <span class="mc-tag" style="color:var(--warn)">FADING</span>'
         mine = ' <span class="mc-tag">yours</span>' if r.get("tracked") else ""
         sym = escape(r["t"])
-        chg, rsi_d, hist_d = f"{r['chg']:+.1f}%", f"{r['rsi_1d']:+.1f}", f"{r['hist_1d']:+.2f}"
+        chg, hist_d = f"{r['chg']:+.1f}%", f"{r['hist_d']:+.2f}"
+        rsi_d = f"{r['rsi_d']:+.1f}"
+        day = "day none" if r.get("rsi_day") is None else f"day {r['rsi_day']:.0f}"
+        miss = _sub("missing: " + r["miss"]) if r.get("miss") else ""
+        vol = "unknown" if r.get("vol_x") is None else f"{r['vol_x']:.1f}×"
         body.append(
             "<tr>"
-            f'<td><a class="mc-a" href="?view=target&t={sym}" target="_self"><b>{sym}</b></a>{mine}{tag}</td>'
+            f'<td><a class="mc-a" href="?view=target&t={sym}" target="_self"><b>{sym}</b></a>{mine}{tag}{miss}</td>'
             f'<td>{r["price"]:,.2f}{_arrow(r, "price")}{_sub(chg)}</td>'
-            f'<td>{r["rsi"]:.1f}{_arrow(r, "rsi")}{_sub(rsi_d)}</td>'
+            f'<td>{r["rsi"]:.1f}{_arrow(r, "rsi")}{_sub(rsi_d)}{_sub(day)}</td>'
             f'<td>{r["hist"]:+.2f}{_arrow(r, "hist")}{_sub(hist_d)}</td>'
-            f'<td>{r["vol_x"]:.1f}×{_arrow(r, "vol")}</td>'
+            f'<td>{vol}{_arrow(r, "vol")}</td>'
             "</tr>")
     head = "".join(f"<th>{h}</th>" for h in ("Stock", "Price", "RSI", "MACD", "Volume"))
     return (f'<style>.rs-tbl td,.rs-tbl th{{padding:.3rem .26rem !important}}.rs-tbl td:first-child,.rs-tbl th:first-child{{padding-left:.1rem !important}}</style>'
