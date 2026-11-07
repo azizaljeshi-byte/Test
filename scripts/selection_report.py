@@ -129,5 +129,33 @@ def main() -> None:
               f"best {c['mfe']:+5.1f}% worst {c['mae']:+5.1f}% C {c['c_pct']:+5.1f}%{real}  {c['why']}")
 
 
+def watch_bars() -> None:
+    """Optional: data/watch_bars.txt with lines like 'STX 2026-11-06' prints that stock's 5-minute bars for the day and Quick's trades in it."""
+    from stockwatch import quick, rising
+    from stockwatch.store import Store
+    f = Path(__file__).resolve().parent.parent / "data" / "watch_bars.txt"
+    if not f.exists():
+        return
+    wants = [ln.split() for ln in f.read_text(encoding="utf-8", errors="ignore").splitlines() if len(ln.split()) == 2]
+    book = quick.load_book(Store(), migrate=False)
+    frames = rising.fetch(sorted({w[0] for w in wants}), "1mo", "5m")
+    for tk, day in wants:
+        print(f"\n===== BARS {tk} {day} (New York time; Riyadh = +8h) =====")
+        for t in book["trades"]:
+            if t["ticker"] == tk and str(t["opened"])[:10] == day:
+                print(f"  Quick trade: in {str(t['opened'])[11:16]} at {t['entry']:.2f}  out {str(t.get('closed') or '')[11:16]} at {t.get('exit')}  result {t.get('result')}  {str(t.get('exit_reason'))[:60]}")
+        for r in book.get("ranked", []):
+            if r.get("ticker") == tk and r.get("day") == day:
+                print(f"  ranked {r['time']} {r['kind']} grade {r.get('grade')} rank {r.get('rank')}/{r.get('of')} taken {r.get('taken')} price {r.get('price')} {str(r.get('why_not'))[:50]}")
+        d = frames.get(tk)
+        if d is None:
+            print("  no bars")
+            continue
+        d = d[d.index.normalize() == pd.Timestamp(day, tz="America/New_York")]
+        for ts, b in d.iterrows():
+            print(f"  {ts.strftime('%H:%M')}  O {b['Open']:.2f}  H {b['High']:.2f}  L {b['Low']:.2f}  C {b['Close']:.2f}  V {int(b['Volume']):>9,}")
+
+
 if __name__ == "__main__":
     main()
+    watch_bars()
