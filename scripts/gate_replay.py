@@ -260,6 +260,12 @@ def main() -> None:
     except Exception as e:                                   # the other studies stay in the report whatever happens here
         import traceback
         print(f"\n(scenario search failed: {e})\n{traceback.format_exc()}")
+    try:
+        import rule_test
+        rule_test.run(book, trades, frames, want)
+    except Exception as e:
+        import traceback
+        print(f"\n(rule test failed: {e})\n{traceback.format_exc()}")
     print("\nHow to read: NOW = enter at the setup price. HOLD = a later finished 5-min bar closes at or above it with RSI and MACD rising and volume at least the recent average (cancel if a bar closes 0.5% under, or 30 min pass). "
           "HOLD2 = looser: close within 0.2% of the level, RSI or MACD rising, no volume test (cancel 1% under). PULLBACK = price dips 0.3% under the setup price, then a bar closes above the previous high (cancel if 1.5% under, or 30 min pass). "
           "Exit for all: stop 1.5% under entry, trail 1% under the peak once up 1%, out after 60 min without +0.5%, out at 15:55. The real Quick exits differ, so compare the rules with each other, not with the real number.")
