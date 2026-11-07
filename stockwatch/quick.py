@@ -10,6 +10,10 @@ What it does, every tracker cycle in the regular session, for every stock the ap
   exits    by trailing: the stop follows the peak at a fraction of the daily range, so a stretched profit is ridden, not capped.
            Also out when the chart turns, when the trade goes nowhere for two hours, or at 3:55 pm New York (no overnight).
   logs     every entry, exit and skipped setup with its reason.
+Since 7 Nov (owner, after the scenario tests in scripts/rule_test.py and scripts/pullback_test.py): a setup is not bought at the signal price. Quick watches the
+stock for up to 2 hours and buys after a pullback (1% under the signal, or back at the day's low) once the price turns up again, with the stop just under the pullback
+low; at most 3 entries in the first 15 minutes; no trade is held more than 1.5% under its entry; it leaves at +1% unless the stock is riding (the 5-minute bar that
+reached +1% closes in its top 30%), then the stop goes to entry +0.5% and trails the peak by 0.7%. PULLBACK_GATE, TAKE_FIRST and OPENING_CAP switch each part off.
 Missing data never trades. Fills are simulated at the latest price, so they are approximate.
 
 The journal also goes to the owner's Google Drive as two sheet files (`Quick trades.csv`, `Quick skipped setups.csv`) in a
@@ -41,7 +45,7 @@ DROP_ATR = 0.7                 # the flush behind a bounce, in daily ranges
 TURN_ATR = 0.15                # how far off the low the turn must be
 TRAIL_ATR = 0.45               # the trailing stop sits this far under the peak
 LOCK_ATR = 0.30                # once up this much the stop is at least the entry
-MAX_LOSS_PCT = 2.0               # owner, 4 Nov: no trade is held more than this far under its entry, however wide half a daily range is (CYPH sat 7% from its stop)
+MAX_LOSS_PCT = 1.5               # owner, 7 Nov: no trade is held more than this far under its entry (was 2.0 from 4 Nov, after CYPH sat 7% from its stop)
 STOP_ATR = 0.5                 # widest first stop under the entry (was 0.9: every stop hit lost 1.8% on average)
 STALL_MIN = 120                # backstop: minutes with no progress before it leaves
 NO_PROGRESS_MIN = 60           # leaves after this long if it never got +0.5% (frees the cash for the next setup)
@@ -51,6 +55,7 @@ DRY_PACE = 0.6
 HOLD_MIN = 10.0                # a bounce counts only after the low has held this long, with two higher lows after it
 BOUNCE_FIRST_MIN = 5           # owner, 4 Nov: bounce entries too start 5 minutes after the open (was 15)
 OPEN_FREE_MIN = 30                # owner, 4 Nov: in the first 30 minutes after the open Quick takes as many entries as the setups give (the other brakes stay) ...
+OPENING_CAP, OPEN_CAP_MIN, OPEN_CAP = True, 15, 3   # owner, 7 Nov: at most 3 entries in the first 15 minutes (replaces the 30 free minutes); after that the pace limit below
 MAX_NEW, NEW_WINDOW_MIN = 3, 10  # ... then at most this many new entries in any window, so one move cannot fill the account
 GATE_DOWN_SHARE, GATE_MEDIAN = 0.6, -0.01   # market gate: this share of stocks down and the median at least this far down: no bounces
 GATE_MIN_STOCKS = 20
@@ -61,6 +66,18 @@ FIRST_MIN, LAST_MIN = 5, 385   # minutes into the session (9:35 to 15:55)
 TAKE_PCT = 2.0                 # owner, 4 Nov: once up this much, leave as soon as it stops riding ...
 TAKE_STALL_MIN = 10            # ... no new high for this long ...
 TAKE_GIVEBACK_PCT = 0.3        # ... and this far under the peak. While it keeps making new highs it is riding and stays.
+TAKE_FIRST = True              # owner, 7 Nov: leave at +1% unless the stock is riding (replaces the ATR lock/trail, the +2% stall exit and the 45-minute fade exit)
+TAKE_FIRST_PCT = 1.0
+RIDE_NEAR = 0.7                # riding: the 5-minute bar that reached the target closes in its top 30% and at or above the target ...
+RIDE_LOCK_PCT = 0.5            # ... then the stop is at least this far above the entry ...
+RIDE_TRAIL_PCT = 0.7           # ... and trails the peak by this much
+PULLBACK_GATE = True           # owner, 7 Nov: a setup is not bought at the signal price. Quick watches the stock, buys after a pullback once the price turns up again.
+WATCH_MIN = 120                # watch a selected stock for up to 2 hours
+WATCH_DIP_PCT = 1.0            # a pullback: 1% under the signal price (or back at the day's low)
+WATCH_CHASE_PCT = 1.5          # it ran this far over the signal price without a pullback: forget it
+WATCH_CONFIRM_PCT = 0.3        # turning up: this far off the pullback low and rising
+WATCH_CONFIRM_MIN = 20         # the bounce must show within this long of the pullback low
+WATCH_CUTOFF_MIN = 330         # no new watch result after 15:00 New York
 FIXED_PCT = 2.5                # only to compare riding with a fixed exit; not a rule
 LEVEL_PCT = 2.5                # the agent's entries come in levels of this size (percent of the account): level 1, level 2, one more on a pullback
 MAX_LEVELS = 3
@@ -277,12 +294,12 @@ def _first_stop(kind: str, price: float, lo: float, atr: float) -> float:
 
 
 def _enter(book: dict, ticker: str, kind: str, why: str, price: float, lo: float, atr: float, now: datetime, pct: float = POSITION_PCT,
-           grade_: str = "") -> dict | None:
+           grade_: str = "", stop: float | None = None) -> dict | None:
     size = equity(book, {}) * pct / 100
     shares = int(min(size, book["cash"]) // price)
     if shares < 1:
         return None
-    stop = _first_stop(kind, price, lo, atr)
+    stop = _first_stop(kind, price, lo, atr) if stop is None else round(max(stop, price * (1 - MAX_LOSS_PCT / 100)), 2)
     if stop >= price:
         return None
     book["cash"] -= shares * price
@@ -335,6 +352,76 @@ def _skip(book: dict, ticker: str, kind: str, reason: str, price: float, now: da
     if any(s["ticker"] == ticker and s["day"] == day and s["reason"] == reason for s in book["skipped"][-40:]):
         return                                                   # logged once per stock, day and reason
     book["skipped"].append({"day": day, "time": now.strftime("%H:%M"), "ticker": ticker, "kind": kind, "price": price, "reason": reason})
+
+
+def _opening_entries(today: list) -> int:
+    return sum(1 for t in today if int(str(t["opened"])[11:13]) * 60 + int(str(t["opened"])[14:16]) < 570 + OPEN_CAP_MIN)
+
+
+def _take_first(pos: dict, price: float, now: datetime, move: float) -> str | None:
+    """Leave at +TAKE_FIRST_PCT unless the stock is riding. Riding = the 5-minute bar that reached the target closes in its top 30% and at or above the target:
+    then the stop goes to entry +0.5% and trails the peak by 0.7%. A bar still open is judged when it closes; if the price falls back under the target first, it leaves."""
+    tgt, bucket, b = pos["entry"] * (1 + TAKE_FIRST_PCT / 100), int(now.timestamp() // 300), pos.get("bar")
+    out = None
+    if b and b["t"] != bucket:                                   # the last bar has closed
+        if pos.get("touched") == b["t"] and not pos.get("riding"):
+            rng = b["h"] - b["l"]
+            if rng > 0 and (b["c"] - b["l"]) / rng >= RIDE_NEAR and b["c"] >= tgt:
+                pos["riding"] = True
+                pos["stop"] = max(pos["stop"], round(pos["entry"] * (1 + RIDE_LOCK_PCT / 100), 2))
+            else:
+                out = f"took the profit: reached +{TAKE_FIRST_PCT:g}% and was not riding ({move:+.1f}%)"
+        pos["touched"], b = None, None
+    if b is None:
+        b = pos["bar"] = {"t": bucket, "o": price, "h": price, "l": price, "c": price}
+    else:
+        b["h"], b["l"], b["c"] = max(b["h"], price), min(b["l"], price), price
+    if out or pos.get("riding"):
+        return out
+    if price >= tgt:
+        pos["touched"] = bucket
+    elif pos.get("touched") == bucket:
+        return f"took the profit: reached +{TAKE_FIRST_PCT:g}% and fell back, not riding ({move:+.1f}%)"
+    return None
+
+
+def _watch(book: dict, ticker: str, kind: str, why: str, m: dict, chart: dict, price: float, now: datetime, mins: float) -> tuple[str, dict | str | None]:
+    """The pullback gate (owner, 7 Nov). A selected stock is not bought at the signal price. Returns ('wait', None), ('cancel', reason) or ('go', watch):
+    it goes when the price has pulled back (1% under the signal, or back at the day's low), made its low, and is turning up again (0.3% off the low and rising).
+    The stop then sits just under the pullback low."""
+    watch = book.setdefault("watch", {})
+    w = watch.get(ticker)
+    if w is not None and w["day"] != now.date().isoformat():
+        w = watch.pop(ticker)
+        w = None
+    if w is None:
+        if kind and (book.get("dropped") or {}).get(ticker) != now.date().isoformat():       # a stock dropped today is not watched again today
+            watch[ticker] = {"day": now.date().isoformat(), "since": now.isoformat(), "p0": price, "kind": kind, "why": why, "support": m["lo"], "pull_lo": None, "pull_at": None,
+                             "time": now.strftime("%H:%M")}
+        return "wait", None
+    p0, age = w["p0"], (now - datetime.fromisoformat(w["since"])).total_seconds() / 60
+    pulled = w["pull_lo"] is not None
+    if mins >= WATCH_CUTOFF_MIN:
+        return "cancel", "too late in the day"
+    if age > WATCH_MIN:
+        return "cancel", "no bounce confirmed" if pulled else "no pullback and bounce"
+    if not pulled:
+        if price > p0 * (1 + WATCH_CHASE_PCT / 100):
+            return "cancel", "ran away without a pullback"
+        if price <= p0 * (1 - WATCH_DIP_PCT / 100) or price <= w["support"] * 1.004:
+            w["pull_lo"], w["pull_at"] = price, now.isoformat()
+        return "wait", None
+    if price < w["pull_lo"]:
+        w["pull_lo"], w["pull_at"] = price, now.isoformat()      # still falling: the pullback is not over
+        return "wait", None
+    if price >= w["pull_lo"] * (1 + WATCH_CONFIRM_PCT / 100) and chart["rising"]:
+        stop = w["pull_lo"] * 0.998
+        if (price - stop) / price * 100 > MAX_LOSS_PCT:
+            return "cancel", "stop too far from the entry"
+        return "go", {**w, "stop": stop}
+    if (now - datetime.fromisoformat(w["pull_at"])).total_seconds() / 60 > WATCH_CONFIRM_MIN:
+        return "cancel", "no bounce confirmed"
+    return "wait", None
 
 
 def _agent_position(book: dict, ticker: str, pos: dict, t: dict, price: float, atr: float, orders: list, results: dict, now: datetime) -> str | None:
@@ -469,7 +556,10 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
             if price > pos["peak"]:
                 pos["peak"], pos["best_at"] = price, now.isoformat()
             pos["stop"] = max(pos["stop"], round(pos["entry"] * (1 - MAX_LOSS_PCT / 100), 2))      # also for trades opened before the cap
-            if price >= pos["entry"] + LOCK_ATR * atr:
+            if TAKE_FIRST:
+                if pos.get("riding"):
+                    pos["stop"] = max(pos["stop"], round(pos["peak"] * (1 - RIDE_TRAIL_PCT / 100), 2))
+            elif price >= pos["entry"] + LOCK_ATR * atr:
                 pos["stop"] = round(max(pos["stop"], pos["entry"], pos["peak"] - TRAIL_ATR * atr), 2)
             held = (now - datetime.fromisoformat(pos["opened"])).total_seconds() / 60
             since_best = (now - datetime.fromisoformat(pos["best_at"])).total_seconds() / 60
@@ -483,9 +573,11 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
                 reason = f"volume dried up after {held:.0f} minutes and the price is not moving"
             elif held >= STALL_MIN and price < pos["entry"] + 0.2 * atr:
                 reason = f"went nowhere for {held:.0f} minutes"
-            elif t["best"] >= TAKE_PCT and since_best >= TAKE_STALL_MIN and price < pos["peak"] * (1 - TAKE_GIVEBACK_PCT / 100) and price > pos["entry"]:
+            elif TAKE_FIRST and (reason := _take_first(pos, price, now, move)):
+                pass
+            elif not TAKE_FIRST and t["best"] >= TAKE_PCT and since_best >= TAKE_STALL_MIN and price < pos["peak"] * (1 - TAKE_GIVEBACK_PCT / 100) and price > pos["entry"]:
                 reason = f"took the profit: was up {t['best']:.1f}%, no new high for {since_best:.0f} minutes and not riding any more ({move:+.1f}%)"
-            elif since_best >= 45 and price < pos["peak"] - 0.25 * atr and price > pos["entry"]:
+            elif not TAKE_FIRST and since_best >= 45 and price < pos["peak"] - 0.25 * atr and price > pos["entry"]:
                 reason = "momentum faded: no new high for 45 minutes"
             elif orders:
                 reason = _agent_position(book, ticker, pos, t, price, atr, orders, results, now)
@@ -513,17 +605,36 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
             if t:
                 done.append({"ticker": ticker, "action": "ENTER", "price": price, "reason": f"agent: {t['reason']}", "time": now.strftime("%H:%M")})
             continue
-        if not kind:
+        if PULLBACK_GATE:
+            if kind and setups is not None:
+                setups[ticker] = kind
+            held_w = (book.get("watch") or {}).get(ticker)
+            fresh = kind if (kind and not (kind == "bounce" and mins < BOUNCE_FIRST_MIN) and grade(kind, volpace.pace(snap, mins))[0]) else None
+            if not held_w and not fresh:
+                continue
+            verdict, w = _watch(book, ticker, fresh, why, m, chart, price, now, mins)
+            if verdict == "cancel":
+                book["watch"].pop(ticker, None)
+                book.setdefault("dropped", {})[ticker] = now.date().isoformat()
+                _skip(book, ticker, held_w["kind"], f"waited for a pullback, then dropped it: {w}", price, now)
+                continue
+            if verdict == "wait":
+                continue
+            book["watch"].pop(ticker, None)
+            kind, why = w["kind"], f"{w['why']}; bought the pullback (signal {w['p0']:.2f}, low {w['pull_lo']:.2f}, turning up)"
+        elif not kind:
             continue
-        if setups is not None:
-            setups[ticker] = kind
-        if kind == "bounce" and mins < BOUNCE_FIRST_MIN:
-            continue                                             # the opening move: not a floor yet
+        if not PULLBACK_GATE:
+            if setups is not None:
+                setups[ticker] = kind
+            if kind == "bounce" and mins < BOUNCE_FIRST_MIN:
+                continue                                             # the opening move: not a floor yet
         g, g_why = grade(kind, volpace.pace(snap, mins))
         score, parts = rank_score(kind, chart, volpace.pace(snap, mins), snap.get("technical_score"), (secs.get(sectors.sector_of(snap)) or {}).get("healthy"),
                                   ((p.get("technical") or {}).get("one_call") or {}).get("call"))
         cands.append({"ticker": ticker, "kind": kind, "why": why, "g": g, "grade": g, "g_why": g_why, "price": price, "lo": m["lo"], "atr": atr,
-                      "days": (p.get("events") or {}).get("days_to_earnings"), "score": score, "parts": parts})
+                      "days": (p.get("events") or {}).get("days_to_earnings"), "score": score, "parts": parts,
+                      "stop": w["stop"] if PULLBACK_GATE else None, "signal": w["p0"] if PULLBACK_GATE else None, "pull_lo": w["pull_lo"] if PULLBACK_GATE else None})
     cands.sort(key=lambda c: -c["score"])                        # the best setup first; the limits below then cut the weakest, not the last in the list
     for rank, c in enumerate(cands, 1):
         ticker, kind, g, price = c["ticker"], c["kind"], c["g"], c["price"]
@@ -541,7 +652,9 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
             no = f"no bounce: {gate}"
         elif g is None:
             no = f"no trade: {c['g_why']}"
-        elif mins >= OPEN_FREE_MIN and _new_in_window(book, now) >= MAX_NEW:
+        elif OPENING_CAP and mins < OPEN_CAP_MIN and _opening_entries(today) >= OPEN_CAP:
+            no = f"opening limit: {OPEN_CAP} entries in the first {OPEN_CAP_MIN} minutes (ranked #{rank} of {len(cands)})"
+        elif mins >= (OPEN_CAP_MIN if OPENING_CAP else OPEN_FREE_MIN) and _new_in_window(book, now) >= MAX_NEW:
             no = f"pace limit: {MAX_NEW} new entries in the last {NEW_WINDOW_MIN} minutes (ranked #{rank} of {len(cands)})"
         elif c["days"] is not None and c["days"] <= 1:
             no = f"earnings in {c['days']} day{'s' if c['days'] != 1 else ''}"
@@ -553,9 +666,11 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
             _skip(book, ticker, kind, no, price, now)
             _rank_log(book, now, c, rank, len(cands), False, no)
             continue
-        t = _enter(book, ticker, kind, f"{c['why']}; {c['g_why']}", price, c["lo"], c["atr"], now, SIZE_PCT[g], g)
+        t = _enter(book, ticker, kind, f"{c['why']}; {c['g_why']}", price, c["lo"], c["atr"], now, SIZE_PCT[g], g, c.get("stop"))
         if t:
             t["rank"], t["of"], t["score"] = rank, len(cands), c["score"]
+            if c.get("signal"):
+                t["signal"], t["pullback_low"] = c["signal"], round(c["pull_lo"], 2)
             done.append({"ticker": ticker, "action": "ENTER", "price": price, "reason": f"{kind} (grade {g}, ranked #{rank} of {len(cands)}): {c['why']}; {c['g_why']}",
                          "time": now.strftime("%H:%M")})
             _rank_log(book, now, c, rank, len(cands), True, "")

@@ -7,6 +7,21 @@ from stockwatch.data import NY
 from stockwatch.store import Store
 from test_paper import buy_snap
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def legacy_rules(request, monkeypatch):
+    """The tests in this file describe the rules before 7 Nov (buy at the signal, trailing exit, 2% stop, 30 free minutes). The 7 Nov rules have their own
+    tests in test_quick_pullback.py, which ask for them with the `new_rules` marker."""
+    if request.node.get_closest_marker("new_rules"):
+        return
+    monkeypatch.setattr(quick, "PULLBACK_GATE", False)
+    monkeypatch.setattr(quick, "TAKE_FIRST", False)
+    monkeypatch.setattr(quick, "OPENING_CAP", False)
+    monkeypatch.setattr(quick, "MAX_LOSS_PCT", 2.0)
+
+
 T0 = datetime(2026, 10, 26, 10, 0, tzinfo=NY)               # a Monday
 
 
