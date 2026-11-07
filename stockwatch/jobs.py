@@ -16,7 +16,7 @@ from pathlib import Path
 
 log = logging.getLogger("stockwatch.jobs")
 JOBS = {"stab_study": "scripts/stab_study.py", "reclaim_study": "scripts/reclaim_study.py", "recovery_study": "scripts/recovery_study.py", "earnings_study": "scripts/earnings_study.py", "save_study_data": "scripts/save_study_data.py", "candle_break_backtest": "scripts/candle_break_backtest.py", "premarket_check": "scripts/premarket_check.py", "newcall_report": "scripts/newcall_report.py", "quick_report": "scripts/quick_report.py",
-        "candidates_outcomes": "scripts/candidates_outcomes.py", "gate_replay": "scripts/gate_replay.py"}
+        "candidates_outcomes": "scripts/candidates_outcomes.py", "gate_replay": "scripts/gate_replay.py", "selection_report": "scripts/selection_report.py"}
 _lock = threading.Lock()
 _running = {"p": None}
 
