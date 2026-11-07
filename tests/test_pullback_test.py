@@ -63,6 +63,6 @@ def test_the_whole_report_runs_on_random_days(capsys):
     frames = {f"S{i}": frame() for i in range(6)}
     trades = [{"ticker": f"S{i}", "opened": f"{d} 10:{10 + 5 * i}", "entry": float(frames[f"S{i}"].loc[pd.Timestamp(f"{d} 10:{10 + 5 * i}", tz="America/New_York"), "Close"]), "kind": "bounce"}
               for d in days for i in range(6)]
-    pt.run({"ranked": []}, trades, frames, days)
+    pt.run({"trades": trades, "ranked": [], "skipped": []}, trades, frames, days)
     out = capsys.readouterr().out
     assert "PULLBACK TEST: 12 campaigns" in out and "Why campaigns did not enter" in out and "By day" in out
