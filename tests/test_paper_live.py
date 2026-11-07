@@ -88,7 +88,7 @@ def test_the_paper_tab_renders_with_and_without_trades(env, monkeypatch):
     feed(env, datetime(2026, 10, 26, 11, 30, tzinfo=NY))
     paper_live.tick(env, datetime(2026, 10, 26, 11, 30, tzinfo=NY))
     html = paper_view.html(paper_live.status(env), {"AAA": 100.0})
-    assert "AAA" in html and "OPEN" in html and "NOPE" in html
+    assert "AAA" in html and ("IN PROFIT" in html or "IN LOSS" in html) and "NOPE" in html
 
 
 def test_an_empty_test_list_says_why(env):
@@ -187,7 +187,7 @@ def test_the_empty_list_message_follows_the_setup(env, monkeypatch):
 
 def test_win_rate_tile_shows_wins_of_closed_at_the_top(env):
     html = paper_view.html(paper_live.status(env))
-    top = html.split("pp-k pp-k4")[1].split("Test list")[0]
+    top = html.split("pp-k pp-k2")[1].split("Test list")[0]
     assert "Winning · losing" in top and "0 won · 0 lost" in top and "—" in top
 
 

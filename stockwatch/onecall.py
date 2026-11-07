@@ -133,7 +133,7 @@ def assess(hist, now: datetime | None = None, owned: bool = False, position_pct:
         size = {"shares": int(account * RISK_PER_TRADE * (0.5 if risk["grade"] in ("High", "Extreme") else 1)
                               / loss_per_share), "cost_if_exit": loss_per_share}
     over = bool(owned and position_pct is not None and position_limit and position_pct > position_limit)
-    return {"known": True, "call": call, "why": why, "exit_line": round(line, 2), "band_line": round(band, 2), "close": round(close, 2), "distance_swings": round(dist, 2),
+    return {"known": True, "call": call, "why": why, "exit_line": round(line, 2), "band_line": round(band, 2), "close": round(close, 2), "distance_swings": round(dist, 2), "atr": round(atr, 4),
             "flags": flags, "risk": risk, "timeframe": tf if call in ("BUY", "ADD", "WAIT FOR TURN") else None,
             "size": size, "over_limit": over, "as_of": lv.get("as_of")}
 

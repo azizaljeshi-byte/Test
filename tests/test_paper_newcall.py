@@ -33,8 +33,8 @@ def test_high_risk_gets_half_size_and_cap_applies():
     assert book2.positions["AAA"]["shares"] * 100 <= 50_000 * 0.15 + 100     # capped at 15% of the account
 
 
-def test_no_entry_in_opening_hour_late_or_without_a_call():
-    for when in (at(10, 15), at(15, 50)):
+def test_no_entry_in_the_first_five_minutes_late_or_without_a_call():
+    for when in (at(9, 33), at(15, 50)):
         book = paper.Book()
         assert paper_newcall.step(book, {"AAA": snap()}, {"AAA": 100.0}, when) == []
     for s in (snap(call="WAIT FOR TURN"), snap(known=False), snap(call="AVOID")):
@@ -229,8 +229,8 @@ def test_up_two_percent_riding_is_held_and_stalled_is_sold_locking_the_profit():
     assert book.positions["AAA"]["up2"]
     assert paper_newcall.step(book, s, {"AAA": 102.6}, at(11, 40)) == []                 # a new high 30 minutes later: riding
     assert "riding" in book.positions["AAA"]["read"]
-    assert paper_newcall.step(book, s, {"AAA": 102.3}, at(12, 20)) == []                 # 40 minutes since the high: not yet 45
-    did = paper_newcall.step(book, s, {"AAA": 101.9}, at(12, 30))                        # 50 minutes, 0.7% under the peak
+    assert paper_newcall.step(book, s, {"AAA": 102.4}, at(11, 45)) == []                # 5 minutes since the high and only 0.2% under: still riding
+    did = paper_newcall.step(book, s, {"AAA": 102.2}, at(11, 52))                        # 12 minutes since the high, 0.4% under the peak: not riding
     assert did[0]["action"] == "SELL_ALL" and did[0]["reason"].startswith("stalled: was up to 102.60") and book.trades[0]["result"] > 0
 
 

@@ -25,3 +25,7 @@ def _no_second_source_network(monkeypatch):
     from stockwatch import data
     data._SECOND.clear()
     data._PRICECHECK.clear()
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "new_rules: runs a Quick test under the 7 Nov rules instead of the legacy ones")

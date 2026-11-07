@@ -98,7 +98,8 @@ def test_zones_show_reasons_and_say_why_when_unknown():
          "resistance": [{"low": 110.0, "high": 111.0, "grade": "LOW", "touches": 1, "age_days": 500, "points": 0,
                          "reasons": ["1 touch", "17 months old"]}]}
     html = dayboard.zones_html(make("HOLD", "pullback", zones=z), 100.0)
-    assert "200-day average" in html and "17 months old" in html and "Weak: the price may pass through" in html
+    # no exit line saved for this stock: the same ladder, with the grades, and the reason shown
+    assert "NO EXIT LINE" in html and "Price ladder" in html and "STRONG" in html and "WEAK" in html and "Exit line" not in html.replace("NO EXIT LINE", "")
     unk = dayboard.zones_html(make("HOLD", "pullback", zones={"known": False, "why": "Only 50 daily bars", "support": [], "resistance": []}), 100.0)
     assert "No read" in unk and "Only 50 daily bars" in unk
 
@@ -141,7 +142,7 @@ def test_the_card_shows_ratings_and_plain_english_zones_without_the_old_grades()
          "support": [{"low": 90.0, "high": 91.0, "grade": "HIGH", "touches": 4, "age_days": 10, "points": 5, "reasons": ["4 touches"]}],
          "resistance": []}
     html = dayboard.card(make("HOLD", "pullback", zones=z))
-    assert "Fundamentals" in html and "Technical" in html and "Likely to hold: a good place to buy" in html
+    assert "Fundamentals" in html and "Technical" in html and "Support 1" in html and "STRONG" in html
     assert ">HIGH<" not in html and ">LOW<" not in html
 
 
