@@ -208,11 +208,12 @@ class Tracker:
                         jobs.tick()                                            # run-once study jobs, only when data/run_job.txt exists
                     except Exception:
                         log.exception("job runner step failed")
+                    # the manual test list is switched off (owner, 7 Nov); its code and saved days stay. The Momentum list replaces it.
                     try:
-                        from . import testlist
-                        testlist.tick(store)                                   # the manual test list: breakouts with entry, stop and target, log only
+                        from . import rising
+                        rising.run_async(self.store_path)                      # Momentum list: rising RSI, improving MACD, building volume; own thread, log only
                     except Exception:
-                        log.exception("test list step failed")
+                        log.exception("momentum list step failed")
                     try:
                         from . import agent
                         agent.tick(self.store_path)                            # the AI agent: its own thread, so a slow answer never delays a stop

@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import crash, portfolio as portfolio_acct, portfolio_view, extended, testlist, ask_ai, ask_ai_view, candidates, stockhead, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import crash, portfolio as portfolio_acct, portfolio_view, extended, testlist, rising, rising_view, ask_ai, ask_ai_view, candidates, stockhead, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -241,8 +241,8 @@ controls()
 # ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
 # Turbo and the Briefing are switched off (owner, 30 Oct): not on the tab bar and their addresses open the Radar. Their code is kept.
 VIEWS = {"radar": "◉ Radar", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log",
-         "fleet": "+ Fleet", "research": "⚗ Research", "paper": "◈ Paper", "quick": "⏱ Quick", "portfolio": "▣ Portfolio", "ai": "✧ Ask the AI", "ext": "☾ Extended", "tests": "☑ Test list"}
-HIDDEN_VIEWS = ("fleet", "research")          # off the tab bar for now (owner); both still open at ?view=fleet and ?view=research
+         "fleet": "+ Fleet", "research": "⚗ Research", "paper": "◈ Paper", "quick": "⏱ Quick", "portfolio": "▣ Portfolio", "ai": "✧ Ask the AI", "ext": "☾ Extended", "rising": "⚡ Momentum", "tests": "☑ Test list"}
+HIDDEN_VIEWS = ("fleet", "research", "tests")  # off the tab bar for now (owner); still open at ?view=fleet, ?view=research and ?view=tests (the Test list was replaced by Momentum, 7 Nov)
 SHOWN_VIEWS = [v for v in VIEWS if v not in HIDDEN_VIEWS]
 current = st.query_params.get("view", "radar")
 current = current if current in VIEWS else "radar"
@@ -1028,6 +1028,45 @@ if view == "tests":
                 st.caption(f"{len(done)} finished: {sum(r['status'] == 'target' for r in done)} hit the target, {sum(r['status'] == 'stopped' for r in done)} hit the stop, "
                            f"{sum(r['status'] == 'time' for r in done)} sold at the time exit. Average {sum(r['result_pct'] for r in done) / len(done):+.2f}%.")
             st.caption('"Both" = Quick\'s breakout side and New call (BUY or ADD) agree. "Quick only" = Quick\'s breakout side, with New call not against it.')
+
+
+if view == "rising":
+    st.markdown("### Momentum")
+    st.caption("Stocks of the S&P 500 whose RSI is rising, MACD is improving and volume is building. Starts at 09:35 New York (17:35 Riyadh) and updates every 5 minutes. "
+               "Watching only: no trade, no signal. Brackets: change since yesterday's close. Arrows: change since the previous run.")
+    rs_state = rising.load_state(store)
+    day_list = rising.days(store)
+    if not rs_state:
+        st.info("No list yet. The first run is at 17:35 Riyadh on a trading day.")
+    else:
+        if rs_state.get("status") == "baseline":
+            st.info("Building today's usual-volume table for 503 stocks (about 10 minutes). The first list appears when it is done.")
+        else:
+            st.markdown(f"**Updated {rising_view.stamp(rs_state)}** · {rs_state['pass']} of {rs_state['read']} stocks pass"
+                        + (f" · {rs_state['unknown']} had no usable data (left out, not scored)" if rs_state.get("unknown") else ""))
+            if rs_state.get("early"):
+                st.caption("Early run: the volume is still settling in the first minutes, so read it with care.")
+            if rs_state["rows"]:
+                st.markdown(rising_view.table(rs_state["rows"]), unsafe_allow_html=True)
+            else:
+                st.info("No stock passes all three tests right now.")
+            if rising_view.left_line(rs_state):
+                st.caption(rising_view.left_line(rs_state))
+    if day_list:
+        with st.expander("Earlier runs"):
+            rs_day = st.selectbox("Day", sorted(day_list, reverse=True), key="rs_day")
+            past = rising.runs(store, rs_day)
+            ok_runs = [x for x in past if x.get("status") == "ok"]
+            if not ok_runs:
+                st.caption("No run on that day.")
+            else:
+                labels = {rising_view.stamp(x): x for x in reversed(ok_runs)}
+                pick = st.selectbox("Run", list(labels), key="rs_run")
+                x = labels[pick]
+                st.markdown(f"**{x['pass']} of {x['read']} stocks passed**")
+                st.markdown(rising_view.table(x["rows"]) if x["rows"] else "No stock passed.", unsafe_allow_html=True)
+                if rising_view.left_line(x):
+                    st.caption(rising_view.left_line(x))
 
 
 if view == "ext":
