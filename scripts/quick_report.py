@@ -33,6 +33,33 @@ def is_hand(t) -> bool:
     return str(t.get("exit_reason") or "").startswith("owner override")
 
 
+SLOTS = [(0, 15, "09:30-09:45 (17:30-17:45 Riyadh)"), (15, 30, "09:45-10:00 (17:45-18:00)"), (30, 60, "10:00-10:30 (18:00-18:30)"), (60, 90, "10:30-11:00 (18:30-19:00)"),
+         (90, 180, "11:00-12:30 (19:00-20:30)"), (180, 999, "12:30-close (20:30 on)")]
+
+
+def minutes_after_open(t) -> int:
+    hhmm = str(t["opened"])[11:16]
+    return (int(hhmm[:2]) - 9) * 60 + int(hhmm[3:]) - 30
+
+
+def kind_by_timing(closed) -> None:
+    """Each setup kind, split by when it entered: trades, win rate, average win and loss, profit factor, how far it ran, how many hit the stop."""
+    for kind in sorted({t["kind"] for t in closed}):
+        ts = [t for t in closed if t["kind"] == kind]
+        print(f"\nSETUP {kind.upper()} BY ENTRY TIME ({len(ts)} trades, all days; New York time, Riyadh in brackets)")
+        print(f"  {'entered':<34}{'trades':>7}{'wins':>6}{'total $':>10}{'avg $':>8}{'avg win':>9}{'avg loss':>10}{'PF':>6}{'avg best':>10}{'stops':>7}")
+        for lo, hi, lab in SLOTS + [(0, 999, "ALL DAY")]:
+            g = [t for t in ts if lo <= minutes_after_open(t) < hi]
+            if not g:
+                continue
+            w = [t["result"] for t in g if t["result"] > 0]
+            lo_ = [t["result"] for t in g if t["result"] <= 0]
+            stops = len([t for t in g if str(t.get("exit_reason") or "").startswith("stop hit")])
+            pf = (sum(w) / -sum(lo_)) if lo_ and sum(lo_) else float("inf")
+            print(f"  {lab:<34}{len(g):>7}{pct(len(w), len(g)):>6}{sum(t['result'] for t in g):>10,.0f}{sum(t['result'] for t in g) / len(g):>8,.1f}"
+                  f"{(sum(w) / len(w) if w else 0):>9,.1f}{(sum(lo_) / len(lo_) if lo_ else 0):>10,.1f}{pf:>6.2f}{sum((t.get('best') or 0) for t in g) / len(g):>+9.1f}%{stops:>7}")
+
+
 def main() -> None:
     from datetime import datetime
     from stockwatch import quick, rotation, sectors
@@ -74,6 +101,7 @@ def main() -> None:
     block("BY DAY (closed that day)", sorted(by_day.items()))
     block("BY SETUP", sorted(by_kind.items()))
     block("BY WHEN IT ENTERED (minutes after the open)", sorted(by_when.items()))
+    kind_by_timing(closed)
     block("BY EXIT REASON", sorted(by_reason.items(), key=lambda kv: sum(t["result"] for t in kv[1])))
     block("BY SECTOR", sorted(by_sec.items(), key=lambda kv: sum(t["result"] for t in kv[1])))
     today = datetime.now(NY).date().isoformat()
