@@ -9,8 +9,8 @@ def test_each_theme_is_one_style_block_and_an_unknown_one_falls_back_to_auto():
     dark, light, auto = (design.theme_css(m) for m in ("dark", "light", "auto"))
     assert "prefers-color-scheme" not in dark and "prefers-color-scheme" not in light
     assert "prefers-color-scheme: light" in auto
-    assert "--dz-bg:#f4f5f8" in light and "--dz-bg:#f4f5f8" in auto and "--dz-bg:#f4f5f8" not in dark
-    assert "--bg:#f4f5f8" in light                         # the app's older styles read these, so the whole app re-themes
+    assert "--dz-bg:#f2f4f7" in light and "--dz-bg:#f2f4f7" in auto and "--dz-bg:#f2f4f7" not in dark
+    assert "--bg:#f2f4f7" in light                         # the app's older styles read these, so the whole app re-themes
     assert design.theme_css("nonsense") == auto
     assert all(x.startswith("<style>") and x.endswith("</style>") for x in (dark, light, auto))
 

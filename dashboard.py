@@ -68,7 +68,9 @@ st.markdown(design.theme_css(THEME), unsafe_allow_html=True)
 
 
 def _save_theme():
-    store.set_setting("theme", st.session_state.get("theme") or design.DEFAULT_THEME)
+    mode = st.session_state.get("theme") or design.DEFAULT_THEME
+    store.set_setting("theme", mode)
+    st.query_params["theme"] = mode
 data = provider(selected_provider(base.settings.data_provider), CODE_VERSION)
 # with a Google Sheet, the sheet is the only list; dashboard additions are for setups without one
 portfolio = base if base.sheet_url else store.apply_overrides(base)
@@ -137,6 +139,8 @@ if base.sheet_error:
     st.warning(f"Couldn't read the Google Sheet, showing the backup list instead. {base.sheet_error}")
 
 def controls():
+    st.markdown('<h2 class="tape-group">Display</h2>', unsafe_allow_html=True)
+    st.caption("Theme")
     st.segmented_control("Theme", list(design.THEMES), format_func=design.THEMES.get, default=THEME, key="theme",
                          on_change=_save_theme, label_visibility="collapsed")
     c1, c2 = st.columns([1, 1.6])
@@ -178,11 +182,24 @@ def _watch_for_updates():
 _watch_for_updates()
 
 
-if not snaps:
+# Navigation is URL-driven, including alert links, so automatic reruns preserve the route.
+VIEWS = design.VIEWS
+view = design.resolve_view(st.query_params.get("view", "radar"))
+st.markdown(design.bottom_nav(view, THEME), unsafe_allow_html=True)
+
+if view == "more":
+    st.markdown("### More")
+    for group in design.MORE_GROUPS:
+        st.markdown(f'<h2 class="tape-group">{escape(group)}</h2>', unsafe_allow_html=True)
+        st.markdown(design.more_group(group, THEME), unsafe_allow_html=True)
     controls()
+    st.stop()
+
+
+if not snaps:
     st.info("The first scan is running in the background. This page fills in by itself when it lands "
             "(a few minutes for a long list)." if live.SWEEP_LOCK.locked()
-            else "No telemetry yet. Hit **⟳ Sweep now** to run the first scan.")
+            else "No telemetry yet. Open More, then tap Sweep now to run the first scan.")
     st.stop()
 
 if len(snaps) < len(tickers) and live.SWEEP_LOCK.locked():
@@ -234,23 +251,6 @@ st.markdown(ui.tiles([
     ("Buy zone", str(len(opps)), _names(opps) or "nothing in range", ui.OPP if opps else ui.MUTED),
     ("Earnings this week", str(len(soon)), _names(soon) or "quiet week", ui.WARN if soon else ui.MUTED),
 ]), unsafe_allow_html=True)
-
-controls()
-
-
-# ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
-# Turbo and the Briefing are switched off (owner, 30 Oct): not on the tab bar and their addresses open the Radar. Their code is kept.
-VIEWS = {"radar": "◉ Radar", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log",
-         "fleet": "+ Fleet", "research": "⚗ Research", "paper": "◈ Paper", "quick": "⏱ Quick", "portfolio": "▣ Portfolio", "ai": "✧ Ask the AI", "ext": "☾ Extended", "rising": "⚡ Momentum", "tests": "☑ Test list"}
-HIDDEN_VIEWS = ("fleet", "research", "tests")  # off the tab bar for now (owner); still open at ?view=fleet, ?view=research and ?view=tests (the Test list was replaced by Momentum, 7 Nov)
-SHOWN_VIEWS = [v for v in VIEWS if v not in HIDDEN_VIEWS]
-current = st.query_params.get("view", "radar")
-current = current if current in VIEWS else "radar"
-picked = st.segmented_control("View", SHOWN_VIEWS, format_func=VIEWS.get,
-                              default=current if current in SHOWN_VIEWS else None, label_visibility="collapsed")
-view = picked or current
-if view != current:
-    st.query_params["view"] = view
 
 # ---------------------------------------------------------------- radar
 prevs = {s["ticker"]: store.previous_snapshot(s["ticker"]) for s in snaps}

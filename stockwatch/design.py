@@ -8,58 +8,116 @@ Colour is never the only signal: every status also has a word (ACT, BUY, WATCH, 
 from __future__ import annotations
 
 from html import escape
+from urllib.parse import urlencode
 
 THEMES = {"auto": "Auto", "dark": "Dark", "light": "Light"}
 DEFAULT_THEME = "auto"
 
-# --- status colours: act (sell side), buy, watch, calm, and the gauge steps from bad to strong
-DARK = {"act": "#ff7b78", "buy": "#3fd08d", "watch": "#f2b84b", "calm": "#8da2d6", "bad": "#ff6b6b", "weak": "#ffa566",
-        "neutral": "#8a93a3", "good": "#8fd18a", "strong": "#3fd08d"}
-LIGHT = {"act": "#d6383a", "buy": "#12935a", "watch": "#b87800", "calm": "#4a67d6", "bad": "#e5534b", "weak": "#e08a3c",
-         "neutral": "#7d8696", "good": "#4fa86a", "strong": "#12935a"}
-
-_VARS_DARK = ("--dz-bg:#0b1118;--dz-surface:#121a25;--dz-raised:#171f2c;--dz-line:#243041;--dz-ink:#e9eef5;--dz-soft:#aab3c3;"
-              "--dz-muted:#8d99ab;--dz-on:#0b1118;--dz-on-c:#0b1118;")
-_VARS_LIGHT = ("--dz-bg:#f4f5f8;--dz-surface:#ffffff;--dz-raised:#eef0f4;--dz-line:#dde1e8;--dz-ink:#12161c;--dz-soft:#3f4857;"
-               "--dz-muted:#5d6675;--dz-on:#ffffff;--dz-on-c:#ffffff;")
+# Tape tokens: one source for shared HTML, legacy components and native widgets.
+TAPE_DARK = {"bg":"#0d1a2c", "surface":"#14253c", "raised":"#1b304b", "line":"#233855",
+             "ink":"#f2efe8", "soft":"#9fb0c8", "muted":"#9fb0c8", "gain":"#4fd6a5", "loss":"#ff8a7a",
+             "on":"#0d1a2c", "on-c":"#0d1a2c"}
+TAPE_LIGHT = {"bg":"#f2f4f7", "surface":"#fffefb", "raised":"#e6edf4", "line":"#c7d2df",
+              "ink":"#15243a", "soft":"#485a71", "muted":"#52657c", "gain":"#146b4b", "loss":"#a7382c",
+              "on":"#fffefb", "on-c":"#fffefb"}
+DARK = {"act":TAPE_DARK["loss"], "buy":TAPE_DARK["gain"], "watch":"#e5c58b", "calm":TAPE_DARK["soft"],
+        "bad":TAPE_DARK["loss"], "weak":"#d4a69c", "neutral":TAPE_DARK["soft"], "good":TAPE_DARK["gain"], "strong":TAPE_DARK["gain"]}
+LIGHT = {"act":TAPE_LIGHT["loss"], "buy":TAPE_LIGHT["gain"], "watch":"#775b1c", "calm":TAPE_LIGHT["soft"],
+         "bad":TAPE_LIGHT["loss"], "weak":"#945344", "neutral":TAPE_LIGHT["soft"], "good":TAPE_LIGHT["gain"], "strong":TAPE_LIGHT["gain"]}
+FONT = '"Familjen Grotesk", system-ui, sans-serif'
 
 
 def _palette_vars(p: dict) -> str:
     return "".join(f"--dz-{k}:{v};" for k, v in p.items())
 
 
-# The app's older styles (ui.CSS) are written with these variables, so overriding them re-themes every page.
-_LEGACY_LIGHT = ("--bg:#f4f5f8;--panel:#ffffff;--panel2:#f6f7fa;--line:#dde1e8;--ink:#12161c;--soft:#3f4857;--muted:#5d6675;"
-                 "--opp:#12935a;--risk:#d6383a;--warn:#b87800;--info:#2468c9;")
+def _theme_vars(tokens: dict, palette: dict, scheme: str) -> str:
+    legacy = {"bg":"bg", "panel":"surface", "panel2":"raised", "line":"line", "ink":"ink", "soft":"soft", "muted":"muted",
+              "opp":"gain", "risk":"loss", "info":"soft"}
+    return (_palette_vars(tokens) + _palette_vars(palette) + f"color-scheme:{scheme};" +
+            "".join(f"--{key}:{tokens[value]};" for key,value in legacy.items()) + f"--warn:{palette['watch']};" +
+            f"--sans:{FONT};--head:{FONT};--mono:{FONT};")
 
-# Streamlit's own widgets keep their dark colours unless told otherwise; only needed in the light theme.
-_LIGHT_WIDGETS = """
-.stApp{background:var(--dz-bg) !important}.stApp::after{display:none !important}
+
+# Apply the same tokens to native Streamlit widgets in all three theme modes.
+_WIDGETS = """
+.stApp{background:var(--dz-bg) !important;color:var(--dz-ink) !important}.stApp::after{display:none !important}
+html,body,.stApp,button,input,textarea,select,[data-baseweb]{font-family:var(--sans) !important;font-variant-numeric:tabular-nums}
+.stApp [data-testid="stMarkdownContainer"] *{font-family:var(--sans) !important;font-variant-numeric:tabular-nums}
 [data-testid="stMarkdownContainer"],[data-testid="stCaptionContainer"],[data-testid="stWidgetLabel"] p,
 [data-testid="stWidgetLabel"],label,.stApp h1,.stApp h2,.stApp h3{color:var(--dz-ink) !important}
-[data-testid="stCaptionContainer"]{color:var(--dz-muted) !important}
-[data-testid="stButtonGroup"] button,.stButton button,[data-baseweb="select"]>div{
-  background:var(--dz-surface) !important;color:var(--dz-ink) !important;border:1px solid var(--dz-line) !important}
-[data-testid="stButtonGroup"] button[aria-checked="true"]{background:var(--dz-ink) !important;color:var(--dz-bg) !important}
+[data-testid="stCaptionContainer"],[data-testid="stCaptionContainer"] p,[data-testid="stCaption"] p{color:var(--dz-muted) !important}
+[data-testid="stButtonGroup"] button,.stButton button,[data-baseweb="select"]>div,
+[data-baseweb="input"],[data-baseweb="input"] input,textarea,[data-baseweb="popover"],[role="listbox"],
+[data-baseweb="menu"],[data-baseweb="menu"] li,
+[data-testid="stSelectbox"] [role="group"],[data-testid="stSelectbox"] input,
+[data-testid="stSelectbox"] button,[data-testid="stTextInput"] input,[data-testid="stTextArea"] textarea,
+.react-aria-Popover,.react-aria-ListBox,.react-aria-ListBoxItem,[role="option"]{background:var(--dz-surface) !important;color:var(--dz-ink) !important;border-color:var(--dz-line) !important}
+[data-testid="stButtonGroup"] button,.stButton button{border:1px solid var(--dz-line) !important;min-height:44px}
+[data-testid="stButtonGroup"] button[aria-checked="true"],
+[data-testid="stButtonGroup"] button[aria-pressed="true"]{background:var(--dz-ink) !important;color:var(--dz-bg) !important}
 [data-testid="stButtonGroup"] button *,.stButton button *{color:inherit !important}
-[data-testid="stExpander"],[data-testid="stExpander"] details{background:var(--dz-surface) !important;border-color:var(--dz-line) !important}
+.stButton button:disabled{opacity:.55}
+[data-testid="stExpander"],[data-testid="stExpander"] details{background:var(--dz-surface) !important;border-color:var(--dz-line) !important;color:var(--dz-ink) !important}
 header[data-testid="stHeader"]{background:transparent !important}
+a:focus-visible,button:focus-visible{outline:2px solid var(--dz-ink) !important;outline-offset:3px}
+.stApp .js-plotly-plot text{font-family:var(--sans) !important;font-variant-numeric:tabular-nums}
+.mc-title{text-shadow:none !important;letter-spacing:.02em !important;color:var(--dz-ink) !important}
+.mc-tile,.mc-card{background:var(--dz-surface) !important}
+.block-container{padding-bottom:calc(104px + env(safe-area-inset-bottom,0px)) !important}
+.tape-nav{position:fixed;bottom:0;left:0;right:0;z-index:999;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));
+ background:var(--dz-bg);border-top:1px solid var(--dz-line);padding:8px max(8px,env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) max(8px,env(safe-area-inset-left,0px));gap:2px}
+.tape-nav a{display:flex;align-items:center;justify-content:center;min-height:44px;min-width:0;font-size:12px;
+ color:var(--dz-soft) !important;text-decoration:none !important;border-radius:9px;font-weight:500}
+.tape-nav a[aria-current="page"]{color:var(--dz-ink) !important;background:var(--dz-surface);font-weight:700}
+.stApp h2.tape-group{font-size:13px !important;font-weight:600 !important;color:var(--dz-soft) !important;margin:16px 0 8px !important;padding:0 !important}
+.tape-more{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:20px}
+.tape-more a{display:block;background:var(--dz-surface);border:1px solid var(--dz-line);border-radius:14px;padding:14px;
+ min-height:62px;color:var(--dz-ink) !important;text-decoration:none !important;font-size:15px;font-weight:600}
+.tape-more small{display:block;color:var(--dz-soft);font-size:12px;font-weight:400;margin-top:4px}
 """
 
 
 def theme_css(mode: str = DEFAULT_THEME) -> str:
-    """The theme as one <style> block. Dark is the app's existing look; light overrides its colour variables; auto follows the
-    phone's setting. An unknown mode falls back to auto."""
+    """Tape in dark/light, or the phone's preference. Unknown modes follow Auto."""
     mode = mode if mode in THEMES else DEFAULT_THEME
-    dark = f":root{{{_VARS_DARK}{_palette_vars(DARK)}}}"
-    light = f":root{{{_VARS_LIGHT}{_palette_vars(LIGHT)}{_LEGACY_LIGHT}}}{_LIGHT_WIDGETS}"
-    if mode == "dark":
-        body = dark
-    elif mode == "light":
-        body = dark + light
-    else:
-        body = dark + f"@media (prefers-color-scheme: light){{{light}}}"
-    return f"<style>{body}{COMPONENTS}</style>"
+    dark = f":root{{{_theme_vars(TAPE_DARK,DARK,'dark')}}}"
+    light = f":root{{{_theme_vars(TAPE_LIGHT,LIGHT,'light')}}}"
+    body = dark if mode == "dark" else light if mode == "light" else dark + f"@media (prefers-color-scheme: light){{{light}}}"
+    font = "@import url('https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&display=swap');"
+    return f"<style>{font}{body}{_WIDGETS}{COMPONENTS}</style>"
+
+
+PRIMARY_VIEWS = {"radar":"Radar", "portfolio":"Portfolio", "quick":"Quick", "rising":"Momentum", "more":"More"}
+MORE_GROUPS = {"Look up": {"target":("Details","Look up a tracked stock"), "market":("S&P 500","The wider market"),
+                           "ai":("Ask the AI","Saved opinions and re-checks"), "ext":("Extended","Before and after the session")},
+               "Practice accounts": {"paper":("Paper","The New call practice account"), "log":("Log","Updates and alerts")}}
+# All previously supported routes remain valid, including the off-menu pages.
+VIEWS = PRIMARY_VIEWS | {k:v[0] for group in MORE_GROUPS.values() for k,v in group.items()} | {
+    "fleet":"Fleet", "research":"Research", "tests":"Test list"}
+
+
+def resolve_view(value: str) -> str:
+    return value if value in VIEWS else "radar"
+
+
+def _view_link(view: str, theme: str) -> str:
+    return escape("?" + urlencode({"view":view, "theme":theme if theme in THEMES else DEFAULT_THEME}), quote=True)
+
+
+def bottom_nav(view: str, theme: str = DEFAULT_THEME) -> str:
+    """URL-driven navigation survives full reloads; secondary routes select More."""
+    selected = view if view in PRIMARY_VIEWS else "more"
+    links = ''.join(f'<a href="{_view_link(key,theme)}" target="_self"' +
+                    (' aria-current="page"' if key == selected else '') + f'>{escape(label)}</a>' for key,label in PRIMARY_VIEWS.items())
+    return f'<nav class="tape-nav" aria-label="Main navigation">{links}</nav>'
+
+
+def more_group(group: str, theme: str = DEFAULT_THEME) -> str:
+    """Escaped links for one More group. Theme/Sweep use native callback widgets."""
+    links = ''.join(f'<a href="{_view_link(key,theme)}" target="_self">{escape(label)}<small>{escape(note)}</small></a>'
+                    for key,(label,note) in MORE_GROUPS.get(group,{}).items())
+    return f'<div class="tape-more">{links}</div>'
 
 
 # ------------------------------------------------------------------ wording (plain English, the same everywhere)
@@ -236,7 +294,7 @@ COMPONENTS = """
 .dz-gtag{position:absolute;bottom:24px;transform:translateX(-50%);font-size:.66rem;font-weight:800;letter-spacing:.06em;
   padding:.1rem .5rem;border-radius:7px;background:var(--dz-ink);color:var(--dz-bg);white-space:nowrap}
 .dz-ends{display:flex;justify-content:space-between;font-size:.72rem;color:var(--dz-muted);margin:0 4px}
-.dz-ic{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:6px;font:800 .68rem/1 system-ui;
+.dz-ic{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:6px;font:800 .68rem/1 var(--sans);
   font-style:normal;flex:none;background:var(--dz-c);color:var(--dz-on-c,#0b1118)}
 .dz-k-good{--dz-c:var(--dz-buy)}.dz-k-bad{--dz-c:var(--dz-act)}.dz-k-careful{--dz-c:var(--dz-watch)}.dz-k-info{--dz-c:var(--dz-calm)}
 .dz-li{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;margin-bottom:6px;border-radius:12px;
