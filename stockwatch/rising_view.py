@@ -1,56 +1,91 @@
-"""HTML for the Momentum tab: one table per run, five narrow columns so it fits a phone. Display only."""
+"""Tape Momentum rows, from existing saved readings. Display only."""
 from __future__ import annotations
 
 from datetime import datetime
 from html import escape
+import math
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
-ARROW = {1: ('<span style="color:var(--opp)">▲</span>'), -1: ('<span style="color:var(--risk)">▼</span>'), 0: '<span style="color:var(--muted)">●</span>'}
+CSS='''
+.tm{max-width:800px;margin:auto;color:var(--dz-ink);font:15px/1.5 var(--sans);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.tm-big{font-size:30px;font-weight:700;line-height:1.1;margin:12px 0}.tm small{font-size:12px;color:var(--dz-soft)}
+.tm-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;border-top:1px solid var(--dz-line);padding:12px 0}
+.tm-row a{color:var(--dz-ink);font-weight:700;text-decoration:none}.tm-right{grid-column:2;grid-row:1/3;text-align:right;font-weight:600;white-space:nowrap}
+.tm-right small{display:block;font-weight:400}.tm-up{color:var(--dz-gain)}.tm-dn{color:var(--dz-loss)}
+.tm-reason{font-size:12px;color:var(--dz-soft)}.tm-tag{font-size:11px;color:var(--dz-soft);margin-left:6px}
+.tm details{margin:12px 0}.tm summary{min-height:44px;cursor:pointer;color:var(--dz-soft);font-size:12px}
+.tm-metrics{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px}.tm-metrics td,.tm-metrics th{padding:8px 3px;text-align:left;overflow-wrap:anywhere;border-bottom:1px solid var(--dz-line)}
+'''
+ARROW={1:'▲',-1:'▼',0:'●'}
 
 
-def _arrow(r: dict, key: str) -> str:
-    d = r.get("dir")
-    return "" if not d else " " + ARROW[d[key]]
+def _num(v):
+    return v if isinstance(v,(int,float)) and not isinstance(v,bool) and math.isfinite(v) else None
 
 
-def _sub(text: str) -> str:
-    return f'<br><small style="color:var(--muted)">{escape(text)}</small>'
+def _value(v,precision=1,signed=False):
+    v=_num(v)
+    return 'unknown' if v is None else format(v,('+' if signed else '')+f'.{precision}f')
+
+
+def _arrow(r,key):
+    return ' '+ARROW.get((r.get('dir') or {}).get(key),'') if key in (r.get('dir') or {}) else ''
+
+
+def reason(row):
+    if row.get('miss'):
+        return 'Waiting: '+str(row['miss'])
+    if row.get('tag')=='FADING':
+        return 'Price and momentum fell since the previous run.'
+    rsi,hist=_num(row.get('rsi_d')),_num(row.get('hist_d'))
+    if rsi is None or hist is None:
+        return 'Momentum change unknown.'
+    return ('RSI rising' if rsi>0 else 'RSI not rising')+'; '+('MACD improving.' if hist>0 else 'MACD not improving.')
 
 
 def table(rows: list[dict]) -> str:
-    """The rows of one run. Brackets are the change since yesterday's close; arrows are the change since the previous run."""
-    body = []
+    """Compact rows as in Tape; preserve the old measurements behind a disclosure."""
+    body=[];measurements=[]
     for r in rows:
-        tag = ""
-        if r.get("tag") == "NEW":
-            tag = ' <span class="mc-tag" style="color:var(--info)">NEW</span>'
-        elif r.get("tag") == "FADING":
-            tag = ' <span class="mc-tag" style="color:var(--warn)">FADING</span>'
-        mine = ' <span class="mc-tag">yours</span>' if r.get("tracked") else ""
-        sym = escape(r["t"])
-        chg, hist_d = f"{r['chg']:+.1f}%", f"{r['hist_d']:+.2f}"
-        rsi_d = f"{r['rsi_d']:+.1f}"
-        day = "day none" if r.get("rsi_day") is None else f"day {r['rsi_day']:.0f}"
-        miss = _sub("missing: " + r["miss"]) if r.get("miss") else ""
-        vol = "unknown" if r.get("vol_x") is None else f"{r['vol_x']:.1f}×"
-        body.append(
-            "<tr>"
-            f'<td><a class="mc-a" href="?view=target&t={sym}" target="_self"><b>{sym}</b></a>{mine}{tag}{miss}</td>'
-            f'<td>{r["price"]:,.2f}{_arrow(r, "price")}{_sub(chg)}</td>'
-            f'<td>{r["rsi"]:.1f}{_arrow(r, "rsi")}{_sub(rsi_d)}{_sub(day)}</td>'
-            f'<td>{r["hist"]:+.2f}{_arrow(r, "hist")}{_sub(hist_d)}</td>'
-            f'<td>{vol}{_arrow(r, "vol")}</td>'
-            "</tr>")
-    head = "".join(f"<th>{h}</th>" for h in ("Stock", "Price", "RSI", "MACD", "Volume"))
-    return (f'<style>.rs-tbl td,.rs-tbl th{{padding:.3rem .26rem !important}}.rs-tbl td:first-child,.rs-tbl th:first-child{{padding-left:.1rem !important}}</style>'
-            f'<div class="mc-tbl rs-tbl"><table><thead><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table></div>')
+        ticker=str(r.get('t') or 'unknown')
+        sym=escape(ticker)
+        tags=(' <span class="tm-tag">yours</span>' if r.get('tracked') else '')
+        if r.get('tag') in ('NEW','FADING'):
+            tags+=f'<span class="tm-tag">{r["tag"]}</span>'
+        change=_num(r.get('chg'))
+        move='unknown' if change is None else _value(change,signed=True)+'%'
+        tone='' if change is None or change==0 else 'tm-up' if change>0 else 'tm-dn'
+        vol='unknown' if _num(r.get('vol_x')) is None else f'{r["vol_x"]:.1f}× normal'
+        body.append(f'<div class="tm-row"><div><a href="?view=target&amp;t={quote(ticker,safe="")}" target="_self">{sym}</a>{tags}</div>'
+                    f'<div class="tm-right {tone}">{move}<small>Volume {vol}</small></div>'
+                    f'<div class="tm-reason">{escape(reason(r))}</div></div>')
+        measurements.append(f'<tr><td>{sym}</td><td>{_value(r.get("price"),2)}{_arrow(r,"price")}</td>'
+                            f'<td>{_value(r.get("rsi"))}{_arrow(r,"rsi")}<br>change {_value(r.get("rsi_d"),signed=True)}<br>day {_value(r.get("rsi_day"),0)}</td>'
+                            f'<td>{_value(r.get("hist"),2,True)}{_arrow(r,"hist")}<br>change {_value(r.get("hist_d"),2,True)}</td>'
+                            f'<td>{vol}{_arrow(r,"vol")}</td></tr>')
+    return (f'<style>{CSS}</style><div class="tm">'+(''.join(body) or '<small>No stocks in this run.</small>')+
+            ('<details><summary>Measurements · arrows compare the previous run</summary><table class="tm-metrics"><thead><tr>'
+             '<th>Stock</th><th>Price</th><th>RSI</th><th>MACD</th><th>Volume</th></tr></thead><tbody>'+''.join(measurements)+'</tbody></table></details>' if rows else '')+'</div>')
 
 
 def stamp(state: dict) -> str:
-    at = datetime.fromisoformat(state["at"])
-    return f'{at:%H:%M} New York, {at.astimezone(ZoneInfo("Asia/Riyadh")):%H:%M} Riyadh'
+    try:
+        at=datetime.fromisoformat(str(state.get('at')))
+        if at.tzinfo is None:
+            return 'unknown time zone'
+        return f'{at.astimezone(ZoneInfo("America/New_York")):%H:%M} New York, {at.astimezone(ZoneInfo("Asia/Riyadh")):%H:%M} Riyadh'
+    except (ValueError,TypeError):
+        return 'unknown time'
+
+
+def headline(state: dict) -> str:
+    count=_num(state.get('pass'))
+    value='unknown' if count is None else f'{count:g}'
+    return (f'<style>{CSS}</style><div class="tm"><small>Rising now</small><div class="tm-big">{value} stocks building momentum</div>'
+            f'<small>Updated {escape(stamp(state))}</small></div>')
 
 
 def left_line(state: dict) -> str:
-    out = state.get("left") or []
-    return "" if not out else "Left the list: " + "; ".join(f'{x["t"]} ({x["why"]})' for x in out)
+    out=state.get('left') or []
+    return '' if not out else 'Left the list: '+'; '.join(f'{x["t"]} ({x["why"]})' for x in out)
