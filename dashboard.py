@@ -786,6 +786,11 @@ def _pf_pick(ticker, do):
     st.session_state["pf_msg"] = fn(store, ticker)["note"]
 
 
+def _pf_order(ticker, do):
+    fn = portfolio_acct.approve_order if do == "yes" else portfolio_acct.skip_order
+    st.session_state["pf_msg"] = fn(store, ticker)["note"]
+
+
 def _pf_levels(rows):
     """Apply the edits the owner made in the lines table: stop, profit exit, broker tick."""
     edits = (st.session_state.get("pf_tbl") or {}).get("edited_rows", {})
@@ -829,12 +834,13 @@ def _hand_sell_cancel(prefix):
     st.session_state[f"{prefix}_pending"] = None
 
 
-def _hand_sell_do(prefix, ticker, fn):
+def _hand_sell_do(prefix, ticker, fn, partial=False):
     st.session_state[f"{prefix}_pending"] = None
-    st.session_state[f"{prefix}_msg"] = fn(store, ticker)["note"]
+    n = st.session_state.get(f"{prefix}_n_{ticker}") if partial else None      # shares to sell: the Portfolio lets you trim, the others sell the whole trade
+    st.session_state[f"{prefix}_msg"] = (fn(store, ticker, shares=n) if n is not None else fn(store, ticker))["note"]
 
 
-def _open_with_sell_buttons(prefix, top, opens, rest, fn, intro=None, css=None):
+def _open_with_sell_buttons(prefix, top, opens, rest, fn, intro=None, css=None, held=None):
     """The account page in pieces: a sell-by-hand button under each open trade, with a confirm step so a stray tap cannot sell. Works on
     session state and on_click callbacks, so the page's auto-reload does not lose the tap."""
     st.markdown(f"<style>{css or paper_view.CSS}</style><div class='pp'>{top}</div>", unsafe_allow_html=True)
@@ -848,12 +854,20 @@ def _open_with_sell_buttons(prefix, top, opens, rest, fn, intro=None, css=None):
     for ticker, card in opens:
         st.markdown(f"<div class='pp'><div class='pp-c' style='margin-bottom:4px'>{card}</div></div>", unsafe_allow_html=True)
         if st.session_state.get(f"{prefix}_pending") == ticker:
-            st.warning(f"Sell {ticker} now at the latest price? This cannot be undone.")
+            have = (held or {}).get(ticker)
+            label = f"Yes, sell {ticker}"
+            if have:                                                    # a trim: pick how many shares (all of them is the default)
+                n = st.number_input(f"Shares to sell (you hold {have:g})", min_value=0.0, max_value=float(have), value=float(have), step=1.0,
+                                    format="%g", key=f"{prefix}_n_{ticker}")
+                label = f"Yes, sell all of {ticker}" if n >= have else f"Yes, sell {n:g} of {have:g} {ticker}"
+                st.warning(f"Sell {'all' if n >= have else format(n, 'g')} {ticker} now at the latest price? This cannot be undone.")
+            else:
+                st.warning(f"Sell {ticker} now at the latest price? This cannot be undone.")
             c1, c2 = st.columns(2)
-            c1.button(f"Yes, sell {ticker}", key=f"{prefix}_yes_{ticker}", on_click=_hand_sell_do, args=(prefix, ticker, fn), type="primary", use_container_width=True)
+            c1.button(label, key=f"{prefix}_yes_{ticker}", on_click=_hand_sell_do, args=(prefix, ticker, fn, bool(have)), type="primary", use_container_width=True)
             c2.button("Cancel", key=f"{prefix}_no_{ticker}", on_click=_hand_sell_cancel, args=(prefix,), use_container_width=True)
         else:
-            st.button(f"Sell {ticker} by hand", key=f"{prefix}_ask_{ticker}", on_click=_hand_sell_ask, args=(prefix, ticker), use_container_width=True)
+            st.button(f"Sell {ticker} by hand" if not (held or {}).get(ticker) else f"Sell or trim {ticker}", key=f"{prefix}_ask_{ticker}", on_click=_hand_sell_ask, args=(prefix, ticker), use_container_width=True)
     st.markdown(f"<div class='pp'>{rest}</div>", unsafe_allow_html=True)
 
 
@@ -894,6 +908,15 @@ if view == "portfolio":
     if st.session_state.get("pf_msg"):
         st.info(st.session_state["pf_msg"])
     st.markdown(f"<style>{portfolio_view.CSS}</style><div class='pp'>{_top}</div>", unsafe_allow_html=True)
+    for _t, _o in pst["book"].get("orders", {}).items():
+        _verb = "Sell" if _o["side"] == "sell" else "Buy"
+        _ttl = portfolio_acct.ORDER_TITLES.get(_o["action"], _o["action"].title())
+        st.markdown(f"<div class='pp'><div class='pf-prop'><b>{portfolio_view.link(_t)}: {_verb} {_o['shares']:g} shares?</b><br>"
+                    f"<small>{portfolio_view.escape(_ttl)}: {portfolio_view.escape(_o['why'])}. Offered at {_o['price']:.2f}; it trades at the price when you tap. "
+                    f"Nothing happens until you answer, and the offer ends today.</small></div></div>", unsafe_allow_html=True)
+        _c1, _c2 = st.columns(2)
+        _c1.button(f"Approve {_verb.lower()}", key=f"pf_oap_{_t}", on_click=_pf_order, args=(_t, "yes"), type="primary", use_container_width=True)
+        _c2.button("Skip", key=f"pf_osk_{_t}", on_click=_pf_order, args=(_t, "no"), use_container_width=True)
     for _t, _p in pst["book"]["proposals"].items():
         st.markdown(f"<div class='pp'><div class='pf-prop'><b>{portfolio_view.link(_t)}: sell the rest?</b><br><small>{portfolio_view.escape(_p['why'])}. "
                     f"It stays until you answer.</small></div></div>", unsafe_allow_html=True)
@@ -915,7 +938,8 @@ if view == "portfolio":
         _c1.button("Approve", key=f"pf_ap_{_t}", on_click=_pf_pick, args=(_t, "yes"), type="primary", use_container_width=True)
         _c2.button("Skip", key=f"pf_sk_{_t}", on_click=_pf_pick, args=(_t, "no"), use_container_width=True)
     _open_with_sell_buttons("pf_hand", "", _opens, _rest, portfolio_acct.sell_by_hand, css=portfolio_view.CSS,
-                            intro="Each card is one of your holdings. The account never sells one to zero by itself; if you want out, tap the button under it.")
+                            intro="Each card is one of your holdings. The account sells and buys nothing by itself: every trade waits for your Approve. To trim or get out, tap the button under a card and choose how many shares.",
+                            held={t: p["shares"] for t, p in pst["book"]["positions"].items()})
     _rows = [{"Stock": _t, "Price now": ppx.get(_t), "Stop": _p.get("stop"), "Profit exit": _p.get("target"), "Broker stop set": bool(_p.get("broker_stop"))}
              for _t, _p in pst["book"]["positions"].items()]
     with st.expander("Stops and profit exits: edit a price, tick the broker box", expanded=False):

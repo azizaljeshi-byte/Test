@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 
 BOOK_KEY, STATE_KEY = "portfolio_book", "portfolio_state"
 OVERRIDE = "owner override"
+APPROVAL_MODE = True           # owner, 8 Nov: the account trades nothing by itself. Every sell, trim and buy is an order that waits for his Approve or Skip
 
 CASH_RESERVE_PCT = 10.0        # cash at the start, as a share of the holdings' cost
 # trimming a poor position
@@ -79,7 +80,7 @@ def _ts(now: datetime) -> str:
 def new_book() -> dict:
     return {"cash": 0.0, "start": 0.0, "positions": {}, "actions": [], "blocked": [], "proposals": {}, "seeded": None, "next_id": 1,
             "poor": {}, "checked": {}, "locks": {}, "adds_day": {"day": "", "n": 0, "names": []},
-            "picks": {}, "pick_props": {}, "rebuys": {}, "reminded": {}, "dips": {}, "dip_last": {}}
+            "picks": {}, "pick_props": {}, "rebuys": {}, "reminded": {}, "dips": {}, "dip_last": {}, "orders": {}}
 
 
 def load_book(store) -> dict:
@@ -446,6 +447,42 @@ def _floor(pos: dict) -> float:
     return round(pos.get("base", pos["shares"]) * (1 - TRIM_AUTO_MAX), 3)
 
 
+ORDER_TITLES = {"HARD STOP": "Hard stop hit", "PROFIT EXIT": "Profit exit reached", "TRIM": "Trim", "SIZE DOWN": "Size down", "REBUY": "Buy back",
+                "ADD": "Add to", "NEW NAME": "Buy a new name"}
+
+
+def _order(book: dict, now: datetime, ticker: str, side: str, action: str, n: float, price: float, why: str, done: list, **extra) -> bool:
+    """Approval mode: instead of trading, put the trade in front of the owner. One waiting order per stock; a repeat only refreshes the price.
+    A skipped kind is not offered again the same day. Returns True when a NEW order was made."""
+    day = now.date().isoformat()
+    if (book.get("order_skipped") or {}).get(f"{ticker}:{action}") == day:
+        return False
+    cur = book["orders"].get(ticker)
+    if cur and cur["action"] == action:
+        cur["price"], cur["shares"] = price, n
+        return False
+    if cur and cur["action"] in ("HARD STOP", "PROFIT EXIT") and action not in ("HARD STOP", "PROFIT EXIT"):
+        return False                                                # an exit already waits: nothing weaker replaces it
+    book["orders"][ticker] = {"side": side, "action": action, "shares": n, "price": price, "why": why, "since": _ts(now), "day": day, **extra}
+    done.append(_log(book, now, ticker, "PROPOSE " + action, n, price, why + ". Waiting for the owner."))
+    return True
+
+
+def _expire_orders(book: dict, prices: dict, now: datetime) -> None:
+    """A waiting order is for today's price: it ends with the day, or sooner when its reason is gone."""
+    day = now.date().isoformat()
+    for t, o in list(book["orders"].items()):
+        pos, px = book["positions"].get(t), prices.get(t)
+        gone = o["day"] != day or (o["side"] == "sell" and not pos)
+        if not gone and px and pos and o["action"] == "HARD STOP" and pos.get("stop") and px > pos["stop"]:
+            gone = True
+        if not gone and px and pos and o["action"] == "PROFIT EXIT" and pos.get("target") and px < pos["target"]:
+            gone = True
+        if gone:
+            book["orders"].pop(t)
+            _log(book, now, t, "ORDER WITHDRAWN", o["shares"], px, f"the {o['action'].lower()} order is no longer current; nothing was traded")
+
+
 def _check_position(book: dict, ticker: str, snap: dict, price: float, now: datetime, done: list) -> None:
     """The 15:45 look at one open position: trim if poor, size down if over its cap, propose the rest if it stays poor."""
     pos = book["positions"][ticker]
@@ -467,21 +504,27 @@ def _check_position(book: dict, ticker: str, snap: dict, price: float, now: date
         if trimmed == 0 and n_days >= 1:
             step = min(round(pos["base"] * TRIM_STEP, 3), room)
             if step > 0:
-                a = _sell(book, ticker, step, price, now, "TRIM", f"{why}: first trim, a quarter of the position")
-                pos = book["positions"].get(ticker, pos)
-                pos["trims"] = 1
-                pos["trim_day_index"] = n_days
-                book["locks"][ticker] = _bdays_after(now.date(), REBUY_LOCK_DAYS).isoformat()
-                done.append(a)
+                if APPROVAL_MODE:
+                    _order(book, now, ticker, "sell", "TRIM", step, price, f"{why}: first trim, a quarter of the position", done, after="trim1", n_days=n_days)
+                else:
+                    a = _sell(book, ticker, step, price, now, "TRIM", f"{why}: first trim, a quarter of the position")
+                    pos = book["positions"].get(ticker, pos)
+                    pos["trims"] = 1
+                    pos["trim_day_index"] = n_days
+                    book["locks"][ticker] = _bdays_after(now.date(), REBUY_LOCK_DAYS).isoformat()
+                    done.append(a)
             else:
                 pos["trims"] = 2                                       # nothing the account may sell on its own is left: straight to the proposal
         elif trimmed == 1 and n_days - pos.get("trim_day_index", 0) >= CONFIRM_DAYS:
             step = min(round(pos["base"] * TRIM_STEP, 3), room)
             if step > 0:
-                a = _sell(book, ticker, step, price, now, "TRIM", f"{why}, still poor {CONFIRM_DAYS} checks after the first trim: second trim")
-                pos = book["positions"].get(ticker, pos)
-                pos["trims"] = 2
-                done.append(a)
+                if APPROVAL_MODE:
+                    _order(book, now, ticker, "sell", "TRIM", step, price, f"{why}, still poor {CONFIRM_DAYS} checks after the first trim: second trim", done, after="trim2")
+                else:
+                    a = _sell(book, ticker, step, price, now, "TRIM", f"{why}, still poor {CONFIRM_DAYS} checks after the first trim: second trim")
+                    pos = book["positions"].get(ticker, pos)
+                    pos["trims"] = 2
+                    done.append(a)
             else:
                 pos["trims"] = 2
         elif trimmed >= 2 and ticker not in book["proposals"] and book["positions"].get(ticker):
@@ -505,7 +548,11 @@ def _check_position(book: dict, ticker: str, snap: dict, price: float, now: date
             room = max(0.0, pos["shares"] - _floor(pos))
             n = round(min(over, room, pos["shares"] * 0.5), 3)
             if n > 0.0005:
-                done.append(_sell(book, ticker, n, price, now, "SIZE DOWN", f"it is {worth / eq * 100:.0f}% of the account, the cap is {cap:.0f}%"))
+                sd_why = f"it is {worth / eq * 100:.0f}% of the account, the cap is {cap:.0f}%"
+                if APPROVAL_MODE:
+                    _order(book, now, ticker, "sell", "SIZE DOWN", n, price, sd_why, done)
+                else:
+                    done.append(_sell(book, ticker, n, price, now, "SIZE DOWN", sd_why))
 
 
 def _check_pick(book: dict, ticker: str, snap: dict, price: float, now: datetime, done: list) -> None:
@@ -617,7 +664,11 @@ def _rebuys(book: dict, snaps: dict, prices: dict, now: datetime, mins, gate: st
         n = math.floor(min(rb["shares"], book["cash"] / price) * 100) / 100
         if n * price < MIN_ADD_USD:
             continue
-        a = _buy(book, t, n, price, now, "REBUY", f"the fall stopped and it turned up (up {chg * 100:.1f}% today); buying back what the approved trim sold at {rb['price']:.2f}", snap, "holding")
+        rb_why = f"the fall stopped and it turned up (up {chg * 100:.1f}% today); buying back what the approved trim sold at {rb['price']:.2f}"
+        if APPROVAL_MODE:
+            _order(book, now, t, "buy", "REBUY", n, price, rb_why, done)
+            continue
+        a = _buy(book, t, n, price, now, "REBUY", rb_why, snap, "holding")
         book["rebuys"].pop(t)
         done.append(a)
 
@@ -630,6 +681,7 @@ def step(book: dict, snaps: dict, prices: dict, now: datetime, gate: str = "") -
     day = now.date().isoformat()
     if book["adds_day"].get("day") != day:
         book["adds_day"] = {"day": day, "n": 0, "names": []}
+    _expire_orders(book, prices, now)
     for ticker in list(book["positions"]):
         snap, price = snaps.get(ticker), prices.get(ticker)
         if not snap or not price or mins is None:
@@ -638,6 +690,9 @@ def step(book: dict, snaps: dict, prices: dict, now: datetime, gate: str = "") -
         _levels(pos, snap, price)
         hit = ("HARD STOP", f"the price {price:.2f} is at or under the hard stop {pos['stop']:.2f}") if price <= pos["stop"] else \
               ("PROFIT EXIT", f"the price {price:.2f} reached the profit exit {pos['target']:.2f}, set from resistance") if pos.get("target") and price >= pos["target"] else None
+        if hit and APPROVAL_MODE:
+            _order(book, now, ticker, "sell", hit[0], pos["shares"], price, hit[1] + f". Sell all {pos['shares']:g}", done)
+            continue
         if hit:
             done.append(_sell(book, ticker, pos["shares"], price, now, hit[0], hit[1] + ". Sold all, no exception."))
             for k in ("proposals", "pick_props", "rebuys"):
@@ -681,6 +736,13 @@ def step(book: dict, snaps: dict, prices: dict, now: datetime, gate: str = "") -
         if n <= 0:
             _hold_back(book, now, ticker, price, f"ADD held back: no room (cap, cash or the risk size leaves under ${MIN_ADD_USD:.0f})")
             continue
+        if APPROVAL_MODE:
+            if ticker in book["orders"]:
+                continue
+            if _order(book, now, ticker, "buy", "ADD" if held else "NEW NAME", n, price, f"{why}. Risk from the exit line {oc['exit_line']:.2f}", done):
+                book["adds_day"]["n"] += 1
+                book["adds_day"]["names"].append(ticker)
+            continue
         a = _buy(book, ticker, n, price, now, "ADD" if held else "NEW NAME", f"{why}. Risk from the exit line {oc['exit_line']:.2f}.", snap,
                  "holding" if held else "added")
         book["adds_day"]["n"] += 1
@@ -691,22 +753,35 @@ def step(book: dict, snaps: dict, prices: dict, now: datetime, gate: str = "") -
 
 # ---------------------------------------------------------------- the owner's taps
 
-def sell_by_hand(store, ticker: str, now: datetime | None = None, label: str = "sold by hand") -> dict:
-    """The owner sells a whole position at the latest fresh price (also how he approves a proposed exit). Recorded as an owner override."""
+def sell_by_hand(store, ticker: str, now: datetime | None = None, label: str = "sold by hand", shares: float | None = None) -> dict:
+    """The owner sells at the latest fresh price: the whole position, or `shares` of it (a trim, owner 8 Nov). Recorded as an owner override.
+    Selling all the shares, or leaving `shares` out, closes the position. More shares than he holds, zero or a bad number sells nothing."""
     now = (now or datetime.now(NY)).astimezone(NY)
     if us_session() != "REGULAR":
         return {"ok": False, "note": "The market is closed: nothing trades outside the regular session."}
     book = load_book(store)
     if ticker not in book["positions"]:
         return {"ok": False, "note": f"{ticker} is not open any more."}
+    held = book["positions"][ticker]["shares"]
+    n = held
+    if shares is not None:
+        if isinstance(shares, bool) or not isinstance(shares, (int, float)) or shares != shares or shares <= 0:
+            return {"ok": False, "note": "Enter the number of shares to sell as a number above zero."}
+        if shares > held + 0.0005:
+            return {"ok": False, "note": f"You hold {held:g} shares of {ticker}, so {shares:g} cannot be sold."}
+        n = held if shares >= held - 0.0005 else round(float(shares), 3)
     snap = store.snapshot(ticker)
     price, why = paper_live.fresh_price(snap, now) if snap else (None, "no reading for this stock")
     if price is None:
         return {"ok": False, "note": f"No fresh price for {ticker} ({why}), so it was not sold. Try again in a minute."}
-    a = _sell(book, ticker, book["positions"][ticker]["shares"], price, now, "SELL ALL", f"{OVERRIDE}: {label} at {price:.2f}")
-    book["proposals"].pop(ticker, None)
+    if n >= held:
+        a = _sell(book, ticker, held, price, now, "SELL ALL", f"{OVERRIDE}: {label} at {price:.2f}")
+        book["proposals"].pop(ticker, None)
+        save_book(store, book)
+        return {"ok": True, "note": f"Sold all of {ticker} at {price:.2f}: {a['result']:+,.2f}."}
+    a = _sell(book, ticker, n, price, now, "TRIM", f"{OVERRIDE}: {label}, {n:g} of {held:g} shares at {price:.2f}; the rest stays")
     save_book(store, book)
-    return {"ok": True, "note": f"Sold all of {ticker} at {price:.2f}: {a['result']:+,.2f}."}
+    return {"ok": True, "note": f"Sold {n:g} of {held:g} shares of {ticker} at {price:.2f}: {a['result']:+,.2f}. {held - n:g} left."}
 
 
 SALES = ("TRIM", "SIZE DOWN", "SELL ALL", "HARD STOP", "PROFIT EXIT")
@@ -854,6 +929,67 @@ def approve_pick(store, ticker: str, now: datetime | None = None) -> dict:
     return {"ok": True, "note": note}
 
 
+def approve_order(store, ticker: str, now: datetime | None = None) -> dict:
+    """The owner says yes to a waiting order. It trades at the latest fresh price (not the price it was offered at), never more than he holds or can pay for."""
+    now = (now or datetime.now(NY)).astimezone(NY)
+    if us_session() != "REGULAR":
+        return {"ok": False, "note": "The market is closed: nothing trades outside the regular session."}
+    book = load_book(store)
+    o = book["orders"].get(ticker)
+    if not o:
+        return {"ok": False, "note": f"There is no waiting order for {ticker}."}
+    snap = store.snapshot(ticker)
+    price, why = paper_live.fresh_price(snap, now) if snap else (None, "no reading for this stock")
+    if price is None:
+        return {"ok": False, "note": f"No fresh price for {ticker} ({why}). Try again in a minute."}
+    act, label = o["action"], f"{OVERRIDE}: approved, {o['why']}"
+    if o["side"] == "sell":
+        pos = book["positions"].get(ticker)
+        if not pos:
+            book["orders"].pop(ticker)
+            save_book(store, book)
+            return {"ok": False, "note": f"{ticker} is not open any more."}
+        n = pos["shares"] if act in ("HARD STOP", "PROFIT EXIT") else min(o["shares"], pos["shares"])
+        a = _sell(book, ticker, n, price, now, act, label)
+        if act in ("HARD STOP", "PROFIT EXIT"):
+            for k in ("proposals", "pick_props", "rebuys"):
+                book[k].pop(ticker, None)
+            book["locks"][ticker] = _bdays_after(now.date(), REBUY_LOCK_DAYS).isoformat()
+        elif ticker in book["positions"] and o.get("after"):
+            p2 = book["positions"][ticker]
+            p2["trims"] = 1 if o["after"] == "trim1" else 2
+            if o["after"] == "trim1":
+                p2["trim_day_index"] = o.get("n_days", 1)
+                book["locks"][ticker] = _bdays_after(now.date(), REBUY_LOCK_DAYS).isoformat()
+        note = f"Sold {n:g} of {ticker} at {price:.2f}: {a['result']:+,.2f}."
+    else:
+        n = math.floor(min(o["shares"], book["cash"] / price) * 100) / 100
+        if n * price < MIN_ADD_USD:
+            return {"ok": False, "note": f"Not enough cash to buy {ticker} now (${book['cash']:,.2f})."}
+        held = ticker in book["positions"]
+        src = "holding" if (held or act == "REBUY") else "added"
+        _buy(book, ticker, n, price, now, act, label, snap, src)
+        if act == "REBUY":
+            book["rebuys"].pop(ticker, None)
+        note = f"Bought {n:g} {ticker} at {price:.2f}."
+    book["orders"].pop(ticker, None)
+    save_book(store, book)
+    return {"ok": True, "note": note}
+
+
+def skip_order(store, ticker: str, now: datetime | None = None) -> dict:
+    """The owner says no to a waiting order: logged, and the same kind of order for that stock is not offered again today."""
+    now = (now or datetime.now(NY)).astimezone(NY)
+    book = load_book(store)
+    o = book["orders"].pop(ticker, None)
+    if o is None:
+        return {"ok": False, "note": f"There is no waiting order for {ticker}."}
+    book.setdefault("order_skipped", {})[f"{ticker}:{o['action']}"] = now.date().isoformat()
+    _log(book, now, ticker, "SKIPPED", o["shares"], o["price"], f"you skipped the {o['action'].lower()} offered at {o['price']:.2f}: {o['why']}")
+    save_book(store, book)
+    return {"ok": True, "note": f"Skipped. Nothing was traded in {ticker}; the same offer is not made again today."}
+
+
 def skip_pick(store, ticker: str, now: datetime | None = None) -> dict:
     """The owner says no to a proposal on a pick: it is logged (so we can judge it later) and not proposed again before tomorrow's check."""
     now = (now or datetime.now(NY)).astimezone(NY)
@@ -875,8 +1011,8 @@ def push(store, did: list[dict]) -> None:
         from . import events
         for a in did:
             who = {"TRIM": "trimmed", "SIZE DOWN": "sized down", "ADD": "added to", "NEW NAME": "bought a new name,", "PROPOSE EXIT": "proposes selling the rest of",
-                   "HARD STOP": "hard stop hit:", "PROFIT EXIT": "profit exit:", "PROPOSE TRIM": "proposes trimming", "PROPOSE STARTER": "proposes a starter in", "PROPOSE DIP": "proposes a small add to", "DIP ADD": "added a small piece of", "REBUY": "bought back", "REMINDER": "reminder:"}.get(a["action"], a["action"].lower())
-            events._push(f"Portfolio {who} {a['ticker']}", [f"{a['why']}"], 5 if a["action"] == "HARD STOP" else 4 if a["action"] in ("PROPOSE EXIT", "PROPOSE TRIM", "PROPOSE STARTER", "PROPOSE DIP") else 3, "briefcase", a["ticker"], "log", store)
+                   "HARD STOP": "hard stop hit:", "PROFIT EXIT": "profit exit:", "PROPOSE TRIM": "proposes trimming", "PROPOSE STARTER": "proposes a starter in", "PROPOSE DIP": "proposes a small add to", "DIP ADD": "added a small piece of", "REBUY": "bought back", "REMINDER": "reminder:"}.get(a["action"], a["action"].lower().replace("propose ", "waits for your yes: "))
+            events._push(f"Portfolio {who} {a['ticker']}", [f"{a['why']}"], 5 if a["action"] in ("HARD STOP", "PROPOSE HARD STOP") else 4 if a["action"].startswith("PROPOSE") else 3, "briefcase", a["ticker"], "log", store)
     except Exception:
         log.exception("portfolio push failed")
 

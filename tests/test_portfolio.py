@@ -8,6 +8,12 @@ from stockwatch import paper_layout as pl, paper_live, portfolio
 from stockwatch.config import Holding
 from stockwatch.data import NY
 
+@pytest.fixture(autouse=True)
+def _automatic_mode(monkeypatch):
+    """These tests cover the account's own logic, which runs by itself only when approval mode is off; test_portfolio_approval.py covers the default."""
+    monkeypatch.setattr(portfolio, "APPROVAL_MODE", False)
+
+
 D = datetime(2026, 11, 9, 11, 0, tzinfo=NY)             # a Monday, 11:00 New York
 LATE = datetime(2026, 11, 9, 15, 46, tzinfo=NY)
 
@@ -516,3 +522,25 @@ def test_owner_can_tighten_the_stop_but_never_loosen_it_and_edit_the_profit_exit
     assert not portfolio.set_levels(store, "ORCL", target=117.0, price=118.0)["ok"]
     assert portfolio.set_levels(store, "ORCL", target=130.0, price=118.0)["ok"] and portfolio.load_book(store)["positions"]["ORCL"]["target"] == 130.0
     assert portfolio.set_levels(store, "ORCL", clear_target=True, price=118.0)["ok"] and portfolio.load_book(store)["positions"]["ORCL"]["target"] is None
+
+
+def test_sell_by_hand_can_trim_a_number_of_shares_and_refuses_bad_amounts(monkeypatch):
+    store = FakeStore([snap()])
+    portfolio.save_book(store, book_with(AAA=(10.0, 100.0)))
+    monkeypatch.setattr(portfolio, "us_session", lambda: "REGULAR")
+    monkeypatch.setattr(paper_live, "fresh_price", lambda s, n: (110.0, ""))
+    cash0 = portfolio.load_book(store)["cash"]
+    for bad in (0, -1, float("nan"), True, "3"):
+        assert not portfolio.sell_by_hand(store, "AAA", D, shares=bad)["ok"]
+    assert "hold 10" in portfolio.sell_by_hand(store, "AAA", D, shares=11)["note"]
+    assert portfolio.load_book(store)["positions"]["AAA"]["shares"] == 10
+    out = portfolio.sell_by_hand(store, "AAA", D, shares=4)
+    assert out["ok"] and "Sold 4 of 10" in out["note"] and "+40.00" in out["note"] and "6 left" in out["note"]
+    b = portfolio.load_book(store)
+    assert b["positions"]["AAA"]["shares"] == 6 and b["cash"] == pytest.approx(cash0 + 440.0)
+    a = b["actions"][-1]
+    assert a["action"] == "TRIM" and a["shares"] == 4 and a["why"].startswith("owner override") and "AAA" not in b["rebuys"]
+    money_ok(b)
+    out = portfolio.sell_by_hand(store, "AAA", D, shares=6)                          # all the shares left: the position closes
+    assert out["ok"] and "Sold all" in out["note"]
+    assert "AAA" not in portfolio.load_book(store)["positions"]

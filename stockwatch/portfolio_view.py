@@ -98,8 +98,8 @@ def parts(st: dict, prices: dict | None = None, now=None) -> tuple[str, list, st
            f'{"adds paused: " + escape(gate) if gate else "adds allowed"} · watching {state.get("watching", 0)} stocks.</div></div>')
     ss = portfolio.stop_summary(book)
     if ss["total"]:
-        top += (f'<div class="pp-c"><div class="pp-h">Hard stops</div><div class="pp-m">Every position has a hard stop and sells all when the price touches it. '
-                f'In profit the stop sits at your cost or higher, so a winner cannot turn into a loss, and the stock sells at its resistance. '
+        top += (f'<div class="pp-c"><div class="pp-h">Hard stops</div><div class="pp-m">Every position has a hard stop and asks you to sell all when the price touches it. '
+                f'In profit the stop sits at your cost or higher, so a winner cannot turn into a loss, and it asks you to sell at its resistance. '
                 f'<b>Broker stops set: {ss["set"]} of {ss["total"]}.</b>'
                 + (f' Not set: {", ".join(link(t) for t in ss["none"][:14])}{"…" if len(ss["none"]) > 14 else ""}.' if ss["none"] else "")
                 + (" Move up: " + ", ".join(f'{link(t)} to {pl.usd(a)} (was {pl.usd(b)})' for t, a, b in ss["move"]) + "." if ss["move"] else "") + '</div></div>')
