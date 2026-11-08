@@ -243,14 +243,15 @@ summary = ("Across your " + f"{len(held)} positions and {len(snaps) - len(held)}
            + (", ".join(parts) if parts else "nothing urgent right now") + ".")
 if reg:
     summary += f" The market backdrop reads <b>{reg['state'].lower()}</b>."
-st.markdown(ui.hero(greeting, summary), unsafe_allow_html=True)
+if view not in ("quick", "rising"):
+    st.markdown(ui.hero(greeting, summary), unsafe_allow_html=True)
 
-st.markdown(ui.tiles([
-    (market_tile[0] + " mood", market_tile[1], escape(market_tile[2]), market_tile[3]),
-    ("Needs attention", str(len(urgent)), _names(urgent) or "all clear", ui.RISK if urgent else ui.MUTED),
-    ("Buy zone", str(len(opps)), _names(opps) or "nothing in range", ui.OPP if opps else ui.MUTED),
-    ("Earnings this week", str(len(soon)), _names(soon) or "quiet week", ui.WARN if soon else ui.MUTED),
-]), unsafe_allow_html=True)
+    st.markdown(ui.tiles([
+        (market_tile[0] + " mood", market_tile[1], escape(market_tile[2]), market_tile[3]),
+        ("Needs attention", str(len(urgent)), _names(urgent) or "all clear", ui.RISK if urgent else ui.MUTED),
+        ("Buy zone", str(len(opps)), _names(opps) or "nothing in range", ui.OPP if opps else ui.MUTED),
+        ("Earnings this week", str(len(soon)), _names(soon) or "quiet week", ui.WARN if soon else ui.MUTED),
+    ]), unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- radar
 prevs = {s["ticker"]: store.previous_snapshot(s["ticker"]) for s in snaps}
@@ -951,7 +952,22 @@ if view == "quick":
     qpx = quick.prices_of(store, [t["ticker"] for t in qst["book"]["trades"] if t["status"] == "OPEN"])
     _top, _opens, _rest = quick_view.parts(qst, qpx)
     _crash_banner("quick")
-    _open_with_sell_buttons("qk_hand", _top, _opens, _rest, quick.sell_by_hand)
+    st.markdown(f"<style>{quick_view.CSS}</style>{_top}", unsafe_allow_html=True)
+    if st.session_state.get("qk_hand_msg"):
+        st.info(st.session_state["qk_hand_msg"])
+    if not _opens:
+        st.caption("No open trades.")
+    for ticker, card in _opens:
+        st.markdown(f'<div class="tq">{card}</div>', unsafe_allow_html=True)
+        if st.session_state.get("qk_hand_pending") == ticker:
+            st.warning(f"Sell {ticker} now at the latest price? This cannot be undone.")
+            yes, cancel = st.columns(2)
+            yes.button(f"Yes, sell {ticker}", key=f"qk_hand_yes_{ticker}", on_click=_hand_sell_do,
+                       args=("qk_hand", ticker, quick.sell_by_hand), type="primary", width="stretch")
+            cancel.button("Cancel", key=f"qk_hand_no_{ticker}", on_click=_hand_sell_cancel, args=("qk_hand",), width="stretch")
+        else:
+            st.button(f"Sell {ticker} by hand", key=f"qk_hand_ask_{ticker}", on_click=_hand_sell_ask, args=("qk_hand", ticker), width="stretch")
+    st.markdown(_rest, unsafe_allow_html=True)
     st.caption("A test account with loose rules, to watch how it behaves. Fills are simulated at the latest price, so they are approximate. Build: quick-1.")
     _candidates_block()
 
@@ -1032,17 +1048,14 @@ if view == "tests":
 
 if view == "rising":
     st.markdown("### Momentum")
-    st.caption("Stocks of the S&P 500 whose RSI is rising, MACD is improving and volume is building, read on 5-minute bars like a chart. "
-               "Starts at 09:35 New York (17:35 Riyadh) and updates every 5 minutes. Watching only: no trade, no signal. "
-               "Under each price: change since yesterday's close. Under RSI: change in 15 minutes, and the daily RSI. Under MACD: change since the last bar. "
-               "Arrows: change since the previous run.")
+    st.caption("Five-minute readings of RSI, MACD and volume. Watching only: no trades or signals. Volume compares normal activity at this time of day.")
     rs_state = rising.load_state(store)
     day_list = rising.days(store)
     if not rs_state:
         st.info("No list yet. The first run is at 17:35 Riyadh on a trading day.")
     else:
-        st.markdown(f"**Updated {rising_view.stamp(rs_state)}** · {rs_state['pass']} pass all three · {len(rs_state.get('watch', []))} on watch · "
-                    f"{rs_state['read']} stocks read")
+        st.markdown(rising_view.headline(rs_state), unsafe_allow_html=True)
+        st.caption(f"{len(rs_state.get('watch', []))} on watch · {rs_state.get('read', 'unknown')} stocks read")
         if rs_state.get("early"):
             st.caption("Early run: volume is still settling in the first minutes, so read it with care.")
         if rs_state["rows"]:

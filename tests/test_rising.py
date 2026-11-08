@@ -155,9 +155,9 @@ def test_the_page_table_links_the_stock_shows_arrows_watch_note_and_escapes():
     row = {"t": "AB<C", "price": 188.33, "chg": 10.7, "rsi": 65.7, "rsi_d": 13.8, "rsi_day": 62.0, "hist": 1.25, "hist_d": 1.11, "vol_x": 5.6,
            "tracked": True, "tag": "FADING", "dir": {"price": -1, "rsi": -1, "hist": -1, "vol": 1}}
     html = rising_view.table([row])
-    assert "AB&lt;C" in html and "AB<C" not in html and "FADING" in html and "yours" in html and "?view=target&t=AB&lt;C" in html
+    assert "AB&lt;C" in html and "AB<C" not in html and "FADING" in html and "yours" in html and "?view=target&amp;t=AB%3CC" in html
     assert html.count("▼") == 3 and html.count("▲") == 1 and "+10.7%" in html and "5.6×" in html and "day 62" in html
     watch = rising_view.table([{**row, "tag": "", "dir": None, "tracked": False, "miss": "RSI not rising", "vol_x": None, "rsi_day": None}])
-    assert "missing: RSI not rising" in watch and "unknown" in watch and "day none" in watch and "▲" not in watch
+    assert "Waiting: RSI not rising" in watch and "unknown" in watch and "day unknown" in watch and "▲" not in watch
     assert rising_view.left_line({"left": [{"t": "CCC", "why": "volume 0.1x, under 1.5x"}]}) == "Left the list: CCC (volume 0.1x, under 1.5x)"
     assert rising_view.left_line({"left": []}) == ""
