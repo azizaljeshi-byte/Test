@@ -109,8 +109,8 @@ def parts(st: dict, prices: dict | None = None, now=None) -> tuple[str, list, st
         top += (f'<div class="pp-c"><div class="pp-h">Hard stops</div><div class="pp-m"><b>Broker stops set: {ss["set"]} of {ss["total"]}.</b>'
                 + (f' Not set: {", ".join(link(t) for t in ss["none"][:14])}{"…" if len(ss["none"])>14 else ""}.' if ss['none'] else '')
                 + (' Move up: '+', '.join(f'{link(t)} to {pl.usd(a)} (was {pl.usd(b)})' for t,a,b in ss['move'])+'.' if ss['move'] else '')+
-                '<details><summary>Stop behavior</summary>Every position has a hard stop and sells all when the price touches it. '
-                'In profit the stop sits at your cost or higher, so a winner cannot turn into a loss, and the stock sells at its resistance.</details></div></div>')
+                '<details><summary>Stop behavior</summary>Every position has a hard stop and asks you to sell all when the price touches it. '
+                'In profit the stop sits at your cost or higher, so a winner cannot turn into a loss, and it asks you to sell at its resistance.</details></div></div>')
     total = m["total"] or 1.0
     opens = []
     for ticker, pos in sorted(book["positions"].items(), key=lambda kv: -(kv[1]["shares"] * (prices.get(kv[0]) or kv[1]["entry"]))):
