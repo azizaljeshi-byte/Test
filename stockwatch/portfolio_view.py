@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from html import escape
 
-from . import portfolio, paper_layout as pl
+from . import portfolio, paper_layout as pl, tape_screens as tape
 from .paper_view import CSS as PAPER_CSS
 
-CSS = PAPER_CSS + """
-.pf-a{text-decoration:none;color:inherit;border-bottom:1px dotted var(--dz-muted,#8b95a7)}
+CSS = PAPER_CSS + tape.CSS + """
+.pf-tape{color:var(--dz-ink)}.pf-inline{font-size:12px;color:var(--dz-soft)}.pf-tape-head{display:flex;justify-content:space-between;align-items:start;gap:12px}
+.pf-tape-head>b{font-size:16px}.pf-tape-result{text-align:right;font-weight:600;font-size:15px}.pf-tape-result.up{color:var(--dz-gain)}.pf-tape-result.dn{color:var(--dz-loss)}.pf-tape-result small{display:block;font-weight:400;font-size:12px;color:var(--dz-soft)}
+.pf-tape details{margin-top:8px}.pf-tape summary{font-size:12px;color:var(--dz-soft);min-height:32px;cursor:pointer}
+.pp-c:has(>.pf-tape){background:transparent;border:0;border-top:1px solid var(--dz-line);border-radius:0;padding:12px 0}
+
+.pp .pf-a{text-decoration:none;color:var(--dz-ink);border-bottom:1px dotted var(--dz-muted,#8b95a7)}
 .pf-prop{border:1px solid var(--dz-act,#ff7a7a);border-radius:12px;padding:10px 12px;margin:8px 0}
 .pf-act{padding:8px 0;border-top:1px solid var(--dz-line,#243041);font-size:.9rem}.pf-act:first-of-type{border-top:0}
 .pf-act small{color:var(--dz-muted,#8b95a7);display:block}
@@ -33,8 +38,6 @@ def card(ticker: str, pos: dict, px, tags: list, proposal: dict | None, share: f
     move = (px / entry - 1) * 100 if px else None
     word, k = pl.badge(pnl)
     chips = "".join(f'<span class="pl-tag {c}">{escape(x)}</span>' for x, c in tags)
-    verb = "Profit" if (pnl or 0) > 0 else "Loss" if (pnl or 0) < 0 else "Result"
-    fig = "—" if pnl is None else f"{pl.signed(pnl)} · {pl.pct(move)}"
     sub = [f'<span>{"Worth now " + pl.usd(shares * px) if px else "No price now"}</span>']
     if share is not None:
         sub.append(f'<span>{share:.1f}% of the account</span>')
@@ -54,12 +57,15 @@ def card(ticker: str, pos: dict, px, tags: list, proposal: dict | None, share: f
     broker = ('<span class="pl-tag p">BROKER STOP SET</span>' if pos.get("broker_stop") else '<span class="pl-tag l">NO BROKER STOP</span>') if pos.get("stop") else ""
     sub += lines
     why = f'<div class="pl-why">Proposed: sell the rest. {escape(proposal["why"])}</div>' if proposal else ""
-    return (f'<div class="pl-t"><div class="pl-th"><b>{link(ticker)}</b><span class="pl-tag {k}">{word}</span></div>'
-            f'<div class="pl-tags">{chips}{broker}</div>'
-            f'<div class="pl-g"><div><small>Shares</small><b>{shares:g}</b></div><div><small>Average cost</small><b>{pl.usd(entry)}</b></div>'
-            f'<div><small>Price now</small><b>{pl.usd(px)}</b></div><div><small>Amount</small><b>{pl.usd(shares * entry, 0)}</b></div></div>'
-            f'<div class="pl-res"><span>{verb}</span><b class="{pl._cls(pnl)}">{fig}</b></div>'
-            f'<div class="pl-sub">{"".join(sub)}</div>{why}</div>')
+    result=pl.signed(pnl) if pnl is not None else 'unknown'
+    move_text=pl.pct(move) if move is not None else 'unknown'
+    return (f'<div class="pf-tape"><div class="pf-tape-head"><b>{link(ticker)}</b>'
+            f'<div class="pf-tape-result {pl._cls(pnl)}">{result}<small>{move_text}</small></div></div>'
+            f'<small class="pf-inline">{shares:g} shares · average {pl.usd(entry)}</small><div class="pl-tags">{chips}{broker}<span class="pl-tag {k}">{word}</span></div>{why}'
+            f'<details><summary>Position details</summary><div class="pl-g"><div><small>Shares</small><b>{shares:g}</b></div>'
+            f'<div><small>Average cost</small><b>{pl.usd(entry)}</b></div><div><small>Price now</small><b>{tape.money(px)}</b></div>'
+            f'<div><small>Amount</small><b>{pl.usd(shares*entry,0)}</b></div></div><div class="pl-sub">{"".join(sub)}</div></details></div>')
+
 
 
 def _actions(book: dict, n: int = 25) -> str:
@@ -77,32 +83,34 @@ def _actions(book: dict, n: int = 25) -> str:
 def parts(st: dict, prices: dict | None = None, now=None) -> tuple[str, list, str]:
     """(top, [(ticker, card)], rest): the page in pieces, so the dashboard can put a sell button under each open card."""
     book, state = st["book"], st.get("state") or {}
-    prices = prices or {}
+    prices = {t:px for t,px in (prices or {}).items() if tape.number(px) is not None and px>0}
     if not book["positions"] and not book.get("seeded"):
         return ('<div class="pp-c"><div class="pp-h">Portfolio</div><div class="pp-m">Not started yet. It starts by itself at the next market session, '
                 'from the holdings in your Sheet.</div></div>', [], "")
     m = pl.money(book["cash"], book["start"], book["positions"], prices)
-    sales = len([a for a in book["actions"] if a["action"] in ("TRIM", "SIZE DOWN", "SELL ALL")])
     gate = state.get("gate") or ""
     msg = (f'<div class="pp-note">{escape(state["note"])}</div>' if state.get("note") else "")
     msg += "".join(f'<div class="pp-sk"><b>{escape(t)}</b> {escape(w)}</div>' for t, w in (state.get("skipped") or {}).items())
     adds = book.get("adds_day") or {}
     today = f'{adds.get("n", 0)} add{"s" if adds.get("n", 0) != 1 else ""} today' if adds.get("day") == (now.date().isoformat() if now else adds.get("day")) else "no adds today"
-    top = (f'<div class="pp-c"><div class="pp-h">Portfolio</div>'
-           f'<div class="pp-m">A fake account that mirrors the stocks you hold, at your cost, and manages them carefully. It trims poor positions in steps, '
-           f'sizes down big ones and adds only to undervalued stocks with very strong fundamentals. It never sells one to zero without your yes. '
-           f'Stocks you flag KEEP or PICK in the Notes column are yours: half is a core that trims never touch, the other half is traded only when you tap Approve; only the hard stop or your own tap sells the core. '
-           f'Nothing here is real money.</div>{msg}'
-           f'{pl.summary_html(m, sales, closed_label="trim or sale" if sales == 1 else "trims and sales")}'
-           f'<div class="pp-m" style="margin-top:8px">Started {pl.riyadh(book["seeded"])} Riyadh time · {today} · '
-           f'{"adds paused: " + escape(gate) if gate else "adds allowed"} · watching {state.get("watching", 0)} stocks.</div></div>')
+    complete=not m['unpriced']
+    total_value=m['total'] if complete else None
+    profit=pl.signed(m['profit']) if complete else 'unknown'
+    top=(f'<div class="ts"><small>Portfolio · total value · fake money</small><div class="ts-price">{tape.money(total_value)}</div>'
+         f'<small>Result {profit} · Cash {tape.money(m["cash"])} · {len(book["positions"])} holdings</small>'
+         +(f'<div class="ts-warning">{m["unpriced"]} holdings have no current price; total value and result are unknown.</div>' if not complete else '')+
+         f'{msg}<div class="ts-foot">Started {pl.riyadh(book["seeded"])} Riyadh · {today} · '
+         f'{"adds paused: " + escape(gate) if gate else "adds allowed"}</div></div>')
+    account_rows=[('Start',book.get('start')),('Cash used',m['used']),('Realized',m['realized']),('Unrealized',m['unreal'] if complete else None)]
+    top+='<div class="ts"><details><summary>Account numbers</summary><div class="ts-table"><table>'+''.join(
+        f'<tr><td>{label}</td><td>{tape.money(value)}</td></tr>' for label,value in account_rows)+'</table></div></details></div>'
     ss = portfolio.stop_summary(book)
     if ss["total"]:
-        top += (f'<div class="pp-c"><div class="pp-h">Hard stops</div><div class="pp-m">Every position has a hard stop and sells all when the price touches it. '
-                f'In profit the stop sits at your cost or higher, so a winner cannot turn into a loss, and the stock sells at its resistance. '
-                f'<b>Broker stops set: {ss["set"]} of {ss["total"]}.</b>'
-                + (f' Not set: {", ".join(link(t) for t in ss["none"][:14])}{"…" if len(ss["none"]) > 14 else ""}.' if ss["none"] else "")
-                + (" Move up: " + ", ".join(f'{link(t)} to {pl.usd(a)} (was {pl.usd(b)})' for t, a, b in ss["move"]) + "." if ss["move"] else "") + '</div></div>')
+        top += (f'<div class="pp-c"><div class="pp-h">Hard stops</div><div class="pp-m"><b>Broker stops set: {ss["set"]} of {ss["total"]}.</b>'
+                + (f' Not set: {", ".join(link(t) for t in ss["none"][:14])}{"…" if len(ss["none"])>14 else ""}.' if ss['none'] else '')
+                + (' Move up: '+', '.join(f'{link(t)} to {pl.usd(a)} (was {pl.usd(b)})' for t,a,b in ss['move'])+'.' if ss['move'] else '')+
+                '<details><summary>Stop behavior</summary>Every position has a hard stop and sells all when the price touches it. '
+                'In profit the stop sits at your cost or higher, so a winner cannot turn into a loss, and the stock sells at its resistance.</details></div></div>')
     total = m["total"] or 1.0
     opens = []
     for ticker, pos in sorted(book["positions"].items(), key=lambda kv: -(kv[1]["shares"] * (prices.get(kv[0]) or kv[1]["entry"]))):
@@ -118,7 +126,7 @@ def parts(st: dict, prices: dict | None = None, now=None) -> tuple[str, list, st
             tags.append(("EXIT PROPOSED", "l"))
         elif pos.get("trims"):
             tags.append(("TRIMMED", "o"))
-        opens.append((ticker, card(ticker, pos, px, tags, book["proposals"].get(ticker), (pos["shares"] * (px or pos["entry"])) / total * 100)))
+        opens.append((ticker, card(ticker, pos, px, tags, book["proposals"].get(ticker), (pos["shares"] * px) / total * 100 if complete and px else None)))
     held = "".join(f'<div class="pp-row"><span><b>{link(b["ticker"])}</b> <small>{pl.riyadh(b["time"])} Riyadh time</small><br>'
                    f'<small>{escape(b["reason"])}</small></span><span>{pl.usd(b["price"])}</span></div>' for b in reversed(book["blocked"][-8:]))
     rules = (f'<div class="pp-m">Trim: the call is EXIT or AVOID and the chart is weak, checked at 15:45 New York, 25% then 25% again, never below half of the most '
@@ -131,8 +139,7 @@ def parts(st: dict, prices: dict | None = None, now=None) -> tuple[str, list, st
         extra = (f' · stop {r["stop"]:.2f}' if r.get("stop") else "") + (f' · first target {r["target"]:.2f}' if r.get("target") else "")
         sug += (f'<div class="pp-row"><span><b>{link(r["ticker"])}</b> <small>{pl.usd(r["price"])} · fundamentals {r["fund"]:.0f}</small><br>'
                 f'<small>{escape(r["note"])} ({z}{extra})</small></span></div>')
-    sug = (f'<div class="pp-c"><div class="pp-h">Suggested adds</div><div class="pp-m">Stocks you do not hold, with strong fundamentals and a price under fair value. '
-           f'Tap one to open it. For a stock you want anyway, flag it PICK in your Sheet.</div>{sug or "<div class=pp-m>None right now.</div>"}</div>')
+    sug = (f'<div class="pp-c"><div class="pp-h">Suggested adds</div><div class="pp-m">Saved suggestions. Tap a stock for its details.</div>{sug or "<div class=pp-m>None right now.</div>"}</div>')
     rest = (f'{sug}<div class="pp-c"><div class="pp-h">What it did</div>{_actions(book)}</div>'
             f'<div class="pp-c"><div class="pp-h">Adds it held back</div>{held or "<div class=pp-m>None yet.</div>"}</div>'
             f'<div class="pp-c"><div class="pp-h">Rules</div>{rules}</div>')

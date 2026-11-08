@@ -135,3 +135,20 @@ CSS = """
 .dt-brief{margin:8px 0}.dt-hl{font-size:1.02rem;font-weight:700;margin:4px 2px 8px;color:var(--dz-ink,#e9eef5)}
 .dt-h{font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;color:var(--dz-muted,#8b95a7);margin:14px 2px 6px}
 """
+
+
+def tape_brief_html(brief: dict) -> str:
+    """Same saved briefing lines in three compact rows; no messages discarded."""
+    blocks=[]
+    for label,key in (('WHY','why'),('CHANGED','changed'),('WATCH NEXT','watch')):
+        items=brief.get(key) or []
+        lines=''.join(f'<p class="dz-k-{line_kind(key,str(text))}">{escape(str(text))}</p>' for text in items)
+        blocks.append(f'<div class="ts-brief-row"><b>{label}</b><div>{lines or "<p>No saved reading.</p>"}</div></div>')
+    return (f'<style>{TAPE_CSS}</style><div class="ts"><div class="ts-foot">{escape(str(brief.get("headline") or "Briefing unknown"))}</div>'
+            f'<div class="ts-brief">{"".join(blocks)}</div></div>')
+
+
+TAPE_CSS='''
+.ts-brief-row{display:grid;grid-template-columns:62px minmax(0,1fr);gap:10px;padding:10px 0;border-top:1px solid var(--dz-line)}
+.ts-brief-row>b{font-size:10px;color:var(--dz-soft);letter-spacing:.04em}.ts-brief-row p{font-size:12px;margin:0 0 6px;padding-left:8px;border-left:2px solid var(--dz-c,var(--dz-line));line-height:1.4}
+'''

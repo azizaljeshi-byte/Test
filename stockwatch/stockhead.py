@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from html import escape
+import math
 
 from . import dayboard, design, ui
 from .data import NY
-from .ui import nan
 
 NEWS_HOURS = 36
 NEWS_MAX = 4
@@ -21,7 +21,10 @@ BUY_WORDS = ("BUY", "ADD")
 
 
 def _n(v) -> float | None:
-    return None if v is None or isinstance(v, bool) or nan(v) else float(v)
+    try:
+        return None if v is None or isinstance(v,bool) or not math.isfinite(float(v)) else float(v)
+    except (TypeError,ValueError):
+        return None
 
 
 def _usd(v) -> str:
@@ -153,7 +156,8 @@ def technicals(snap: dict) -> list[str]:
 
 def fundamentals(snap: dict) -> list[str]:
     f = snap["payload"].get("fundamental") or {}
-    rows = [_row("Fundamentals score", f'{snap.get("fundamental_score", 0):.0f} / 100', "", "good" if snap.get("fundamental_score", 0) >= 70 else "bad" if snap.get("fundamental_score", 0) < 40 else "")]
+    score=_n(snap.get("fundamental_score")) if f.get("available",True) else None
+    rows = [_row("Fundamentals score", f'{score:.0f} / 100' if score is not None else 'unknown', "", "good" if score is not None and score>=70 else "bad" if score is not None and score<40 else "")]
     if not f.get("available", True):
         return rows + [_row("Detail", "unavailable", "no fundamentals data came back", "mid")]
     for key, name in (("pillar_valuation", "Valuation"), ("pillar_growth", "Growth"), ("pillar_quality", "Quality"), ("pillar_balance", "Balance sheet")):
