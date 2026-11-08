@@ -311,6 +311,7 @@ def _enter(book: dict, ticker: str, kind: str, why: str, price: float, lo: float
     if same:                                                      # a re-entry (owner, 5 Nov: allowed, but logged so a failed second try can be studied)
         t["nth_today"] = len(same) + 1
         t["prev_result"], t["prev_exit"] = same[-1].get("result"), same[-1].get("exit_reason")
+    t["path"] = [[round(now.replace(second=0, microsecond=0).timestamp(), 1), round(float(price), 4)]]       # the entry, stamped with its minute
     book["next_id"] += 1
     book.setdefault("entry_times", []).append(now.isoformat())
     book["entry_times"] = book["entry_times"][-50:]
@@ -320,9 +321,41 @@ def _enter(book: dict, ticker: str, kind: str, why: str, price: float, lo: float
     return t
 
 
+PATH_STEP_S, PATH_MAX, PATH_KEEP_DAYS = 60, 90, 5
+
+
+def _trace(t: dict, price: float, now: datetime, force: bool = False) -> None:
+    """Save the price path of a trade for the Quick tab's small picture: at most one [time, price] point a minute from the entry to the exit, the
+    first point at the entry price and the minute of the entry. Capped at PATH_MAX points (the oldest half is thinned when full), never invented."""
+    path = t.setdefault("path", [])
+    ts = now.timestamp()
+    if path and ts <= path[-1][0]:
+        return
+    if path and not force and ts - path[-1][0] < PATH_STEP_S:
+        return
+    path.append([round(ts, 1), round(float(price), 4)])
+    if len(path) > PATH_MAX:
+        half = PATH_MAX // 2
+        t["path"] = path[:1] + path[1:half:2] + path[half:]
+
+
+def _prune_paths(book: dict, now: datetime) -> None:
+    """A path is only for the days Quick shows; older closed trades keep their numbers but drop the picture so the saved book stays small."""
+    today = now.date()
+    for t in book["trades"]:
+        if t.get("path") and t["status"] == "CLOSED":
+            try:
+                old = (today - datetime.fromisoformat(str(t["closed"])[:10]).date()).days > PATH_KEEP_DAYS
+            except (ValueError, TypeError):
+                old = False
+            if old:
+                t.pop("path", None)
+
+
 def _exit(book: dict, ticker: str, price: float, now: datetime, reason: str) -> None:
     pos = book["positions"].pop(ticker)
     t = next(x for x in book["trades"] if x["id"] == pos["trade"])
+    _trace(t, price, now, force=True)
     book["cash"] += pos["shares"] * price
     t["status"], t["closed"], t["exit"], t["exit_reason"] = "CLOSED", now.strftime("%Y-%m-%d %H:%M"), price, reason
     t["result"] = round((price - t["entry"]) * t["shares"], 2)
@@ -553,6 +586,7 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
             t = next(x for x in book["trades"] if x["id"] == pos["trade"])
             move = (price / pos["entry"] - 1) * 100
             t["best"], t["worst"] = max(t["best"], round(move, 2)), min(t["worst"], round(move, 2))
+            _trace(t, price, now)
             if price > pos["peak"]:
                 pos["peak"], pos["best_at"] = price, now.isoformat()
             pos["stop"] = max(pos["stop"], round(pos["entry"] * (1 - MAX_LOSS_PCT / 100), 2))      # also for trades opened before the cap
@@ -678,6 +712,7 @@ def step(book: dict, marks: dict, snaps: dict, prices: dict, now: datetime, setu
             _skip(book, ticker, kind, "not enough cash for a share", price, now)
             _rank_log(book, now, c, rank, len(cands), False, "not enough cash for a share")
     book["log"] = (book["log"] + done)[-200:]
+    _prune_paths(book, now)
     return done
 
 
