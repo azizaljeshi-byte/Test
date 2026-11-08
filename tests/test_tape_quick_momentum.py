@@ -50,12 +50,14 @@ def test_unknown_closed_result_or_date_and_no_measured_wins_remain_unknown():
     assert q.day_summary(quick.new_book(),{},NOW)['total']==0  # genuinely empty known account
 
 
-def test_pullback_low_does_not_invent_turning_confirmation_and_order_is_preserved():
+def test_saved_pullback_low_distinguishes_waiting_for_dip_from_waiting_for_turn():
     b=quick.new_book()
-    b['watch']={'FICTA':{'p0':100.,'pull_lo':98.},'FICTB':{'p0':20.,'pull_lo':None,'turning_up':True}}
+    b['watch']={'FICTA':{'p0':100.,'pull_lo':98.},'FICTB':{'p0':20.,'pull_lo':None}}
     h=q.html({'book':b},now=NOW)
     assert h.index('day total')<h.index('Waiting for a pullback')<h.index('Open now')<h.index('Closed</h3>')
-    assert 'Not yet' in h and 'Turning up' in h and 'Pullback low unknown' in h
+    assert 'Dipped, waiting for the turn' in h and 'Waiting for a dip' in h and 'Pullback low unknown' in h
+    assert h.index('FICTA')<h.index('Dipped, waiting for the turn')<h.index('FICTB')<h.index('Waiting for a dip')
+    assert 'Turning up' not in h and 'Not yet' not in h
     assert '<svg' not in h
 
 

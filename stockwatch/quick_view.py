@@ -185,7 +185,8 @@ def parts(st: dict, prices: dict | None=None, now=None) -> tuple[str,list,str]:
     top+='<h3>Waiting for a pullback</h3><div class="tq-watch">'
     watch=book.get('watch') or {}
     for ticker,w in watch.items():
-        word='Turning up' if w.get('turning_up') is True else 'Not yet'
+        low=_num(w.get('pull_lo'))
+        word='Dipped, waiting for the turn' if low is not None and low>0 else 'Waiting for a dip'
         top+=(f'<div class="tq-w">{_link(ticker)}<span class="tq-pill">{word}</span>'
               f'<small>Signal {_price(w.get("p0"))} · Pullback low {_price(w.get("pull_lo"))}</small></div>')
     top+=('' if watch else '<small>No stocks waiting.</small>')+'</div><h3>Open now</h3></div>'
