@@ -2,7 +2,8 @@
 or Neutral read, with a summary. Display only: computed from the stock's own daily bars (completed days only), it feeds no
 score, call, plan or alert.
 
-Rules for each read are the usual textbook ones and are written next to each indicator below. A line that cannot be
+Rules for each read are written next to each indicator below. Since 6 Nov (owner) the bounded oscillators read like Investing.com: above the
+midline (50) is Buy, below is Sell, and the extremes (under 30 or over 70) are shown as a grey Oversold or Overbought, a watch and not a vote. A line that cannot be
 computed (too few bars) is "n/a", never a Buy or Sell. ATR is shown for context and is not counted as a vote.
 """
 from __future__ import annotations
@@ -15,8 +16,10 @@ import pandas as pd
 from . import technical as ta
 
 BUY, SELL, NEUTRAL, NA = "Buy", "Sell", "Neutral", "n/a"
+OVERSOLD, OVERBOUGHT = "Oversold", "Overbought"
 MA_PERIODS = (5, 10, 20, 50, 100, 200)
-CLS = {BUY: "buy", SELL: "sell", NEUTRAL: "neu", NA: "na"}
+CONTEXT_ONLY = ("ATR (14)", "MACD histogram")     # shown, never counted as a Buy or Sell vote
+CLS = {BUY: "buy", SELL: "sell", NEUTRAL: "neu", NA: "na", "Rising": "neu", "Falling": "neu", "Flat": "neu", OVERSOLD: "neu", OVERBOUGHT: "neu"}
 
 
 def completed(hist: pd.DataFrame, today=None, session_open: bool = False) -> pd.DataFrame:
@@ -95,33 +98,44 @@ def indicators(h: pd.DataFrame) -> list[dict]:
     def osc(v, lo, hi):
         return BUY if v < lo else SELL if v > hi else NEUTRAL
 
+    def mid(v, lo, m, hi):
+        """Midline reading (Investing.com style): extremes are a grey watch, otherwise above the midline Buy, below it Sell."""
+        return OVERSOLD if v < lo else OVERBOUGHT if v > hi else BUY if v > m else SELL if v < m else NEUTRAL
+
     r = float(ta.rsi(c).iloc[-1])
-    add("RSI (14)", r, osc(r, 30, 70), "under 30 Buy, over 70 Sell")
+    add("RSI (14)", r, mid(r, 30, 50, 70), "over 50 Buy, under 50 Sell; under 30 Oversold, over 70 Overbought (watch)")
     k = float(_stoch(h).iloc[-1])
-    add("Stochastic (9,6)", k, osc(k, 20, 80), "under 20 Buy, over 80 Sell")
+    add("Stochastic (9,6)", k, mid(k, 20, 50, 80), "over 50 Buy, under 50 Sell; under 20 Oversold, over 80 Overbought (watch)")
     rs = ta.rsi(c)
     srsi = float((100 * (rs - rs.rolling(14).min()) / (rs.rolling(14).max() - rs.rolling(14).min()).replace(0, np.nan)).iloc[-1])
-    add("Stochastic RSI (14)", srsi, osc(srsi, 20, 80), "under 20 Buy, over 80 Sell")
+    add("Stochastic RSI (14)", srsi, mid(srsi, 20, 50, 80), "over 50 Buy, under 50 Sell; under 20 Oversold, over 80 Overbought (watch)")
     m, _ = ta.macd(c)
     mv = float(m.iloc[-1])
     add("MACD (12,26)", mv, BUY if mv > 0 else SELL if mv < 0 else NEUTRAL, "above zero Buy, below zero Sell")
+    line, sig = ta.macd(c)
+    hist = line - sig
+    hv, h3 = float(hist.iloc[-1]), float(hist.iloc[-4]) if len(hist) > 4 else float("nan")
+    if hv == hv and h3 == h3:
+        rows.append({"name": "MACD histogram", "value": f"{hv:+.2f}", "bars": [float(x) for x in hist.iloc[-5:]],
+                     "read": "Rising" if hv > h3 else "Falling" if hv < h3 else "Flat",
+                     "rule": "MACD minus its 9-day signal line. Context only, not a vote. Rising: momentum is improving"})
     adx, pdi, mdi = _adx(h)
     add("ADX (14)", adx, (BUY if pdi > mdi else SELL) if adx > 25 else NEUTRAL, "over 25 is a trend: Buy if up-pressure leads, else Sell")
     ll, hh = h["Low"].rolling(14).min(), h["High"].rolling(14).max()
     wr = float((-100 * (hh - c) / (hh - ll).replace(0, np.nan)).iloc[-1])
-    add("Williams %R (14)", wr, osc(wr, -80, -20), "under -80 Buy, over -20 Sell")
+    add("Williams %R (14)", wr, mid(wr, -80, -50, -20), "over -50 Buy, under -50 Sell; under -80 Oversold, over -20 Overbought (watch)")
     tp = (h["High"] + h["Low"] + c) / 3
     sma = tp.rolling(14).mean()
     dev = tp.rolling(14).apply(lambda w: np.abs(w - w.mean()).mean(), raw=True)     # mean deviation around the window's own average
     cci = float(((tp - sma) / (0.015 * dev.replace(0, np.nan))).iloc[-1])
-    add("CCI (14)", cci, osc(cci, -100, 100), "under -100 Buy, over 100 Sell")
+    add("CCI (14)", cci, BUY if cci > 100 else SELL if cci < -100 else NEUTRAL, "over 100 Buy (strong up-move), under -100 Sell (strong down-move)")
     atr = float(ta.atr(h).iloc[-1])
     rows.append({"name": "ATR (14)", "value": f"{atr:.2f} ({atr / price * 100:.1f}%)",
                  "read": "High volatility" if atr / price > 0.04 else "Less volatility", "rule": "context only, not a vote"})
     hl = price - float(h["High"].rolling(14).mean().iloc[-1])
     add("Highs/Lows (14)", hl, BUY if hl > 0 else SELL, "close above the average of the last 14 highs: Buy")
     uo = _uo(h)
-    add("Ultimate Oscillator", uo, osc(uo, 30, 70), "under 30 Buy, over 70 Sell")
+    add("Ultimate Oscillator", uo, mid(uo, 30, 50, 70), "over 50 Buy, under 50 Sell; under 30 Oversold, over 70 Overbought (watch)")
     roc = float((100 * (c / c.shift(12) - 1)).iloc[-1])
     add("ROC (12)", roc, BUY if roc > 0 else SELL if roc < 0 else NEUTRAL, "above zero Buy, below zero Sell", "{:+.2f}%")
     e13 = ta.ema(c, 13)
@@ -138,7 +152,7 @@ def indicators(h: pd.DataFrame) -> list[dict]:
 
 
 def tally(reads: list[str]) -> dict:
-    b, s, n = reads.count(BUY), reads.count(SELL), reads.count(NEUTRAL)
+    b, s, n = reads.count(BUY), reads.count(SELL), reads.count(NEUTRAL) + reads.count(OVERSOLD) + reads.count(OVERBOUGHT)
     k = b + s + n
     if not k:
         return {"buy": 0, "sell": 0, "neutral": 0, "word": "n/a", "cls": "na"}
@@ -154,12 +168,23 @@ def evidence(hist: pd.DataFrame, today=None, session_open: bool = False) -> dict
     mas = moving_averages(h)
     inds = indicators(h)
     ma_reads = [r[k] for r in mas for k in ("simple_read", "exp_read")]
-    ind_reads = [r["read"] for r in inds if r["name"] != "ATR (14)"]
+    ind_reads = [r["read"] for r in inds if r["name"] not in CONTEXT_ONLY]
     return {"as_of": str(pd.Timestamp(h.index[-1]).date()), "price": float(h["Close"].iloc[-1]), "pivots": pivots(h), "mas": mas,
             "indicators": inds, "ma_summary": tally(ma_reads), "ind_summary": tally(ind_reads), "overall": tally(ma_reads + ind_reads)}
 
 
 # ---------------------------------------------------------------- rendering
+
+def _bars(vals) -> str:
+    """The last few sessions of a histogram as small bars (green above zero, red below) with the numbers, oldest to newest."""
+    if not vals or len(vals) < 2:
+        return ""
+    top = max(abs(v) for v in vals) or 1.0
+    cols = "".join(
+        f'<div class="tv-hc"><div class="tv-hb"><i class="{"up" if v >= 0 else "dn"}" style="height:{max(4, abs(v) / top * 46):.0f}%"></i></div>'
+        f'<small>{v:+.2f}</small></div>' for v in vals)
+    return f'<div class="tv-hs"><span>Last {len(vals)} sessions, oldest to newest</span><div class="tv-hr">{cols}</div></div>'
+
 
 def _chip(read: str) -> str:
     return f'<span class="tv-r {CLS.get(read, "neu")}">{escape(read)}</span>'
@@ -193,7 +218,7 @@ def html(ev: dict | None) -> str:
     mrows = "".join(f'<div class="tv-ma"><b>{r["period"]}</b><span>{_px(r["simple"])}</span>{_chip(r["simple_read"])}'
                     f'<span>{_px(r["exp"])}</span>{_chip(r["exp_read"])}</div>' for r in ev["mas"])
     irows = "".join(f'<div class="tv-i"><div><b>{escape(r["name"])}</b><small>{escape(r["rule"])}</small></div>'
-                    f'<span class="tv-v">{escape(r["value"])}</span>{_chip(r["read"])}</div>' for r in ev["indicators"])
+                    f'<span class="tv-v">{escape(r["value"])}</span>{_chip(r["read"])}</div>' + _bars(r.get("bars")) for r in ev["indicators"])
     return (f'<style>{CSS}</style><div class="tv"><div class="tv-h">Technical evidence</div>'
             f'<div class="tv-sub">From daily bars to {escape(ev["as_of"])}. Evidence only: it does not change the call.</div>'
             f'<div class="tv-sums">{_summary("Overall", ev["overall"])}{_summary("Moving averages", ev["ma_summary"])}{_summary("Indicators", ev["ind_summary"])}</div>'
@@ -221,4 +246,9 @@ CSS = """
 .tv-ma.hd{font-size:.64rem;color:var(--dz-muted,#8b95a7);border-top:0}.tv-r{font-size:.7rem;font-weight:800;text-align:right}
 .tv-i{display:grid;grid-template-columns:1fr auto 70px;gap:8px;align-items:center;padding:7px 0;border-top:1px solid color-mix(in srgb,var(--dz-line,#243041) 60%,transparent)}
 .tv-i b{font-size:.84rem}.tv-i small{display:block;font-size:.64rem;color:var(--dz-muted,#8b95a7);line-height:1.25}.tv-v{font-size:.82rem;font-variant-numeric:tabular-nums}
+.tv-hs{padding:2px 0 10px}.tv-hs>span{display:block;font-size:.64rem;color:var(--dz-muted,#8b95a7);margin-bottom:4px}
+.tv-hr{display:flex;gap:6px}.tv-hc{flex:1;text-align:center}.tv-hb{position:relative;height:56px}
+.tv-hb:after{content:'';position:absolute;left:0;right:0;top:50%;border-top:1px solid var(--dz-line,#4a5568)}
+.tv-hb i{position:absolute;left:15%;width:70%;background:var(--dz-buy,#3dffa8)}.tv-hb i.up{bottom:50%;border-radius:2px 2px 0 0}.tv-hb i.dn{top:50%;border-radius:0 0 2px 2px;background:var(--dz-act,#ff697b)}
+.tv-hc small{font-size:.66rem;font-variant-numeric:tabular-nums;color:var(--dz-soft,#aab4c5)}
 """

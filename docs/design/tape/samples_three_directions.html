@@ -1,0 +1,203 @@
+<title>StockWatch Design Samples</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,400;600;800&family=Hanken+Grotesk:wght@400;500;700;800&display=swap">
+<style>
+/* Layout: a short intro, then three phone-sized mockups of the same Quick screen, one per direction, then what changes for the whole app. */
+:root{--bg:#eef0f3;--fg:#161b24;--soft:#586172;--line:#d5dae2;--card:#ffffff;--ok:#0f7a52;--bad:#c63a35}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#0f1319;--fg:#e8ecf2;--soft:#9aa5b6;--line:#262d39;--card:#171c25;--ok:#46c28d;--bad:#ff7a73;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0f1319;--fg:#e8ecf2;--soft:#9aa5b6;--line:#262d39;--card:#171c25;--ok:#46c28d;--bad:#ff7a73;color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 "Hanken Grotesk",system-ui,sans-serif;padding-block:28px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1180px;margin:0 auto}
+h1{font:800 28px/1.1 "Bricolage Grotesque",sans-serif;margin:0 0 8px;text-wrap:balance}
+.lead{max-width:62ch;color:var(--soft);margin:0 0 28px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:28px;align-items:start}
+.opt h2{font:700 17px/1.2 "Bricolage Grotesque",sans-serif;margin:0 0 4px}
+.opt p{margin:0 0 14px;color:var(--soft);max-width:44ch}
+.tag{display:inline-block;font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--soft);margin-bottom:10px}
+.phone{width:100%;max-width:372px;border-radius:30px;overflow:hidden;border:1px solid var(--line);box-shadow:0 12px 36px rgba(10,20,40,.14);margin-inline:auto 0}
+.opt{min-width:0}
+.sample{font-size:11px;opacity:.7}
+.notes{margin-top:36px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:20px}
+.notes div{border-top:2px solid var(--fg);padding-top:10px}
+.notes h3{margin:0 0 4px;font:700 15px "Bricolage Grotesque",sans-serif}
+.notes p{margin:0;color:var(--soft);max-width:48ch}
+
+/* ---------- A: Tape. Deep blue, one row per trade with its own price path ---------- */
+.a{--a-bg:#0d1a2c;--a-card:#14253c;--a-line:#233855;--a-ink:#f2efe8;--a-soft:#9fb0c8;--a-up:#4fd6a5;--a-dn:#ff8a7a;background:var(--a-bg);color:var(--a-ink);font-family:"Familjen Grotesk",system-ui,sans-serif;padding:18px 16px 14px}
+.a .top{display:flex;justify-content:space-between;align-items:baseline}
+.a .brand{font-weight:700;font-size:17px;letter-spacing:.01em}
+.a .st{font-size:12px;color:var(--a-soft)}
+.a .day{margin:16px 0 4px;font-size:13px;color:var(--a-soft)}
+.a .big{font-size:46px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+.a .big small{font-size:16px;font-weight:500;color:var(--a-soft);margin-left:8px}
+.a .up{color:var(--a-up)}.a .dn{color:var(--a-dn)}
+.a h4{margin:20px 0 8px;font-size:13px;font-weight:600;color:var(--a-soft)}
+.a .watch{background:var(--a-card);border-radius:14px;padding:12px;display:grid;gap:10px}
+.a .w{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-size:14px}
+.a .w b{font-weight:600}.a .w span{color:var(--a-soft);font-size:12.5px}
+.a .pill{align-self:center;font-size:12px;padding:3px 9px;border-radius:99px;border:1px solid var(--a-line);color:var(--a-soft);white-space:nowrap}
+.a .pill.go{border-color:var(--a-up);color:var(--a-up)}
+.a .tr{display:grid;grid-template-columns:54px 1fr auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--a-line)}
+.a .tr:first-of-type{border-top:0}
+.a .tr .n{font-weight:700;font-size:15px}
+.a .tr .m{font-size:12px;color:var(--a-soft)}
+.a .tr .r{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+.a svg{display:block;width:100%;height:34px}
+.a .nav{display:flex;justify-content:space-around;margin:16px -16px 0;padding:12px 8px 0;border-top:1px solid var(--a-line);font-size:12px;color:var(--a-soft)}
+.a .nav .on{color:var(--a-ink);font-weight:700}
+
+/* ---------- B: Day line. Light, the trading day drawn as a timeline ---------- */
+.b{--b-bg:#f1f4f9;--b-card:#fff;--b-ink:#1b2340;--b-soft:#667194;--b-line:#dbe1ee;--b-acc:#3550f0;--b-up:#0d8a5e;--b-dn:#d03a45;background:var(--b-bg);color:var(--b-ink);font-family:"Bricolage Grotesque",system-ui,sans-serif;padding:18px 16px 14px}
+.b .top{display:flex;justify-content:space-between;align-items:center}
+.b .brand{font-weight:800;font-size:18px}
+.b .chip{font-size:12px;background:var(--b-card);border:1px solid var(--b-line);border-radius:99px;padding:3px 10px;color:var(--b-soft)}
+.b .hero{margin:14px 0 0;background:var(--b-ink);color:#fff;border-radius:22px;padding:16px}
+.b .hero .l{font-size:13px;opacity:.7}
+.b .hero .v{font-size:40px;font-weight:800;line-height:1.05;font-variant-numeric:tabular-nums}
+.b .hero .s{font-size:13px;opacity:.75;margin-top:2px}
+.b .axis{margin-top:14px;position:relative;height:96px}
+.b .axis i{position:absolute;top:0;bottom:16px;width:1px;background:rgba(255,255,255,.14)}
+.b .axis em{position:absolute;bottom:0;font-style:normal;font-size:10.5px;opacity:.6;transform:translateX(-50%)}
+.b .bar{position:absolute;height:9px;border-radius:5px}
+.b .bar.u{background:#5ae0ac}.b .bar.d{background:#ff8a8f}
+.b h4{margin:18px 0 8px;font-size:14px;font-weight:700}
+.b .card{background:var(--b-card);border-radius:18px;padding:4px 14px;border:1px solid var(--b-line)}
+.b .it{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:11px 0;border-top:1px solid var(--b-line)}
+.b .it:first-child{border-top:0}
+.b .it b{font-size:16px}.b .it .m{font-size:12.5px;color:var(--b-soft)}
+.b .it .r{grid-row:1/3;grid-column:2;text-align:right;font-weight:800;font-size:16px;font-variant-numeric:tabular-nums;align-self:center}
+.b .up{color:var(--b-up)}.b .dn{color:var(--b-dn)}
+.b .wt{font-size:12.5px;color:var(--b-acc);font-weight:600}
+.b .nav{display:flex;gap:6px;margin:16px 0 0;padding:6px;background:var(--b-card);border-radius:99px;border:1px solid var(--b-line)}
+.b .nav span{flex:1;text-align:center;font-size:12.5px;padding:7px 0;border-radius:99px;color:var(--b-soft)}
+.b .nav .on{background:var(--b-acc);color:#fff;font-weight:700}
+
+/* ---------- C: Plain and large. Few cards, big touch targets, bottom bar with More ---------- */
+.c{--c-bg:#e9efec;--c-card:#fff;--c-ink:#10201a;--c-soft:#5a6c64;--c-line:#d3ddd8;--c-acc:#0e6b4d;--c-up:#0e6b4d;--c-dn:#b9362f;background:var(--c-bg);color:var(--c-ink);font-family:"Hanken Grotesk",system-ui,sans-serif;padding:18px 14px 0}
+.c .top{display:flex;justify-content:space-between;align-items:center;padding:0 2px}
+.c .brand{font-weight:800;font-size:18px}
+.c .st{font-size:12.5px;color:var(--c-soft)}
+.c .sum{margin:14px 0 0;display:grid;grid-template-columns:1.3fr 1fr;gap:10px}
+.c .box{background:var(--c-card);border-radius:16px;padding:12px 14px}
+.c .box .l{font-size:12.5px;color:var(--c-soft)}
+.c .box .v{font-size:28px;font-weight:800;line-height:1.15;font-variant-numeric:tabular-nums}
+.c .box .v.sm{font-size:22px}
+.c .seg{display:flex;gap:6px;margin:16px 0 10px}
+.c .seg span{padding:8px 14px;border-radius:99px;font-size:14px;font-weight:600;background:var(--c-card);color:var(--c-soft)}
+.c .seg .on{background:var(--c-ink);color:#fff}
+.c .list{display:grid;gap:8px}
+.c .t{background:var(--c-card);border-radius:16px;padding:12px 14px;display:grid;grid-template-columns:1fr auto;gap:2px 10px;min-height:64px}
+.c .t b{font-size:17px}.c .t .m{font-size:13px;color:var(--c-soft)}
+.c .t .r{grid-row:1/3;grid-column:2;text-align:right;font-size:17px;font-weight:800;align-self:center;font-variant-numeric:tabular-nums}
+.c .up{color:var(--c-up)}.c .dn{color:var(--c-dn)}
+.c .t.w{background:transparent;border:1.5px dashed var(--c-line)}
+.c .bar{display:grid;grid-template-columns:repeat(5,1fr);margin:16px -14px 0;background:var(--c-card);padding:8px 6px 12px;border-top:1px solid var(--c-line)}
+.c .bar span{text-align:center;font-size:11.5px;color:var(--c-soft);padding-top:2px}
+.c .bar span:before{content:"";display:block;width:22px;height:22px;margin:0 auto 3px;border-radius:7px;background:var(--c-line)}
+.c .bar .on{color:var(--c-acc);font-weight:700}.c .bar .on:before{background:var(--c-acc)}
+</style>
+
+<div class="wrap">
+<h1>Three looks for the StockWatch phone screens</h1>
+<p class="lead">The same Quick screen in three directions, with the new "waiting for a pullback" list, so you can pick one for Codex to apply to every tab. Numbers are samples from the Friday 6 Nov replay.</p>
+
+<div class="row">
+
+<div class="opt">
+<span class="tag">Direction A</span>
+<h2>Tape</h2>
+<p>Deep blue with one big number. Every trade shows its own price path, with the entry, the stop and where it left.</p>
+<div class="phone a">
+  <div class="top"><span class="brand">StockWatch</span><span class="st">Market closed</span></div>
+  <div class="day">Quick, Fri 6 Nov</div>
+  <div class="big up">+$43<small>best trade</small></div>
+  <div class="day" style="margin-top:6px">Day total <b class="dn">−$57</b> · 28 trades · 39% won</div>
+
+  <h4>Waiting for a pullback</h4>
+  <div class="watch">
+    <div class="w"><b>NVDA</b><span class="pill go">Turning up</span><span>Signal 191.68 · low 188.40</span></div>
+    <div class="w"><b>DELL</b><span class="pill">Not yet</span><span>Signal 335.82 · needs 332.50</span></div>
+  </div>
+
+  <h4>Trades</h4>
+  <div>
+    <div class="tr"><div><div class="n">STX</div><div class="m">11:17</div></div>
+      <svg viewBox="0 0 120 34" preserveAspectRatio="none" aria-label="STX price path"><line x1="0" y1="30" x2="120" y2="30" stroke="#ff8a7a" stroke-dasharray="3 3" stroke-width="1"/><polyline fill="none" stroke="#9fb0c8" stroke-width="1.6" points="0,22 14,26 26,21 40,17 56,12 72,8 88,6 104,10 120,7"/><circle cx="26" cy="21" r="3" fill="#f2efe8"/><circle cx="120" cy="7" r="3" fill="#4fd6a5"/></svg>
+      <div class="r up">+$43<div class="m">+1.9%</div></div></div>
+    <div class="tr"><div><div class="n">STX</div><div class="m">12:40</div></div>
+      <svg viewBox="0 0 120 34" preserveAspectRatio="none" aria-label="STX price path"><line x1="0" y1="30" x2="120" y2="30" stroke="#ff8a7a" stroke-dasharray="3 3" stroke-width="1"/><polyline fill="none" stroke="#9fb0c8" stroke-width="1.6" points="0,10 14,12 28,13 44,16 60,20 76,25 92,29 120,31"/><circle cx="14" cy="12" r="3" fill="#f2efe8"/><circle cx="120" cy="31" r="3" fill="#ff8a7a"/></svg>
+      <div class="r dn">−$23<div class="m">−1.0%</div></div></div>
+    <div class="tr"><div><div class="n">HOOD</div><div class="m">11:15</div></div>
+      <svg viewBox="0 0 120 34" preserveAspectRatio="none" aria-label="HOOD price path"><line x1="0" y1="30" x2="120" y2="30" stroke="#ff8a7a" stroke-dasharray="3 3" stroke-width="1"/><polyline fill="none" stroke="#9fb0c8" stroke-width="1.6" points="0,24 16,22 34,18 52,14 70,13 90,9 120,6"/><circle cx="16" cy="22" r="3" fill="#f2efe8"/><circle cx="120" cy="6" r="3" fill="#4fd6a5"/></svg>
+      <div class="r up">+$16<div class="m">+1.2%</div></div></div>
+  </div>
+  <div class="nav"><span>Radar</span><span>Portfolio</span><span class="on">Quick</span><span>Momentum</span><span>More</span></div>
+</div>
+</div>
+
+<div class="opt">
+<span class="tag">Direction B</span>
+<h2>Day line</h2>
+<p>Light and bright. The whole trading day is drawn as one strip, so you see when Quick entered, how long it held and how each ended.</p>
+<div class="phone b">
+  <div class="top"><span class="brand">StockWatch</span><span class="chip">Market closed</span></div>
+  <div class="hero">
+    <div class="l">Quick, Fri 6 Nov</div>
+    <div class="v">−$57</div>
+    <div class="s">28 trades · 39% won · worst −1.6%</div>
+    <div class="axis" role="img" aria-label="Trades across the day">
+      <i style="left:0"></i><i style="left:23%"></i><i style="left:46%"></i><i style="left:69%"></i><i style="left:92%"></i>
+      <span class="bar d" style="left:7%;width:7%;top:6px"></span>
+      <span class="bar u" style="left:9%;width:3%;top:20px"></span>
+      <span class="bar u" style="left:31%;width:14%;top:34px"></span>
+      <span class="bar d" style="left:34%;width:6%;top:48px"></span>
+      <span class="bar d" style="left:60%;width:8%;top:20px"></span>
+      <span class="bar u" style="left:61%;width:9%;top:62px"></span>
+      <span class="bar d" style="left:72%;width:5%;top:6px"></span>
+      <em style="left:0%">9:30</em><em style="left:23%">11</em><em style="left:46%">12:30</em><em style="left:69%">2</em><em style="left:92%">3:55</em>
+    </div>
+  </div>
+  <h4>Waiting for a pullback</h4>
+  <div class="card">
+    <div class="it"><b>NVDA</b><span class="r wt">Turning up</span><span class="m">Signal 191.68 · pullback low 188.40</span></div>
+    <div class="it"><b>DELL</b><span class="r" style="color:var(--b-soft);font-weight:600;font-size:14px">Not yet</span><span class="m">Signal 335.82 · buys near 332.50</span></div>
+  </div>
+  <h4>Closed</h4>
+  <div class="card">
+    <div class="it"><b>STX <span class="m">11:17</span></b><span class="m">Bought the pullback at 453.51, left at 462.07</span><span class="r up">+$43</span></div>
+    <div class="it"><b>STX <span class="m">12:40</span></b><span class="m">Stopped out at 452.09</span><span class="r dn">−$23</span></div>
+    <div class="it"><b>HOOD <span class="m">11:15</span></b><span class="m">Took the +1% profit</span><span class="r up">+$16</span></div>
+  </div>
+  <div class="nav"><span>Radar</span><span>Portfolio</span><span class="on">Quick</span><span>Momentum</span><span>More</span></div>
+</div>
+</div>
+
+<div class="opt">
+<span class="tag">Direction C</span>
+<h2>Plain and large</h2>
+<p>Fewest effects: big numbers, big touch targets, one switch for Waiting, Open and Closed. Built for reading with one thumb.</p>
+<div class="phone c">
+  <div class="top"><span class="brand">StockWatch</span><span class="st">Market closed</span></div>
+  <div class="sum">
+    <div class="box"><div class="l">Quick, Fri 6 Nov</div><div class="v dn">−$57</div></div>
+    <div class="box"><div class="l">Won</div><div class="v sm">39%</div></div>
+  </div>
+  <div class="seg"><span class="on">Waiting 2</span><span>Open 0</span><span>Closed 28</span></div>
+  <div class="list">
+    <div class="t"><b>NVDA</b><span class="r" style="color:var(--c-acc)">Turning up</span><span class="m">Signal 191.68 · low 188.40</span></div>
+    <div class="t"><b>DELL</b><span class="r" style="color:var(--c-soft);font-size:15px">Not yet</span><span class="m">Signal 335.82 · needs 332.50</span></div>
+    <div class="t w"><b style="font-size:15px;color:var(--c-soft)">Closed today</b><span class="r" style="font-size:14px;color:var(--c-soft)">28</span><span class="m">STX +$43 is the best</span></div>
+  </div>
+  <div class="bar"><span>Radar</span><span>Portfolio</span><span class="on">Quick</span><span>Momentum</span><span>More</span></div>
+</div>
+</div>
+
+</div>
+
+<div class="notes">
+<div><h3>Navigation</h3><p>Today the 11 tabs wrap into three rows. All three samples use five bottom buttons and a More page for the rest.</p></div>
+<div><h3>Words and numbers</h3><p>Plain English, one status word per row, money right-aligned. Green and red always come with a sign.</p></div>
+<div><h3>What stays the same</h3><p>No scoring, signal or trade rule changes. This is layout, colours and type only, and it works in dark and light.</p></div>
+</div>
+</div>

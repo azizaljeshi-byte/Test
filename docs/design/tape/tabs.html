@@ -1,0 +1,146 @@
+<title>StockWatch Tape Tabs</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;800&family=Hanken+Grotesk:wght@400;500;700;800&display=swap">
+<style>
+/* Layout: a short intro, then three phone-sized mockups of the same Quick screen, one per direction, then what changes for the whole app. */
+:root{--bg:#eef0f3;--fg:#161b24;--soft:#586172;--line:#d5dae2;--card:#ffffff;--ok:#0f7a52;--bad:#c63a35}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#0f1319;--fg:#e8ecf2;--soft:#9aa5b6;--line:#262d39;--card:#171c25;--ok:#46c28d;--bad:#ff7a73;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0f1319;--fg:#e8ecf2;--soft:#9aa5b6;--line:#262d39;--card:#171c25;--ok:#46c28d;--bad:#ff7a73;color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 "Hanken Grotesk",system-ui,sans-serif;padding-block:28px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1180px;margin:0 auto}
+h1{font:800 28px/1.1 "Bricolage Grotesque",sans-serif;margin:0 0 8px;text-wrap:balance}
+.lead{max-width:62ch;color:var(--soft);margin:0 0 28px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:28px;align-items:start}
+.opt h2{font:700 17px/1.2 "Bricolage Grotesque",sans-serif;margin:0 0 4px}
+.opt p{margin:0 0 14px;color:var(--soft);max-width:44ch}
+.tag{display:inline-block;font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--soft);margin-bottom:10px}
+.phone{width:100%;max-width:372px;border-radius:30px;overflow:hidden;border:1px solid var(--line);box-shadow:0 12px 36px rgba(10,20,40,.14);margin-inline:auto 0}
+.opt{min-width:0}
+.sample{font-size:11px;opacity:.7}
+.notes{margin-top:36px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:20px}
+.notes div{border-top:2px solid var(--fg);padding-top:10px}
+.notes h3{margin:0 0 4px;font:700 15px "Bricolage Grotesque",sans-serif}
+.notes p{margin:0;color:var(--soft);max-width:48ch}
+
+/* ---------- A: Tape. Deep blue, one row per trade with its own price path ---------- */
+.a{--a-bg:#0d1a2c;--a-card:#14253c;--a-line:#233855;--a-ink:#f2efe8;--a-soft:#9fb0c8;--a-up:#4fd6a5;--a-dn:#ff8a7a;background:var(--a-bg);color:var(--a-ink);font-family:"Familjen Grotesk",system-ui,sans-serif;padding:18px 16px 14px}
+.a .top{display:flex;justify-content:space-between;align-items:baseline}
+.a .brand{font-weight:700;font-size:17px;letter-spacing:.01em}
+.a .st{font-size:12px;color:var(--a-soft)}
+.a .day{margin:16px 0 4px;font-size:13px;color:var(--a-soft)}
+.a .big{font-size:46px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+.a .big small{font-size:16px;font-weight:500;color:var(--a-soft);margin-left:8px}
+.a .up{color:var(--a-up)}.a .dn{color:var(--a-dn)}
+.a h4{margin:20px 0 8px;font-size:13px;font-weight:600;color:var(--a-soft)}
+.a .watch{background:var(--a-card);border-radius:14px;padding:12px;display:grid;gap:10px}
+.a .w{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-size:14px}
+.a .w b{font-weight:600}.a .w span{color:var(--a-soft);font-size:12.5px}
+.a .pill{align-self:center;font-size:12px;padding:3px 9px;border-radius:99px;border:1px solid var(--a-line);color:var(--a-soft);white-space:nowrap}
+.a .pill.go{border-color:var(--a-up);color:var(--a-up)}
+.a .tr{display:grid;grid-template-columns:54px 1fr auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--a-line)}
+.a .tr:first-of-type{border-top:0}
+.a .tr .n{font-weight:700;font-size:15px}
+.a .tr .m{font-size:12px;color:var(--a-soft)}
+.a .tr .r{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+.a svg{display:block;width:100%;height:34px}
+.a .nav{display:flex;justify-content:space-around;margin:16px -16px 0;padding:12px 8px 0;border-top:1px solid var(--a-line);font-size:12px;color:var(--a-soft)}
+.a .nav .on{color:var(--a-ink);font-weight:700}
+
+
+.a .sheet{margin:14px 0 0}
+.a .grp{font-size:12.5px;color:var(--a-soft);margin:14px 0 6px}
+.a .tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.a .tab{background:var(--a-card);border-radius:14px;padding:12px;min-height:62px}
+.a .tab b{display:block;font-size:15px}.a .tab span{font-size:12px;color:var(--a-soft)}
+.a .tab.hot b:after{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--a-dn);margin-left:7px}
+.a .tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.a .tile{background:var(--a-card);border-radius:14px;padding:11px 12px}
+.a .tile .l{font-size:12px;color:var(--a-soft)}.a .tile .v{font-size:22px;font-weight:700;line-height:1.2}.a .tile .m{font-size:12px;color:var(--a-soft)}
+.a .row2{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:11px 0;border-top:1px solid var(--a-line);align-items:center}
+.a .row2:first-of-type{border-top:0}
+.a .row2 b{font-size:15px}.a .row2 .m{font-size:12.5px;color:var(--a-soft)}
+.a .row2 .r{grid-row:1/3;grid-column:2;text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+.a .tagw{display:inline-block;font-size:12px;padding:2px 9px;border-radius:99px;border:1px solid var(--a-line);color:var(--a-soft)}
+.a .tagw.buy{border-color:var(--a-up);color:var(--a-up)}.a .tagw.act{border-color:var(--a-dn);color:var(--a-dn)}
+.a .nav .more{color:var(--a-ink)}
+.phone.a{min-height:640px}
+.cap{font-size:13px;color:var(--soft);margin:0 0 10px;max-width:42ch}
+</style>
+<div class="wrap">
+<h1>Tape, applied to the tabs</h1>
+<p class="lead">Five buttons stay at the bottom of the screen. Everything else sits one tap away under More. Sample numbers.</p>
+<div class="row">
+
+<div class="opt"><span class="tag">Radar, the home screen</span><p class="cap">The first screen answers one question: does anything need me right now?</p>
+<div class="phone a">
+  <div class="top"><span class="brand">StockWatch</span><span class="st">Market closed</span></div>
+  <div class="day">Good evening</div>
+  <div class="big" style="font-size:30px;line-height:1.1">1 needs your attention</div>
+  <div class="tiles">
+    <div class="tile"><div class="l">Market</div><div class="v dn">Risk-off</div><div class="m">SPY +1.0% today</div></div>
+    <div class="tile"><div class="l">Buy zone</div><div class="v up">AMD</div><div class="m">1 stock</div></div>
+    <div class="tile"><div class="l">Needs attention</div><div class="v">MSFT</div><div class="m">Trim or exit</div></div>
+    <div class="tile"><div class="l">Earnings this week</div><div class="v">0</div><div class="m">Quiet week</div></div>
+  </div>
+  <h4>Your stocks</h4>
+  <div>
+    <div class="row2"><b>MSFT</b><span class="r"><span class="tagw act">Act</span></span><span class="m">Broke support at 412</span></div>
+    <div class="row2"><b>AMD</b><span class="r"><span class="tagw buy">Buy zone</span></span><span class="m">Support 148 · resistance 163</span></div>
+    <div class="row2"><b>NVDA</b><span class="r"><span class="tagw">Hold</span></span><span class="m">Holding above 186</span></div>
+  </div>
+  <div class="nav"><span class="on">Radar</span><span>Portfolio</span><span>Quick</span><span>Momentum</span><span class="more">More</span></div>
+</div></div>
+
+<div class="opt"><span class="tag">More, everything else</span><p class="cap">Six pages grouped by what you do with them. A red dot shows where something is waiting.</p>
+<div class="phone a">
+  <div class="top"><span class="brand">More</span><span class="st">Market closed</span></div>
+  <div class="grp">Look up</div>
+  <div class="tabs">
+    <div class="tab"><b>Details</b><span>One stock in full</span></div>
+    <div class="tab"><b>S&amp;P 500</b><span>The whole index</span></div>
+    <div class="tab hot"><b>Ask the AI</b><span>Recheck due 09:45</span></div>
+    <div class="tab"><b>Extended</b><span>Pre and after hours</span></div>
+  </div>
+  <div class="grp">Practice accounts</div>
+  <div class="tabs">
+    <div class="tab"><b>Paper</b><span>The practice account</span></div>
+    <div class="tab"><b>Log</b><span>Every alert and call</span></div>
+  </div>
+  <div class="grp">Display</div>
+  <div class="tabs"><div class="tab"><b>Theme</b><span>Auto · Dark · Light</span></div><div class="tab"><b>Sweep now</b><span>Last 16:44 UTC</span></div></div>
+  <div class="nav"><span>Radar</span><span>Portfolio</span><span>Quick</span><span>Momentum</span><span class="on">More</span></div>
+</div></div>
+
+<div class="opt"><span class="tag">Portfolio</span><p class="cap">Money first, then each holding with a single status word.</p>
+<div class="phone a">
+  <div class="top"><span class="brand">Portfolio</span><span class="st">Market closed</span></div>
+  <div class="day">Total value</div>
+  <div class="big">$128,400<small class="up">+$1,120 today</small></div>
+  <h4>Holdings</h4>
+  <div>
+    <div class="row2"><b>NVDA</b><span class="r up">+$640<div class="m">+1.2%</div></span><span class="m">40 shares · avg 172.10</span></div>
+    <div class="row2"><b>MSFT</b><span class="r dn">−$310<div class="m">−0.9%</div></span><span class="m">25 shares · avg 421.00</span></div>
+    <div class="row2"><b>AMD</b><span class="r up">+$790<div class="m">+2.1%</div></span><span class="m">60 shares · avg 141.30</span></div>
+  </div>
+  <h4>Suggested adds</h4>
+  <div class="watch" style="background:var(--a-card);border-radius:14px;padding:12px;font-size:14px">AMD is in a buy zone. Adding 10 shares keeps it under 12% of the account.</div>
+  <div class="nav"><span>Radar</span><span class="on">Portfolio</span><span>Quick</span><span>Momentum</span><span>More</span></div>
+</div></div>
+
+<div class="opt"><span class="tag">Momentum</span><p class="cap">The rising list, ranked, with the move and the volume next to each name.</p>
+<div class="phone a">
+  <div class="top"><span class="brand">Momentum</span><span class="st">Updated 17:35</span></div>
+  <div class="day">Rising now</div>
+  <div class="big" style="font-size:30px;line-height:1.1">12 stocks up on volume</div>
+  <h4>Top of the list</h4>
+  <div>
+    <div class="row2"><b>STX</b><span class="r up">+3.4%<div class="m">vol 2.1x</div></span><span class="m">New high of the day</span></div>
+    <div class="row2"><b>SNDK</b><span class="r up">+2.8%<div class="m">vol 1.7x</div></span><span class="m">Turned up off the low</span></div>
+    <div class="row2"><b>HOOD</b><span class="r up">+2.2%<div class="m">vol 1.4x</div></span><span class="m">Rising, no pullback yet</span></div>
+    <div class="row2"><b>AVGO</b><span class="r up">+1.6%<div class="m">vol 1.2x</div></span><span class="m">Near resistance 299</span></div>
+  </div>
+  <div class="nav"><span>Radar</span><span>Portfolio</span><span>Quick</span><span class="on">Momentum</span><span>More</span></div>
+</div></div>
+
+</div></div>

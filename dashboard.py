@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import ask_ai, ask_ai_view, candidates, stockhead, rotation, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import crash, portfolio as portfolio_acct, portfolio_view, extended, testlist, rising, rising_view, ask_ai, ask_ai_view, candidates, stockhead, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -68,7 +68,9 @@ st.markdown(design.theme_css(THEME), unsafe_allow_html=True)
 
 
 def _save_theme():
-    store.set_setting("theme", st.session_state.get("theme") or design.DEFAULT_THEME)
+    mode = st.session_state.get("theme") or design.DEFAULT_THEME
+    store.set_setting("theme", mode)
+    st.query_params["theme"] = mode
 data = provider(selected_provider(base.settings.data_provider), CODE_VERSION)
 # with a Google Sheet, the sheet is the only list; dashboard additions are for setups without one
 portfolio = base if base.sheet_url else store.apply_overrides(base)
@@ -137,6 +139,8 @@ if base.sheet_error:
     st.warning(f"Couldn't read the Google Sheet, showing the backup list instead. {base.sheet_error}")
 
 def controls():
+    st.markdown('<h2 class="tape-group">Display</h2>', unsafe_allow_html=True)
+    st.caption("Theme")
     st.segmented_control("Theme", list(design.THEMES), format_func=design.THEMES.get, default=THEME, key="theme",
                          on_change=_save_theme, label_visibility="collapsed")
     c1, c2 = st.columns([1, 1.6])
@@ -178,11 +182,24 @@ def _watch_for_updates():
 _watch_for_updates()
 
 
-if not snaps:
+# Navigation is URL-driven, including alert links, so automatic reruns preserve the route.
+VIEWS = design.VIEWS
+view = design.resolve_view(st.query_params.get("view", "radar"))
+st.markdown(design.bottom_nav(view, THEME), unsafe_allow_html=True)
+
+if view == "more":
+    st.markdown("### More")
+    for group in design.MORE_GROUPS:
+        st.markdown(f'<h2 class="tape-group">{escape(group)}</h2>', unsafe_allow_html=True)
+        st.markdown(design.more_group(group, THEME), unsafe_allow_html=True)
     controls()
+    st.stop()
+
+
+if not snaps:
     st.info("The first scan is running in the background. This page fills in by itself when it lands "
             "(a few minutes for a long list)." if live.SWEEP_LOCK.locked()
-            else "No telemetry yet. Hit **⟳ Sweep now** to run the first scan.")
+            else "No telemetry yet. Open More, then tap Sweep now to run the first scan.")
     st.stop()
 
 if len(snaps) < len(tickers) and live.SWEEP_LOCK.locked():
@@ -234,23 +251,6 @@ st.markdown(ui.tiles([
     ("Buy zone", str(len(opps)), _names(opps) or "nothing in range", ui.OPP if opps else ui.MUTED),
     ("Earnings this week", str(len(soon)), _names(soon) or "quiet week", ui.WARN if soon else ui.MUTED),
 ]), unsafe_allow_html=True)
-
-controls()
-
-
-# ---------------------------------------------------------------- navigation (driven by the URL so links can jump)
-# Turbo and the Briefing are switched off (owner, 30 Oct): not on the tab bar and their addresses open the Radar. Their code is kept.
-VIEWS = {"radar": "◉ Radar", "target": "◎ Details", "market": "✦ S&P 500", "log": "≡ Log",
-         "fleet": "+ Fleet", "research": "⚗ Research", "paper": "◈ Paper", "quick": "⏱ Quick", "ai": "✧ Ask the AI", "rotate": "↻ Rotate"}
-HIDDEN_VIEWS = ("fleet", "research")          # off the tab bar for now (owner); both still open at ?view=fleet and ?view=research
-SHOWN_VIEWS = [v for v in VIEWS if v not in HIDDEN_VIEWS]
-current = st.query_params.get("view", "radar")
-current = current if current in VIEWS else "radar"
-picked = st.segmented_control("View", SHOWN_VIEWS, format_func=VIEWS.get,
-                              default=current if current in SHOWN_VIEWS else None, label_visibility="collapsed")
-view = picked or current
-if view != current:
-    st.query_params["view"] = view
 
 # ---------------------------------------------------------------- radar
 prevs = {s["ticker"]: store.previous_snapshot(s["ticker"]) for s in snaps}
@@ -720,6 +720,142 @@ def _candidates_block() -> None:
         st.caption("A log only: both accounts still trade any stock they qualify. \"S&P only\" stocks are outside your watchlist: no live data, no earnings check, and neither account can trade them.")
 
 
+def _crash_tap(acct, choice):
+    st.session_state[f"cr_{acct}_confirm"] = None
+    st.session_state[f"cr_{acct}_msg"] = crash.answer(store, acct, choice)["note"]
+
+
+def _crash_ask_stop(acct):
+    st.session_state[f"cr_{acct}_confirm"] = True
+
+
+def _crash_cancel(acct):
+    st.session_state[f"cr_{acct}_confirm"] = None
+
+
+def _crash_banner(acct):
+    """The market-crash flag and the way back (owner, 5 Nov): asks, never decides. Session state and on_click, so the reload keeps the tap."""
+    name = crash.ACCOUNTS[acct]
+    cs = crash.load(store, acct, datetime.now(NY))
+    state = cs["state"]
+    if st.session_state.get(f"cr_{acct}_msg"):
+        st.info(st.session_state[f"cr_{acct}_msg"])
+    if state == "asked":
+        st.error(f"**The market is crashing.** {cs.get('asked_reading', '')}. {name} has paused new entries since {cs['asked_at'][11:16]} New York time. Stop for today?")
+        if st.session_state.get(f"cr_{acct}_confirm"):
+            st.warning(f"Sell every open {name} trade now at the latest price and stop for today? This cannot be undone.")
+            c1, c2 = st.columns(2)
+            c1.button("Yes, sell all and stop", key=f"cr_{acct}_yes", on_click=_crash_tap, args=(acct, "stop"), type="primary", use_container_width=True)
+            c2.button("Cancel", key=f"cr_{acct}_no", on_click=_crash_cancel, args=(acct,), use_container_width=True)
+        else:
+            c1, c2 = st.columns(2)
+            c1.button("Stop for today (sell all)", key=f"cr_{acct}_stop", on_click=_crash_ask_stop, args=(acct,), type="primary", use_container_width=True)
+            c2.button("Keep going", key=f"cr_{acct}_keep", on_click=_crash_tap, args=(acct, "keep"), use_container_width=True)
+    elif state == "reopen_asked":
+        st.success(f"**The market is recovering.** {cs.get('reopen_reading', '')}. {name} is still stopped. Resume trading?")
+        c1, c2 = st.columns(2)
+        c1.button("Resume trading", key=f"cr_{acct}_resume", on_click=_crash_tap, args=(acct, "resume"), type="primary", use_container_width=True)
+        c2.button("Stay stopped", key=f"cr_{acct}_stay", on_click=_crash_tap, args=(acct, "stay"), use_container_width=True)
+    elif state in ("stopped", "stayed"):
+        st.warning(f"{name} is stopped for today. It asks again if the market recovers." if state == "stopped" else f"{name} is stopped for today.")
+        st.button("Sell anything still open", key=f"cr_{acct}_retry", on_click=_crash_tap, args=(acct, "stop"), use_container_width=True)
+    elif state in ("kept", "resumed"):
+        st.caption(f"{name}: you chose to keep trading through the fall." if state == "kept" else f"{name}: trading again after your resume.")
+
+
+def _pf_sell_ok(ticker, fn):
+    st.session_state["pf_prop_pending"] = None
+    st.session_state["pf_msg"] = fn(store, ticker)["note"]
+
+
+def _pf_ask(ticker):
+    st.session_state["pf_prop_pending"] = ticker
+
+
+def _pf_cancel():
+    st.session_state["pf_prop_pending"] = None
+
+
+def _pf_keep(ticker):
+    st.session_state["pf_msg"] = portfolio_acct.keep_it(store, ticker)["note"]
+
+
+def _pf_pick(ticker, do):
+    fn = portfolio_acct.approve_pick if do == "yes" else portfolio_acct.skip_pick
+    st.session_state["pf_msg"] = fn(store, ticker)["note"]
+
+
+def _pf_levels(rows):
+    """Apply the edits the owner made in the lines table: stop, profit exit, broker tick."""
+    edits = (st.session_state.get("pf_tbl") or {}).get("edited_rows", {})
+    msgs = []
+    for i, ch in edits.items():
+        t = rows[int(i)]["Stock"]
+        if "Stop" in ch or "Profit exit" in ch:
+            tgt = ch.get("Profit exit", None) if "Profit exit" in ch else None
+            r = portfolio_acct.set_levels(store, t, stop=ch.get("Stop"), target=tgt, clear_target=("Profit exit" in ch and not tgt), price=rows[int(i)]["Price now"])
+            msgs.append(r["note"])
+        if "Broker stop set" in ch:
+            portfolio_acct.set_broker_stop(store, t, bool(ch["Broker stop set"]))
+    st.session_state["pf_msg"] = " ".join(msgs) or "Saved."
+
+
+def _pf_close():
+    _id = st.session_state.get("pf_close_pick")
+    st.session_state["pf_msg"] = portfolio_acct.record_close(store, int(_id), float(st.session_state.get("pf_close_px") or 0))["note"] if _id else "Pick a sale first."
+
+
+def _pf_cash():
+    st.session_state["pf_msg"] = portfolio_acct.set_cash(store, float(st.session_state.get("pf_cash_set") or 0))["note"]
+
+
+def _pf_reseed(step):
+    if step == "ask":
+        st.session_state["pf_reseed"] = True
+    elif step == "cancel":
+        st.session_state["pf_reseed"] = None
+    else:
+        st.session_state["pf_reseed"] = None
+        _cash = float(st.session_state.get("pf_cash") or 0)
+        st.session_state["pf_msg"] = portfolio_acct.seed(store, cash=_cash or None)["note"]
+
+
+def _hand_sell_ask(prefix, ticker):
+    st.session_state[f"{prefix}_pending"] = ticker
+
+
+def _hand_sell_cancel(prefix):
+    st.session_state[f"{prefix}_pending"] = None
+
+
+def _hand_sell_do(prefix, ticker, fn):
+    st.session_state[f"{prefix}_pending"] = None
+    st.session_state[f"{prefix}_msg"] = fn(store, ticker)["note"]
+
+
+def _open_with_sell_buttons(prefix, top, opens, rest, fn, intro=None, css=None):
+    """The account page in pieces: a sell-by-hand button under each open trade, with a confirm step so a stray tap cannot sell. Works on
+    session state and on_click callbacks, so the page's auto-reload does not lose the tap."""
+    st.markdown(f"<style>{css or paper_view.CSS}</style><div class='pp'>{top}</div>", unsafe_allow_html=True)
+    st.markdown("<div class='pp'><div class='pp-c'><div class='pp-h'>Open now</div><div class='pp-m'>" + (intro or "If an entry looks like an obvious mistake, "
+                "sell it by hand under its card. It is kept apart from the rules' results, and the stock is not bought back today.") + "</div></div></div>",
+                unsafe_allow_html=True)
+    if st.session_state.get(f"{prefix}_msg"):
+        st.info(st.session_state[f"{prefix}_msg"])
+    if not opens:
+        st.caption("No open trades.")
+    for ticker, card in opens:
+        st.markdown(f"<div class='pp'><div class='pp-c' style='margin-bottom:4px'>{card}</div></div>", unsafe_allow_html=True)
+        if st.session_state.get(f"{prefix}_pending") == ticker:
+            st.warning(f"Sell {ticker} now at the latest price? This cannot be undone.")
+            c1, c2 = st.columns(2)
+            c1.button(f"Yes, sell {ticker}", key=f"{prefix}_yes_{ticker}", on_click=_hand_sell_do, args=(prefix, ticker, fn), type="primary", use_container_width=True)
+            c2.button("Cancel", key=f"{prefix}_no_{ticker}", on_click=_hand_sell_cancel, args=(prefix,), use_container_width=True)
+        else:
+            st.button(f"Sell {ticker} by hand", key=f"{prefix}_ask_{ticker}", on_click=_hand_sell_ask, args=(prefix, ticker), use_container_width=True)
+    st.markdown(f"<div class='pp'>{rest}</div>", unsafe_allow_html=True)
+
+
 if view == "paper":
     # the main Paper account and the whole-watchlist account were switched off on 30 Oct (owner): their stored history stays in the database
     st.markdown("**New call test account** · the technical-first call on every tracked stock")
@@ -731,7 +867,9 @@ if view == "paper":
             px, _, _live = ui._now(sn)
             if px == px and px is not None:
                 npx[t] = float(px)
-    st.markdown(paper_view.html(nst, npx), unsafe_allow_html=True)
+    _top, _opens, _rest = paper_view.parts(nst, npx)
+    _crash_banner("newcall")
+    _open_with_sell_buttons("nc_hand", _top, _opens, _rest, paper_newcall.sell_by_hand)
     def _force_sell():
         st.session_state["nc_force_msg"] = paper_newcall.force_sell_now(store)["note"]
     st.button("Force sell all New call trades now (test)", key="nc_force", on_click=_force_sell,
@@ -743,10 +881,77 @@ if view == "paper":
         st.markdown(whynot.html(whynot.study(store.latest_snapshots())), unsafe_allow_html=True)
     _candidates_block()
 
+if view == "portfolio":
+    try:
+        portfolio_acct.ensure_levels(store)
+    except Exception:
+        pass
+    pst = portfolio_acct.status(store)
+    ppx = portfolio_acct.prices_of(store, list(pst["book"]["positions"]))
+    _now_ny = datetime.now(NY)
+    _top, _opens, _rest = portfolio_view.parts(pst, ppx, _now_ny)
+    if st.session_state.get("pf_msg"):
+        st.info(st.session_state["pf_msg"])
+    st.markdown(f"<style>{portfolio_view.CSS}</style><div class='pp'>{_top}</div>", unsafe_allow_html=True)
+    for _t, _p in pst["book"]["proposals"].items():
+        st.markdown(f"<div class='pp'><div class='pf-prop'><b>{portfolio_view.link(_t)}: sell the rest?</b><br><small>{portfolio_view.escape(_p['why'])}. "
+                    f"It stays until you answer.</small></div></div>", unsafe_allow_html=True)
+        if st.session_state.get("pf_prop_pending") == _t:
+            st.warning(f"Sell all of {_t} now at the latest price? This cannot be undone.")
+            _c1, _c2 = st.columns(2)
+            _c1.button(f"Yes, sell {_t}", key=f"pf_yes_{_t}", on_click=_pf_sell_ok, args=(_t, portfolio_acct.sell_by_hand), type="primary", use_container_width=True)
+            _c2.button("Cancel", key=f"pf_no_{_t}", on_click=_pf_cancel, use_container_width=True)
+        else:
+            _c1, _c2 = st.columns(2)
+            _c1.button(f"Sell the rest of {_t}", key=f"pf_sell_{_t}", on_click=_pf_ask, args=(_t,), type="primary", use_container_width=True)
+            _c2.button("Keep it", key=f"pf_keep_{_t}", on_click=_pf_keep, args=(_t,), use_container_width=True)
+    for _t, _p in pst["book"].get("pick_props", {}).items():
+        _ask = (f"Sell {_p['shares']:g} of the trading slice" if _p["kind"] == "trim" else f"Buy a starter of {_p['shares']:g}" if _p["kind"] == "starter"
+                else f"Add a small piece, {_p['shares']:g} shares")
+        st.markdown(f"<div class='pp'><div class='pf-prop'><b>{portfolio_view.link(_t)}: {portfolio_view.escape(_ask)}?</b><br><small>{portfolio_view.escape(_p['why'])}. "
+                    f"Your core stays. It stays here until you answer.</small></div></div>", unsafe_allow_html=True)
+        _c1, _c2 = st.columns(2)
+        _c1.button("Approve", key=f"pf_ap_{_t}", on_click=_pf_pick, args=(_t, "yes"), type="primary", use_container_width=True)
+        _c2.button("Skip", key=f"pf_sk_{_t}", on_click=_pf_pick, args=(_t, "no"), use_container_width=True)
+    _open_with_sell_buttons("pf_hand", "", _opens, _rest, portfolio_acct.sell_by_hand, css=portfolio_view.CSS,
+                            intro="Each card is one of your holdings. The account never sells one to zero by itself; if you want out, tap the button under it.")
+    _rows = [{"Stock": _t, "Price now": ppx.get(_t), "Stop": _p.get("stop"), "Profit exit": _p.get("target"), "Broker stop set": bool(_p.get("broker_stop"))}
+             for _t, _p in pst["book"]["positions"].items()]
+    with st.expander("Stops and profit exits: edit a price, tick the broker box", expanded=False):
+        st.caption("Change the Stop or the Profit exit in any row, tick the broker box when the stop is set on your broker, then tap Save. A stop can be moved up (tightened), never down. Clear a profit exit to remove it.")
+        if _rows:
+            st.data_editor(_rows, key="pf_tbl", hide_index=True, use_container_width=True, disabled=["Stock", "Price now"],
+                           column_config={"Price now": st.column_config.NumberColumn(format="%.2f"), "Stop": st.column_config.NumberColumn(format="%.2f", step=0.01),
+                                          "Profit exit": st.column_config.NumberColumn(format="%.2f", step=0.01)})
+            st.button("Save", key="pf_tbl_save", on_click=_pf_levels, args=(_rows,), type="primary", use_container_width=True)
+    _sales = [a for a in reversed(pst["book"]["actions"]) if a["action"] in portfolio_acct.SALES][:15]
+    with st.expander("Record the price my broker really closed at"):
+        if _sales:
+            st.selectbox("Which sale", [a["id"] for a in _sales], key="pf_close_pick",
+                         format_func=lambda i: next(f"{a['ticker']} · {a['shares']:g} at {a['price']:.2f} · {a['time']}" for a in _sales if a["id"] == i))
+            st.number_input("Price I really closed at", min_value=0.0, step=0.01, key="pf_close_px")
+            st.button("Save my close", key="pf_close_btn", on_click=_pf_close, use_container_width=True)
+        else:
+            st.caption("No sales yet.")
+    _c1, _c2 = st.columns([2, 1])
+    _c1.number_input("Cash in the account (your real figure)", min_value=0.0, step=1.0, key="pf_cash_set")
+    _c2.button("Set cash", key="pf_cash_btn", on_click=_pf_cash, use_container_width=True)
+    if st.session_state.get("pf_reseed"):
+        st.warning("Read your holdings from the Sheet again and restart the fake account? Everything it did so far is cleared.")
+        st.number_input("Cash in the account (0 = use the 10% reserve)", min_value=0.0, step=1.0, key="pf_cash")
+        _c1, _c2 = st.columns(2)
+        _c1.button("Yes, restart from the Sheet", key="pf_re_yes", on_click=_pf_reseed, args=("do",), type="primary", use_container_width=True)
+        _c2.button("Cancel", key="pf_re_no", on_click=_pf_reseed, args=("cancel",), use_container_width=True)
+    else:
+        st.button("Restart from my Sheet (after I change my holdings)", key="pf_re_ask", on_click=_pf_reseed, args=("ask",), use_container_width=True)
+    st.caption("A fake account built from the holdings in your Sheet, at your cost, with a 10% cash reserve. Fills are simulated at the latest price, so they are approximate. Build: portfolio-4.")
+
 if view == "quick":
     qst = quick.status(store)
     qpx = quick.prices_of(store, [t["ticker"] for t in qst["book"]["trades"] if t["status"] == "OPEN"])
-    st.markdown(quick_view.html(qst, qpx), unsafe_allow_html=True)
+    _top, _opens, _rest = quick_view.parts(qst, qpx)
+    _crash_banner("quick")
+    _open_with_sell_buttons("qk_hand", _top, _opens, _rest, quick.sell_by_hand)
     st.caption("A test account with loose rules, to watch how it behaves. Fills are simulated at the latest price, so they are approximate. Build: quick-1.")
     _candidates_block()
 
@@ -798,6 +1003,103 @@ def _ai_answer(ticker: str):
                           help="Queue a fresh answer for this stock. Places no trade.")
 
 
+if view == "tests":
+    st.markdown("### Test list")
+    st.caption("Up to 10 breakout stocks a day, none of them on your watchlist, found from 17:45 Riyadh (09:45 New York), for you to try by hand. Watching only: no trade is placed. "
+               "The exit is fixed: sell at the target or the stop, whichever comes first, or at 22:50 Riyadh (15:50 New York). No hoping for more.")
+    tl = testlist.load(store)["days"]
+    days = sorted(tl, reverse=True)
+    if not days:
+        st.info("No list yet. The first stocks can appear at 17:45 Riyadh on a trading day.")
+    else:
+        day = st.selectbox("Day", days, key="tl_day")
+        rows = tl[day]["rows"]
+        if not rows:
+            st.info("No stock has passed yet today.")
+        else:
+            def _t(iso):
+                return datetime.fromisoformat(iso).astimezone(ZoneInfo("Asia/Riyadh")).strftime("%H:%M")
+            st.markdown(ui.table(["Stock", "Found (Riyadh)", "Agree", "Entry", "Stop", "Target", "Gain per $1 risked", "Now", "Result"], [
+                [r["ticker"], _t(r["found_at"]), "both" if r["tier"] == 1 else "Quick only", f'{r["entry"]:,.2f}', f'{r["stop"]:,.2f}', f'{r["target"]:,.2f}',
+                 f'${r["reward_risk"]:.1f}', "unknown" if r.get("last") is None else f'{r["last"]:,.2f}',
+                 "open" if r["status"] == "open" else f'{r["status"]} {r["result_pct"]:+.2f}%'] for r in rows]), unsafe_allow_html=True)
+            done = [r for r in rows if r["status"] != "open" and r.get("result_pct") is not None]
+            if done:
+                st.caption(f"{len(done)} finished: {sum(r['status'] == 'target' for r in done)} hit the target, {sum(r['status'] == 'stopped' for r in done)} hit the stop, "
+                           f"{sum(r['status'] == 'time' for r in done)} sold at the time exit. Average {sum(r['result_pct'] for r in done) / len(done):+.2f}%.")
+            st.caption('"Both" = Quick\'s breakout side and New call (BUY or ADD) agree. "Quick only" = Quick\'s breakout side, with New call not against it.')
+
+
+if view == "rising":
+    st.markdown("### Momentum")
+    st.caption("Stocks of the S&P 500 whose RSI is rising, MACD is improving and volume is building, read on 5-minute bars like a chart. "
+               "Starts at 09:35 New York (17:35 Riyadh) and updates every 5 minutes. Watching only: no trade, no signal. "
+               "Under each price: change since yesterday's close. Under RSI: change in 15 minutes, and the daily RSI. Under MACD: change since the last bar. "
+               "Arrows: change since the previous run.")
+    rs_state = rising.load_state(store)
+    day_list = rising.days(store)
+    if not rs_state:
+        st.info("No list yet. The first run is at 17:35 Riyadh on a trading day.")
+    else:
+        st.markdown(f"**Updated {rising_view.stamp(rs_state)}** · {rs_state['pass']} pass all three · {len(rs_state.get('watch', []))} on watch · "
+                    f"{rs_state['read']} stocks read")
+        if rs_state.get("early"):
+            st.caption("Early run: volume is still settling in the first minutes, so read it with care.")
+        if rs_state["rows"]:
+            st.markdown(rising_view.table(rs_state["rows"]), unsafe_allow_html=True)
+        else:
+            st.info("No stock passes all three tests right now.")
+        if rising_view.left_line(rs_state):
+            st.caption(rising_view.left_line(rs_state))
+        if rs_state.get("watch"):
+            with st.expander(f"Watch: two of three tests ({len(rs_state['watch'])})"):
+                st.caption("These pass two tests and miss one, named under each stock. They may join the list on the next run.")
+                st.markdown(rising_view.table(rs_state["watch"]), unsafe_allow_html=True)
+        if rs_state.get("unknown"):
+            st.caption(f"No data this run ({rs_state['unknown']}), left out and not scored: " + ", ".join(rs_state.get("nodata", [])[:30])
+                       + (" ..." if len(rs_state.get("nodata", [])) > 30 else ""))
+    if day_list:
+        with st.expander("Earlier runs"):
+            rs_day = st.selectbox("Day", sorted(day_list, reverse=True), key="rs_day")
+            ok_runs = [x for x in rising.runs(store, rs_day) if x.get("status") == "ok"]
+            if not ok_runs:
+                st.caption("No run on that day.")
+            else:
+                labels = {rising_view.stamp(x): x for x in reversed(ok_runs)}
+                x = labels[st.selectbox("Run", list(labels), key="rs_run")]
+                st.markdown(f"**{x['pass']} passed all three** · {len(x.get('watch', []))} on watch")
+                st.markdown(rising_view.table(x["rows"]) if x["rows"] else "No stock passed.", unsafe_allow_html=True)
+                if rising_view.left_line(x):
+                    st.caption(rising_view.left_line(x))
+                if x.get("watch"):
+                    st.caption("Watch: " + "; ".join(f"{w['t']} (missing: {w['miss']})" for w in x["watch"]))
+
+
+if view == "ext":
+    st.markdown("### Extended hours")
+    st.caption("Pre-market and after-hours trading of your tracked stocks, from Yahoo. Watching only: places no trade and changes no score. "
+               "Yahoo has no data between 20:00 and 04:00 New York.")
+    ext = extended.load(store)
+    if not ext:
+        st.info("No reading yet. It runs every 5 minutes in pre-market (12:00-17:30 Riyadh) and after-hours (00:00-04:00 Riyadh).")
+    else:
+        at = datetime.fromisoformat(ext["at"])
+        st.caption(f"{'Pre-market' if ext['session'] == 'PRE' else 'After-hours'} reading at {at:%H:%M} New York, "
+                   f"{at.astimezone(ZoneInfo('Asia/Riyadh')):%H:%M} Riyadh · {ext['active']} of {ext['read']} stocks have real trading, the rest are thin")
+        top = extended.ranked(ext)
+        if not top:
+            st.info("No tracked stock has real trading in this window yet.")
+        else:
+            def _vol(v):
+                return "unknown" if v is None else f"{v:.1f}% of a normal day"
+            st.markdown(ui.table(["Stock", "Move", "Price", "Traded ($)", "Volume", "Last trade (min ago)"], [
+                [t, f'{r["move"]:+.2f}%', f'{r["price"]:,.2f}',
+                 f'{r["dollars"] / 1e6:,.2f}M', _vol(r["pct_of_day"]), f'{r["age_min"]:.0f}'] for t, r in top[:40]]), unsafe_allow_html=True)
+        thin = sorted(t for t, r in ext["rows"].items() if r.get("thin"))
+        if thin:
+            st.caption("Thin (too little trading to trust): " + ", ".join(thin[:60]) + (" …" if len(thin) > 60 else ""))
+
+
 if view == "ai":
     st.markdown("### Ask the AI")
     st.caption("One stock, one saved opinion. Places no trade and changes no score.")
@@ -813,17 +1115,6 @@ if view == "ai":
     ai_ticker = (st.session_state.get("ai_ticker") or "").upper().strip()
     _ai_answer(ai_ticker)
 
-
-if view == "rotate":
-    st.markdown(ui.hero("Holdings rotation", "Testing only: it suggests, it never trades."), unsafe_allow_html=True)
-    rrows = rotation.build(store.latest_snapshots(), portfolio.holdings)
-    st.markdown(rotation.html(rrows), unsafe_allow_html=True)
-    try:
-        rotation.log(store, rrows, datetime.now(NY).date().isoformat())
-    except Exception:
-        pass
-    st.caption("A holding is flagged only when its New call turns EXIT. The money goes to a stock whose call is ADD or BUY, with strong fundamentals and technicals, "
-               "risk below High, and both scores above the holding's. Candidates come from the stocks the app tracks (watchlist and holdings). Otherwise: keep the cash.")
 
 if view == "log":
     alerts = [a for a in store.recent_alerts(150) if a["ticker"] in tickers or a["source"] == "S&P scan"]
