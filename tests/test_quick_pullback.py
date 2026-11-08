@@ -123,3 +123,33 @@ def test_at_most_three_entries_in_the_first_fifteen_minutes_then_the_pace_limit(
     book = multi(ENTRY, ["A", "B", "C", "D"], lambda t: snap(), start=start)
     assert len(book["trades"]) == 3
     assert any("opening limit" in x["reason"] for x in book["skipped"])
+
+
+def test_a_trade_saves_its_price_path_one_point_a_minute_from_entry_to_exit():
+    book = quick.new_book()
+    t0 = datetime(2026, 10, 26, 10, 0, 40, tzinfo=NY)
+    quick._enter(book, "AAA", "breakout", "t", 100.0, 100.0, 3.0, t0)
+    path = book["trades"][0]["path"]
+    assert path == [[datetime(2026, 10, 26, 10, 0, 0, tzinfo=NY).timestamp(), 100.0]]            # the entry, stamped with its minute
+    for i in range(1, 400):                                                                         # 20-second prices for over two hours
+        quick.step(book, {}, {"AAA": snap(atr=3.0)}, {"AAA": 100.0 + (i % 7) * 0.02}, t0 + timedelta(seconds=20 * i))
+        if book["trades"][0]["status"] == "CLOSED":
+            break
+    t = book["trades"][0]
+    p = t["path"]
+    assert all(b[0] > a[0] for a, b in zip(p, p[1:])) and all(len(x) == 2 for x in p)
+    assert len(p) <= quick.PATH_MAX and p[0][1] == 100.0
+    if t["status"] == "CLOSED":
+        assert p[-1][1] == t["exit"]
+
+
+def test_the_path_is_capped_and_thinned_and_dropped_for_old_closed_trades():
+    t = {"status": "OPEN"}
+    base = datetime(2026, 10, 26, 10, 0, tzinfo=NY)
+    for i in range(200):
+        quick._trace(t, 100 + i * 0.01, base + timedelta(minutes=i))
+    assert len(t["path"]) <= quick.PATH_MAX and t["path"][0][1] == 100.0 and t["path"][-1][1] == pytest.approx(101.99)
+    book = quick.new_book()
+    book["trades"] = [{"status": "CLOSED", "closed": "2026-10-20 15:00", "path": [[1, 2]]}, {"status": "CLOSED", "closed": "2026-10-26 15:00", "path": [[1, 2]]}]
+    quick._prune_paths(book, base)
+    assert "path" not in book["trades"][0] and book["trades"][1]["path"]
