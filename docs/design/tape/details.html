@@ -1,0 +1,151 @@
+<title>StockWatch Tape Details</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;800&family=Hanken+Grotesk:wght@400;500;700;800&display=swap">
+<style>
+/* Layout: a short intro, then three phone-sized mockups of the same Quick screen, one per direction, then what changes for the whole app. */
+:root{--bg:#eef0f3;--fg:#161b24;--soft:#586172;--line:#d5dae2;--card:#ffffff;--ok:#0f7a52;--bad:#c63a35}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#0f1319;--fg:#e8ecf2;--soft:#9aa5b6;--line:#262d39;--card:#171c25;--ok:#46c28d;--bad:#ff7a73;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0f1319;--fg:#e8ecf2;--soft:#9aa5b6;--line:#262d39;--card:#171c25;--ok:#46c28d;--bad:#ff7a73;color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 "Hanken Grotesk",system-ui,sans-serif;padding-block:28px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1180px;margin:0 auto}
+h1{font:800 28px/1.1 "Bricolage Grotesque",sans-serif;margin:0 0 8px;text-wrap:balance}
+.lead{max-width:62ch;color:var(--soft);margin:0 0 28px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:28px;align-items:start}
+.opt h2{font:700 17px/1.2 "Bricolage Grotesque",sans-serif;margin:0 0 4px}
+.opt p{margin:0 0 14px;color:var(--soft);max-width:44ch}
+.tag{display:inline-block;font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--soft);margin-bottom:10px}
+.phone{width:100%;max-width:372px;border-radius:30px;overflow:hidden;border:1px solid var(--line);box-shadow:0 12px 36px rgba(10,20,40,.14);margin-inline:auto 0}
+.opt{min-width:0}
+.sample{font-size:11px;opacity:.7}
+.notes{margin-top:36px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:20px}
+.notes div{border-top:2px solid var(--fg);padding-top:10px}
+.notes h3{margin:0 0 4px;font:700 15px "Bricolage Grotesque",sans-serif}
+.notes p{margin:0;color:var(--soft);max-width:48ch}
+
+/* ---------- A: Tape. Deep blue, one row per trade with its own price path ---------- */
+.a{--a-bg:#0d1a2c;--a-card:#14253c;--a-line:#233855;--a-ink:#f2efe8;--a-soft:#9fb0c8;--a-up:#4fd6a5;--a-dn:#ff8a7a;background:var(--a-bg);color:var(--a-ink);font-family:"Familjen Grotesk",system-ui,sans-serif;padding:18px 16px 14px}
+.a .top{display:flex;justify-content:space-between;align-items:baseline}
+.a .brand{font-weight:700;font-size:17px;letter-spacing:.01em}
+.a .st{font-size:12px;color:var(--a-soft)}
+.a .day{margin:16px 0 4px;font-size:13px;color:var(--a-soft)}
+.a .big{font-size:46px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+.a .big small{font-size:16px;font-weight:500;color:var(--a-soft);margin-left:8px}
+.a .up{color:var(--a-up)}.a .dn{color:var(--a-dn)}
+.a h4{margin:20px 0 8px;font-size:13px;font-weight:600;color:var(--a-soft)}
+.a .watch{background:var(--a-card);border-radius:14px;padding:12px;display:grid;gap:10px}
+.a .w{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-size:14px}
+.a .w b{font-weight:600}.a .w span{color:var(--a-soft);font-size:12.5px}
+.a .pill{align-self:center;font-size:12px;padding:3px 9px;border-radius:99px;border:1px solid var(--a-line);color:var(--a-soft);white-space:nowrap}
+.a .pill.go{border-color:var(--a-up);color:var(--a-up)}
+.a .tr{display:grid;grid-template-columns:54px 1fr auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--a-line)}
+.a .tr:first-of-type{border-top:0}
+.a .tr .n{font-weight:700;font-size:15px}
+.a .tr .m{font-size:12px;color:var(--a-soft)}
+.a .tr .r{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+.a svg{display:block;width:100%;height:34px}
+.a .nav{display:flex;justify-content:space-around;margin:16px -16px 0;padding:12px 8px 0;border-top:1px solid var(--a-line);font-size:12px;color:var(--a-soft)}
+.a .nav .on{color:var(--a-ink);font-weight:700}
+
+
+.a .sheet{margin:14px 0 0}
+.a .grp{font-size:12.5px;color:var(--a-soft);margin:14px 0 6px}
+.a .tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.a .tab{background:var(--a-card);border-radius:14px;padding:12px;min-height:62px}
+.a .tab b{display:block;font-size:15px}.a .tab span{font-size:12px;color:var(--a-soft)}
+.a .tab.hot b:after{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--a-dn);margin-left:7px}
+.a .tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.a .tile{background:var(--a-card);border-radius:14px;padding:11px 12px}
+.a .tile .l{font-size:12px;color:var(--a-soft)}.a .tile .v{font-size:22px;font-weight:700;line-height:1.2}.a .tile .m{font-size:12px;color:var(--a-soft)}
+.a .row2{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:11px 0;border-top:1px solid var(--a-line);align-items:center}
+.a .row2:first-of-type{border-top:0}
+.a .row2 b{font-size:15px}.a .row2 .m{font-size:12.5px;color:var(--a-soft)}
+.a .row2 .r{grid-row:1/3;grid-column:2;text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+.a .tagw{display:inline-block;font-size:12px;padding:2px 9px;border-radius:99px;border:1px solid var(--a-line);color:var(--a-soft)}
+.a .tagw.buy{border-color:var(--a-up);color:var(--a-up)}.a .tagw.act{border-color:var(--a-dn);color:var(--a-dn)}
+.a .nav .more{color:var(--a-ink)}
+.phone.a{min-height:640px}
+.cap{font-size:13px;color:var(--soft);margin:0 0 10px;max-width:42ch}
+
+.a .chips{display:flex;gap:6px;margin:12px 0 0;overflow-x:auto;padding-bottom:2px}
+.a .chips span{white-space:nowrap;font-size:13px;padding:5px 11px;border-radius:99px;border:1px solid var(--a-line);color:var(--a-soft)}
+.a .chips .on{background:var(--a-ink);color:var(--a-bg);border-color:var(--a-ink);font-weight:700}
+.a .px{display:flex;align-items:baseline;gap:10px;margin-top:14px}
+.a .px .p{font-size:40px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1}
+.a .call{margin-top:12px;background:var(--a-card);border-radius:16px;padding:14px;display:grid;grid-template-columns:1fr auto;gap:4px 10px;align-items:center;border-left:4px solid var(--a-dn)}
+.a .call .w{font-size:26px;font-weight:700;color:var(--a-dn);line-height:1}
+.a .call .s{font-size:12.5px;color:var(--a-soft)}
+.a .dots{display:flex;gap:5px;grid-row:1/3;grid-column:2}
+.a .dots i{width:11px;height:11px;border-radius:50%;background:var(--a-dn)}.a .dots i.o{background:transparent;border:1.5px solid var(--a-line)}
+.a .why{display:grid;gap:9px;margin-top:6px}
+.a .why div{display:grid;grid-template-columns:78px 1fr;gap:8px;font-size:14px}
+.a .why b{font-weight:600;color:var(--a-soft);font-size:13px}
+.a .ladder{background:var(--a-card);border-radius:16px;padding:10px 12px 8px}
+.a .ladder svg{height:auto;width:100%}
+.a .tb{width:100%;border-collapse:collapse;font-size:14px}
+.a .tb td{padding:8px 0;border-top:1px solid var(--a-line);vertical-align:top}
+.a .tb tr:first-child td{border-top:0}
+.a .tb td:last-child{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+.a .tb td small{display:block;font-weight:400;color:var(--a-soft);font-size:12px}
+.a .box{background:var(--a-card);border-radius:16px;padding:6px 14px}
+.a .bar2{height:6px;border-radius:3px;background:var(--a-line);position:relative;margin-top:6px}
+.a .bar2 i{position:absolute;top:-3px;width:3px;height:12px;border-radius:2px;background:var(--a-ink)}
+.a .bar2 b{position:absolute;left:30%;right:30%;top:0;bottom:0;background:var(--a-soft);opacity:.5;border-radius:3px}
+</style>
+
+<div class="wrap">
+<h1>Tape, the Details tab</h1>
+<p class="lead">One stock in full. The screen answers three things in order: what to do, where the price sits against its levels, and what the numbers behind it say. Sample numbers.</p>
+<div class="row">
+
+<div class="opt"><span class="tag">Top of the page</span><p class="cap">The call comes first, in one word, with how many of the five checks agree.</p>
+<div class="phone a">
+  <div class="top"><span class="brand">Details</span><span class="st">Market closed</span></div>
+  <div class="chips"><span>AMD</span><span class="on">MSFT</span><span>NVDA</span><span>AAPL</span><span>+ Search</span></div>
+  <div class="px"><span class="p">$409.00</span><span class="dn">−1.9% today</span></div>
+  <div class="day" style="margin-top:2px">Microsoft · you own 25 shares at $421.00 · <b class="dn">−$310</b></div>
+  <div class="call">
+    <div class="w">Act</div><div class="dots"><i></i><i></i><i></i><i></i><i class="o"></i></div>
+    <div class="s">4 of 5 checks agree: trim or exit</div>
+  </div>
+  <h4>Why, what changed, what to watch</h4>
+  <div class="why">
+    <div><b>Why</b><span>Closed below support at $412 for the second day.</span></div>
+    <div><b>Changed</b><span>Was Hold on Thursday.</span></div>
+    <div><b>Watch next</b><span>A close back above $412 cancels the exit.</span></div>
+  </div>
+  <h4>Price against its levels</h4>
+  <div class="ladder"><svg viewBox="0 0 320 262" role="img" aria-label="Price against support, resistance, chart exit and plan stop"><line x1="150" y1="8" x2="150" y2="254" stroke="#233855" stroke-width="2"/><line x1="132" y1="53" x2="168" y2="53" stroke="#9fb0c8" stroke-width="2.5"/><text x="34" y="58" font-size="13.5" fill="#9fb0c8">Resistance</text><text x="288" y="58" font-size="13.5" text-anchor="end" fill="#9fb0c8">$432.00</text><line x1="132" y1="93" x2="168" y2="93" stroke="#9fb0c8" stroke-width="2.5"/><text x="34" y="98" font-size="13.5" fill="#9fb0c8">Resistance</text><text x="288" y="98" font-size="13.5" text-anchor="end" fill="#9fb0c8">$424.00</text><line x1="132" y1="152" x2="168" y2="152" stroke="#ff8a7a" stroke-width="2.5" stroke-dasharray="4 3"/><text x="34" y="157" font-size="13.5" fill="#ff8a7a">Chart exit</text><text x="288" y="157" font-size="13.5" text-anchor="end" fill="#ff8a7a">$412.00</text><rect x="20" y="154" width="280" height="24" rx="12" fill="#233855"/><circle cx="150" cy="166" r="6" fill="#f2efe8"/><text x="34" y="171" font-size="14" font-weight="700" fill="#f2efe8">Price</text><text x="288" y="171" font-size="14" font-weight="700" text-anchor="end" fill="#f2efe8">$409.00</text><line x1="132" y1="206" x2="168" y2="206" stroke="#ff8a7a" stroke-width="2.5" stroke-dasharray="4 3"/><text x="34" y="211" font-size="13.5" fill="#ff8a7a">Plan stop</text><text x="288" y="211" font-size="13.5" text-anchor="end" fill="#ff8a7a">$401.00</text><line x1="132" y1="230" x2="168" y2="230" stroke="#4fd6a5" stroke-width="2.5"/><text x="34" y="235" font-size="13.5" fill="#4fd6a5">Support</text><text x="288" y="235" font-size="13.5" text-anchor="end" fill="#4fd6a5">$396.00</text><text x="150" y="258" font-size="11" text-anchor="middle" fill="#9fb0c8">higher</text></svg></div>
+  <div class="nav"><span>Radar</span><span>Portfolio</span><span>Quick</span><span>Momentum</span><span class="on">More</span></div>
+</div></div>
+
+<div class="opt"><span class="tag">Further down</span><p class="cap">Plan, chart numbers and company numbers as short tables. Only the figures that change a decision.</p>
+<div class="phone a">
+  <div class="top"><span class="brand">MSFT</span><span class="st">$409.00</span></div>
+  <h4>Your plan</h4>
+  <div class="box"><table class="tb">
+    <tr><td>Exit if a daily close is under<small>The chart's warning</small></td><td>$412.00</td></tr>
+    <tr><td>Hard stop<small>Protects against a straight fall</small></td><td class="dn">$401.00</td></tr>
+    <tr><td>First target</td><td class="up">$424.00</td></tr>
+    <tr><td>Reward against risk</td><td>1.9 to 1</td></tr>
+  </table></div>
+  <h4>Chart</h4>
+  <div class="box"><table class="tb">
+    <tr><td>Trend</td><td class="dn">Breaking down</td></tr>
+    <tr><td>RSI (daily)<div class="bar2"><b></b><i style="left:34%"></i></div></td><td>41</td></tr>
+    <tr><td>Volume today</td><td>1.4x normal</td></tr>
+    <tr><td>Daily range (ATR)</td><td>$7.40</td></tr>
+  </table></div>
+  <h4>Company</h4>
+  <div class="box"><table class="tb">
+    <tr><td>Quality score</td><td>71 · Hold</td></tr>
+    <tr><td>Next earnings</td><td>In 18 days</td></tr>
+    <tr><td>Revenue growth</td><td class="up">+13%</td></tr>
+    <tr><td>Debt against cash</td><td>Cash is higher</td></tr>
+  </table></div>
+  <h4>News, last 48 hours</h4>
+  <div class="box"><table class="tb"><tr><td>No critical news<small>Checked Yahoo, Google News, SEC, Finnhub</small></td><td></td></tr></table></div>
+  <div class="nav"><span>Radar</span><span>Portfolio</span><span>Quick</span><span>Momentum</span><span class="on">More</span></div>
+</div></div>
+
+</div></div>
