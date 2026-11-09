@@ -112,3 +112,14 @@ def test_radar_retains_holdings_before_watchlist_even_when_watchlist_is_urgent(m
     monkeypatch.setattr(ts.ui,'_ring_sort',lambda s:0 if s['ticker']=='FICTW' else 2)
     h=ts.radar_rows([watch,held])
     assert h.index('FICTH')<h.index('FICTW')
+
+
+def test_radar_rows_show_the_price_the_day_change_and_after_hours_or_unknown(monkeypatch):
+    monkeypatch.setattr(ts.dayboard,'assess',lambda s:{'word':'CALM','sell_side':False,'sure':None,'why':'unknown','held_buy':False,'checks':[]})
+    monkeypatch.setattr(ts.dayboard,'_why',lambda *a:'Saved explanation')
+    monkeypatch.setattr(ts.ui,'price_parts',lambda s:{'price':32.5,'day':0.071,'live':'','ext':('AH',32.55,0.008),'note':''})
+    h=ts.radar_rows([snap()])
+    assert '$32.50' in h and '+7.1%' in h and 'AH $32.55' in h and '+0.8%' in h
+    monkeypatch.setattr(ts.ui,'price_parts',lambda s:{'price':None,'day':None,'live':'','ext':None,'note':'AH no trades yet'})
+    h=ts.radar_rows([snap()])
+    assert 'unknown' in h and 'n/a' in h and 'AH no trades yet' in h and '$0.00' not in h

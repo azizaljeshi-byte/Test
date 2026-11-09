@@ -27,7 +27,7 @@ CSS='''
 .ts-table table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px}.ts-table td{padding:9px 0;border-top:1px solid var(--dz-line);vertical-align:top;overflow-wrap:anywhere}.ts-table tr:first-child td{border:0}.ts-table td:last-child{text-align:right;font-weight:600;width:48%}
 .ts-table small{display:block;font-weight:400}.ts .sh-r{font-size:13px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:9px 0;border-bottom:1px solid var(--dz-line)}.ts .sh-r small{grid-column:1/-1}
 .ts .sh-bad{color:var(--dz-loss)}.ts .sh-good{color:var(--dz-gain)}.ts .sh-mid{color:var(--dz-watch)}.ts .sh-l{font-size:12px;color:var(--dz-soft)}
-.ts-foot{margin:12px 0;color:var(--dz-soft);font-size:12px}.ts-news .sh-n{border-top:1px solid var(--dz-line);padding:10px 0;font-size:13px}.ts-news a{color:var(--dz-ink)}.ts-news small{display:block}
+.ts-px{grid-column:1/-1;font-size:14px}.ts-px small{margin:0 2px 0 6px}.ts-foot{margin:12px 0;color:var(--dz-soft);font-size:12px}.ts-news .sh-n{border-top:1px solid var(--dz-line);padding:10px 0;font-size:13px}.ts-news a{color:var(--dz-ink)}.ts-news small{display:block}
 '''
 
 
@@ -67,9 +67,15 @@ def radar_rows(snaps,changed=None):
         why=dayboard._why(snap,a)
         _,_,_,clash=stockhead.calls(snap)
         old=(changed or {}).get(snap['ticker'])
+        pp=ui.price_parts(snap)
+        px=f'<b>{money(pp.get("price"))}</b> {design.change_pill(pp.get("day"))}'
+        if pp.get('ext'):
+            lab,eprice,echg=pp['ext'];px+=f' <small>{escape(lab)} {money(eprice)}</small> {design.change_pill(echg)}'
+        elif pp.get('note'):
+            px+=f' <small>{escape(pp["note"])}</small>'
         note=f' · was {old}' if old else ''
         rows.append(f'<div class="ts-stock dz-{cls}"><a href="{stock_link(snap["ticker"])}" target="_self">{escape(snap["ticker"])}</a>'
-                    f'<span class="ts-tag">{label}</span><p>{escape(why or a.get("why") or "No new reading.")}{escape(note)}</p>'
+                    f'<span class="ts-tag">{label}</span><div class="ts-px">{px}</div><p>{escape(why or a.get("why") or "No new reading.")}{escape(note)}</p>'
                     +(f'<p>{escape(clash)}</p>' if clash else '')+
                     f'<details><summary>Current calls and checks</summary>{ui.call_chips(snap)}{dayboard._sure_html(a)}</details></div>')
     return f'<style>{CSS}</style><div class="ts">'+(''.join(rows) or '<small>No stocks match this view.</small>')+'</div>'
