@@ -228,7 +228,7 @@ class YahooProvider:
         return out
 
     @_yahoo
-    def quote(self, ticker: str) -> dict:
+    def _bar_quote(self, ticker: str) -> dict:
         """Live price from minute bars that include pre/post-market trading.
 
         During regular hours: the latest trade and today's change. Outside them: the latest
@@ -247,6 +247,38 @@ class YahooProvider:
                 errors.append(f"{interval} bars: {e}")
         return _quote_from_bars(None, None, errors)
 
+    def quote(self, ticker: str) -> dict:
+        return self._patch_stale_ext(ticker, self._bar_quote(ticker))
+
+    def bulk_quotes(self, tickers: list[str]) -> dict[str, dict]:
+        out = self._bar_bulk_quotes(tickers)
+        budget = EXT_INFO_MAX
+        for t, q in out.items():
+            if budget and _needs_ext_patch(q):
+                budget -= 1
+                out[t] = self._patch_stale_ext(t, q)
+        return out
+
+    def _patch_stale_ext(self, ticker: str, q: dict) -> dict:
+        """Yahoo's minute chart can miss a thin stock's pre-market or after-hours trade that its quote page shows. For a stock whose bars have no trade
+        in the current extended session, ask the quote fields once (cached) and use them when they are from today's session. Never raises."""
+        if not _needs_ext_patch(q):
+            return q
+        info = _ext_info_cache.get(ticker)
+        if info is None or time.time() - info[0] > EXT_INFO_TTL:
+            try:
+                raw = self._raw_ext(ticker)
+            except Exception as e:
+                log.info("extended-hours quote fields failed for %s: %s", ticker, e)
+                raw = {}
+            _ext_info_cache[ticker] = info = (time.time(), raw)
+        return _apply_ext_info(q, info[1])
+
+    @_yahoo
+    def _raw_ext(self, ticker: str) -> dict:
+        info = self._yf.Ticker(ticker).info or {}
+        return {k: info.get(k) for k in ("preMarketPrice", "preMarketTime", "postMarketPrice", "postMarketTime", "regularMarketPrice")}
+
     @_yahoo
     def intraday(self, ticker: str) -> pd.DataFrame:
         """Today's (and yesterday's) 1-minute bars including pre/post-market, for momentum readouts."""
@@ -256,7 +288,7 @@ class YahooProvider:
         return bars
 
     @_yahoo
-    def bulk_quotes(self, tickers: list[str]) -> dict[str, dict]:
+    def _bar_bulk_quotes(self, tickers: list[str]) -> dict[str, dict]:
         """Quotes for many tickers from one download, so a refresh takes seconds, not minutes."""
         df = self._yf.download(list(tickers), period="5d", interval="1m", prepost=True, group_by="ticker",
                                threads=True, progress=False, auto_adjust=False)
@@ -557,6 +589,31 @@ def _quote_from_bars(bars: pd.DataFrame | None, source: str | None, errors: list
             errors = errors + ["no extended-hours trades since the last close"]
     out["error"] = "; ".join(errors) or None
     return out
+
+
+EXT_INFO_TTL = 90          # seconds a stock's extended-hours quote fields are reused
+EXT_INFO_MAX = 12          # most stocks asked per quote refresh (the rest wait for the next one)
+_ext_info_cache: dict = {}
+
+
+def _needs_ext_patch(q: dict) -> bool:
+    """True when it is pre-market or after hours and the bars carry no trade from this session (none at all, or only last night's)."""
+    return q.get("market_state") in ("PRE", "POST") and (q.get("ext_price") is None or bool(q.get("ext_stale")))
+
+
+def _apply_ext_info(q: dict, raw: dict, now: datetime | None = None) -> dict:
+    """Fill the extended-hours price from Yahoo's quote fields when they are a real trade from today's New York session. Otherwise q is unchanged."""
+    now = (now or datetime.now(timezone.utc)).astimezone(NY)
+    sess = "pre" if q.get("market_state") == "PRE" else "post"
+    price, ts = _f(raw.get(f"{sess}MarketPrice")), raw.get(f"{sess}MarketTime")
+    ref = q.get("regular_price") or _f(raw.get("regularMarketPrice"))
+    if not price or price <= 0 or not ref or not isinstance(ts, (int, float)) or isinstance(ts, bool):
+        return q
+    when = datetime.fromtimestamp(ts, tz=timezone.utc)
+    if when.astimezone(NY).date() != now.date() or when > now + timedelta(minutes=5):
+        return q
+    return {**q, "ext_session": sess, "ext_price": float(price), "ext_change": float(price) / float(ref) - 1, "ext_time": when,
+            "ext_stale": False, "source": "quote fields", "error": None}
 
 
 def _f(v) -> float | None:
