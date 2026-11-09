@@ -36,7 +36,7 @@ def test_coincident_and_missing_levels_do_not_get_invented_or_drawn_at_zero():
 
 def test_detail_uses_existing_levels_and_keeps_variable_agreement_denominator(monkeypatch):
     s=snap();before=copy.deepcopy(s)
-    monkeypatch.setattr(ts.dayboard,'assess',lambda s:{'word':'ACT','sell_side':True,'sure':(4,6),'why':None,'held_buy':False})
+    monkeypatch.setattr(ts.simplecall,'of',lambda s:{'word':'Sell','group':'sell','cls':'act','why':'w','sure':(4,6),'fund':50.0,'fund_word':'Fair','line':316.6})
     h=ts.detail_header(s)
     assert '4 of 6 checks agree' in h and h.count('<i')==6
     ladder=ts.detail_ladder(s)
@@ -52,22 +52,32 @@ def test_unknown_fundamentals_never_become_zero_or_crash():
     assert 'Plan stop' in h and 'Your plan' in h and 'Chart' in h and 'Company' in h and 'News' in h
 
 
-def test_escaped_navigation_and_notes_and_reconciled_clash_warning(monkeypatch):
+def test_escaped_navigation_and_notes_and_only_one_call_is_shown():
     s=snap();s['ticker']='FICT<"&';s['payload']['name']='<script>name</script>'
-    monkeypatch.setattr(ts.dayboard,'assess',lambda s:{'word':'ACT','sell_side':True,'sure':None,'why':'unknown','held_buy':False})
-    s['payload']['technical']['one_call']['call']='BUY'
+    s['payload']['technical']['one_call']['call']='ADD'
     h=ts.detail_header(s)
-    assert 'The two calls disagree' in h and 'Do not buy' in h
     assert '<script>' not in h and '&lt;script&gt;' in h
+    assert 'ADD' in h and 'disagree' not in h and 'ACT' not in h and 'New call' not in h
     assert 't=FICT%3C%22%26' in ts.chips([s['ticker']],s['ticker'])
 
 
-def test_radar_preserves_unknown_and_watch_instead_of_labelling_everything_hold(monkeypatch):
-    for word,label in [('ACT','Act'),('BUY','Buy zone'),('CALM','Hold'),('WATCH','Watch'),('UNCLEAR','Unclear')]:
-        s=snap()
-        monkeypatch.setattr(ts.dayboard,'assess',lambda s,w=word:{'word':w,'sell_side':False,'sure':None,'why':'unknown','held_buy':False,'checks':[]})
-        monkeypatch.setattr(ts.dayboard,'_why',lambda *a:'Saved explanation')
+def test_radar_shows_the_one_call_in_plain_words_and_unknown_stays_unknown():
+    for call,label in [('EXIT','Sell'),('AVOID','Avoid'),('ON THE LINE','On the line'),('WAIT FOR TURN','Watch'),('BUY','Buy'),('ADD','Add'),('HOLD','Hold'),('WAIT','Wait')]:
+        s=snap();s['payload']['technical']['one_call']['call']=call
         assert f'>{label}</span>' in ts.radar_rows([s])
+    s=snap();s['payload']['technical']['one_call']={'known':False,'call':'UNKNOWN','why':'not enough history'}
+    h=ts.radar_rows([s])
+    assert '>No call</span>' in h and 'not enough history' in h
+
+
+def test_the_fundamentals_number_is_guidance_and_never_changes_the_call():
+    lo=snap();lo['fundamental_score']=10.0
+    hi=snap();hi['fundamental_score']=95.0
+    a,b=ts.simplecall.of(lo),ts.simplecall.of(hi)
+    assert a['word']==b['word'] and a['why']==b['why']
+    assert '10/100' in ts.radar_rows([lo]) and '95/100' in ts.radar_rows([hi]) and 'guidance only' in ts.radar_rows([hi])
+    un=snap();un['fundamental_score']=None
+    assert 'Fundamentals: unknown' in ts.radar_rows([un]) and '0/100' not in ts.radar_rows([un])
 
 
 def test_portfolio_total_with_missing_quote_is_unknown_and_critical_warnings_remain():
@@ -83,11 +93,12 @@ def test_portfolio_total_with_missing_quote_is_unknown_and_critical_warnings_rem
 
 def test_compact_brief_preserves_all_saved_warnings_and_escapes_text():
     from stockwatch import details
-    brief={'headline':'<script>headline</script>','why':['Risk: saved warning','Opportunity: saved upside'],
+    brief={'headline':'X needs attention now','why':['Risk: saved warning','Opportunity: <script>x</script>'],
            'changed':['First scan'],'watch':['A daily close below the exit line']}
     h=details.tape_brief_html(brief)
-    assert all(text in h for text in [*brief['why'],*brief['changed'],*brief['watch']])
+    assert all(text in h for text in [*brief['why'][:1],*brief['changed'],*brief['watch']])
     assert '<script>' not in h and '&lt;script&gt;' in h
+    assert 'needs attention now' not in h                      # one call on the page: the old headline is not repeated
     assert 'WHY' in h and 'CHANGED' in h and 'WATCH NEXT' in h
 
 
@@ -115,8 +126,6 @@ def test_radar_retains_holdings_before_watchlist_even_when_watchlist_is_urgent(m
 
 
 def test_radar_rows_show_the_price_the_day_change_and_after_hours_or_unknown(monkeypatch):
-    monkeypatch.setattr(ts.dayboard,'assess',lambda s:{'word':'CALM','sell_side':False,'sure':None,'why':'unknown','held_buy':False,'checks':[]})
-    monkeypatch.setattr(ts.dayboard,'_why',lambda *a:'Saved explanation')
     monkeypatch.setattr(ts.ui,'price_parts',lambda s:{'price':32.5,'day':0.071,'live':'','ext':('AH',32.55,0.008),'note':''})
     h=ts.radar_rows([snap()])
     assert '$32.50' in h and '+7.1%' in h and 'AH $32.55' in h and '+0.8%' in h

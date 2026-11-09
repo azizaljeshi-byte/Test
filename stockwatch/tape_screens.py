@@ -8,7 +8,7 @@ from html import escape
 import math
 from urllib.parse import quote
 
-from . import dayboard, design, stockhead, tradelevels, ui
+from . import dayboard, design, simplecall, stockhead, tradelevels, ui
 
 CSS='''
 .ts{max-width:800px;margin:auto;color:var(--dz-ink);font:15px/1.5 var(--sans);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
@@ -60,37 +60,30 @@ def radar_summary(snaps,market,need,buy,earnings,market_note=""):
 def radar_rows(snaps,changed=None):
     rows=[]
     for snap in sorted(snaps,key=lambda s:(bool(s["payload"].get("watchlist")),ui._ring_sort(s))):
-        a=dayboard.assess(snap)
-        # Keep the same reconciled assessment and its source text, including WATCH/UNCLEAR.
-        label={'ACT':'Act','BUY':'Buy zone','CALM':'Hold','WATCH':'Watch','UNCLEAR':'Unclear'}[a['word']]
-        cls=dayboard.SPOT[a['word']]
-        why=dayboard._why(snap,a)
-        _,_,_,clash=stockhead.calls(snap)
-        old=(changed or {}).get(snap['ticker'])
+        c=simplecall.of(snap)
         pp=ui.price_parts(snap)
         px=f'<b>{money(pp.get("price"))}</b> {design.change_pill(pp.get("day"))}'
         if pp.get('ext'):
             lab,eprice,echg=pp['ext'];px+=f' <small>{escape(lab)} {money(eprice)}</small> {design.change_pill(echg)}'
         elif pp.get('note'):
             px+=f' <small>{escape(pp["note"])}</small>'
-        note=f' · was {old}' if old else ''
-        rows.append(f'<div class="ts-stock dz-{cls}"><a href="{stock_link(snap["ticker"])}" target="_self">{escape(snap["ticker"])}</a>'
-                    f'<span class="ts-tag">{label}</span><div class="ts-px">{px}</div><p>{escape(why or a.get("why") or "No new reading.")}{escape(note)}</p>'
-                    +(f'<p>{escape(clash)}</p>' if clash else '')+
-                    f'<details><summary>Current calls and checks</summary>{ui.call_chips(snap)}{dayboard._sure_html(a)}</details></div>')
+        rows.append(f'<div class="ts-stock dz-{c["cls"]}"><a href="{stock_link(snap["ticker"])}" target="_self">{escape(snap["ticker"])}</a>'
+                    f'<span class="ts-tag">{escape(c["word"])}</span><div class="ts-px">{px}</div><p>{escape(c["why"] or "No new reading.")}</p>'
+                    f'<p>{escape(simplecall.fund_line(c))}</p>'
+                    f'<details><summary>How sure: the checks</summary>{dayboard._sure_html({"checks":dayboard.checks(snap),"sell_side":c["group"]=="sell","sure":c["sure"],"change":None})}</details></div>')
     return f'<style>{CSS}</style><div class="ts">'+(''.join(rows) or '<small>No stocks match this view.</small>')+'</div>'
 
 
 def detail_header(snap):
     p=snap['payload'];pp=ui.price_parts(snap)
-    text,cls,nc,clash=stockhead.calls(snap);a=dayboard.assess(snap)
-    dots='';sure=a.get('sure')
+    c=simplecall.of(snap)
+    dots='';sure=c.get('sure')
     if sure:
         agree,known=sure
         dots='<div class="ts-dots" aria-hidden="true">'+''.join('<i'+(' class="on"' if i<agree else '')+'></i>' for i in range(known))+'</div>'
         certainty=f'{agree} of {known} checks agree'
     else:
-        certainty=a.get('why') or 'Checks unknown'
+        certainty='Checks not counted for this call'
     sub=str(p.get('name') or snap['ticker'])+' · '+('watching' if p.get('watchlist') else 'you own it')
     px=money(pp.get('price'))
     extra=''
@@ -99,10 +92,11 @@ def detail_header(snap):
     elif pp.get('note'):
         extra=f'<small>{escape(pp["note"])}</small>'
     word,_,why=stockhead.reading(snap)
+    line=f'Exit line {c["line"]:,.2f}' if c.get('line') else 'Exit line unknown'
     return (f'<style>{CSS}</style><div class="ts"><div class="ts-price">{px}</div>{design.change_pill(pp.get("day"))}{extra}'
-            f'<div><small>{escape(sub)}</small></div><div class="ts-call dz-{cls}"><b>{escape(text)}</b>{dots}<small>{escape(certainty)}</small></div>'
-            +(f'<div class="ts-warning">{escape(clash)}</div>' if clash else '')+
-            f'<small>{escape(word)} · {escape(why)}</small><div class="ts-foot">New call: {escape(nc or "unknown")}</div></div>')
+            f'<div><small>{escape(sub)}</small></div><div class="ts-call dz-{c["cls"]}"><b>{escape(c["word"].upper())}</b>{dots}<small>{escape(certainty)}</small></div>'
+            f'<small>{escape(c["why"])}</small><div class="ts-foot">{escape(line)} · {escape(simplecall.fund_line(c))}</div>'
+            f'<small>{escape(word)} · {escape(why)}</small></div>')
 
 
 def detail_ladder(snap):

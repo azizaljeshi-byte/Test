@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import tape_screens, crash, portfolio as portfolio_acct, portfolio_view, extended, testlist, rising, rising_view, ask_ai, ask_ai_view, candidates, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import simplecall, tape_screens, crash, portfolio as portfolio_acct, portfolio_view, extended, testlist, rising, rising_view, ask_ai, ask_ai_view, candidates, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -223,8 +223,8 @@ except Exception:
     market_tile = (("Market", "LOADING", "fetching SPY prices in the background", ui.MUTED) if bench is None
                    else ("Market", "NO SIGNAL", "benchmark unavailable", ui.MUTED))
 
-urgent = [s for s in snaps if any(x["kind"] == "risk" and x["severity"] >= 3 for x in s["payload"]["signals"])]
-opps = [s for s in snaps if s["verdict"] in ("OPPORTUNITY - ADD", "BUY SETUP")]
+urgent = [s for s in snaps if simplecall.of(s)["word"] == "Sell"]          # the one call: a holding whose close is under its exit line and band
+opps = [s for s in snaps if simplecall.of(s)["group"] == "buy"]
 soon = [s for s in snaps if (s["payload"].get("events") or {}).get("days_to_earnings") is not None
         and s["payload"]["events"]["days_to_earnings"] <= 7]
 held = [s for s in snaps if not s["payload"]["watchlist"]]
@@ -270,11 +270,11 @@ def verdict_changes(snaps: list[dict]) -> dict[str, str]:
 @st.fragment
 def radar_list(snaps: list[dict], brief: str):
     """Radar scope, brief, filter + list. A fragment, so tapping a filter redraws only this part of the page."""
-    # filters follow the verdict shown on each card, so every card in a filter shows that status
+    # filters follow the one call shown on each card, so every card in a filter shows that status
     groups = {
-        "Risk": lambda x: x["verdict"] in ("RISK - REVIEW", "TRIM / REVIEW", "AVOID"),
-        "Opportunity": lambda x: x["verdict"] in ("OPPORTUNITY - ADD", "BUY SETUP"),
-        "Hold": lambda x: x["verdict"] in ("HOLD", "STRONG HOLD", "WATCH"),
+        "Risk": lambda x: simplecall.of(x)["group"] == "sell",
+        "Opportunity": lambda x: simplecall.of(x)["group"] == "buy",
+        "Hold": lambda x: simplecall.of(x)["group"] in ("hold", "watch"),
         "Held": lambda x: not x["payload"]["watchlist"],
         "Watch": lambda x: x["payload"]["watchlist"],
     }

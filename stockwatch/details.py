@@ -138,13 +138,13 @@ CSS = """
 
 
 def tape_brief_html(brief: dict) -> str:
-    """Same saved briefing lines in three compact rows; no messages discarded."""
+    """Same saved briefing lines in three compact rows. The old one-line headline ("needs attention now") is left out: the page shows one call, from simplecall."""
     blocks=[]
     for label,key in (('WHY','why'),('CHANGED','changed'),('WATCH NEXT','watch')):
         items=brief.get(key) or []
         lines=''.join(f'<p class="dz-k-{line_kind(key,str(text))}">{escape(str(text))}</p>' for text in items)
         blocks.append(f'<div class="ts-brief-row"><b>{label}</b><div>{lines or "<p>No saved reading.</p>"}</div></div>')
-    return (f'<style>{TAPE_CSS}</style><div class="ts"><div class="ts-foot">{escape(str(brief.get("headline") or "Briefing unknown"))}</div>'
+    return (f'<style>{TAPE_CSS}</style><div class="ts">'
             f'<div class="ts-brief">{"".join(blocks)}</div></div>')
 
 
