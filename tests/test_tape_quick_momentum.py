@@ -122,3 +122,17 @@ def test_current_owned_trade_watch_failure_is_visible_and_all_skip_reasons_remai
                                                   'FICTE':'<script>no price</script>'}}}, {},NOW)
     assert 'open trade is NOT being watched' in top
     assert 'FICTE' in rest and '&lt;script&gt;' in rest and '<script>' not in rest
+
+
+def test_quick_shows_the_account_money_and_shares_on_open_cards():
+    from datetime import datetime
+    from stockwatch import quick_view
+    book={'start':50000.,'cash':45025.,'positions':{'FICTA':{'shares':100.,'entry':50.,'stop':48.}},
+          'trades':[{'ticker':'FICTA','status':'OPEN','entry':50.,'stop0':48.,'opened':'2026-11-09 10:00'},
+                    {'ticker':'FICTB','status':'CLOSED','result':25.,'pct':1.,'closed':'2026-11-08 12:00'}],'skipped':[],'watch':{}}
+    top,opens,_=quick_view.parts({'book':book,'state':{}},{'FICTA':55.},datetime(2026,11,9,12))
+    for text in ('Total amount','$50,525.00','Cash at hand','$45,025.00','Cash used','$5,000.00','Realized profit','+$25.00','Unrealized profit','+$500.00','1 closed trade'):
+        assert text in top
+    assert 'Shares 100' in opens[0][1] and 'Amount $5,500.00' in opens[0][1]
+    top,opens,_=quick_view.parts({'book':book,'state':{}},{},datetime(2026,11,9,12))     # no price: unknown, never 0 or cost
+    assert top.count('unknown')>=3 and '$50,525.00' not in top and 'Amount unknown' in opens[0][1]

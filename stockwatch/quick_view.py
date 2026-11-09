@@ -21,7 +21,8 @@ CSS = '''
 .tq-row.no-path{grid-template-columns:minmax(0,1fr) auto}.tq-row a,.tq-w a{color:var(--dz-ink);text-decoration:none;font-weight:700}
 .tq-row small{display:block}.tq-result{text-align:right;white-space:nowrap;font-weight:600}.tq-reason,.tq-levels{grid-column:1/-1;font-size:12px;color:var(--dz-soft)}
 .tq-row svg{display:block;width:100%;height:40px}.tq-foot{margin-top:16px;padding-top:12px;border-top:1px solid var(--dz-line);color:var(--dz-soft);font-size:12px}
-.tq-note{padding:10px 0;color:var(--dz-soft);font-size:13px}.tq details{margin-top:12px}.tq summary{cursor:pointer;min-height:44px}
+.tq-acct{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0}.tq-acct>div{background:var(--dz-surface);border:1px solid var(--dz-line);border-radius:14px;padding:10px 12px}
+.tq-acct b{display:block;font-size:18px;font-weight:700}.tq-note{padding:10px 0;color:var(--dz-soft);font-size:13px}.tq details{margin-top:12px}.tq summary{cursor:pointer;min-height:44px}
 '''
 
 
@@ -141,6 +142,34 @@ def price_path(trade: dict) -> str:
             f'<polyline fill="none" stroke="var(--dz-soft)" stroke-width="1.6" points="{coords}"/>{marks}</svg>')
 
 
+def account_html(book: dict, prices: dict, closed: int) -> str:
+    """The fake account in dollars: total, profit, cash at hand, cash used, realized, unrealized. A holding with no price makes the
+    total, profit and unrealized unknown (never 0 and never cost-as-price)."""
+    positions=book.get('positions') or {}
+    start,cash=_num(book.get('start')),_num(book.get('cash'))
+    if start is None or cash is None:
+        return '<div class="tq-note">Account numbers unknown: the saved account is incomplete.</div>'
+    px={t:_num(prices.get(t)) for t in positions}
+    unpriced=[t for t,v in px.items() if v is None or v<=0]
+    used=sum((_num(p.get('shares')) or 0)*(_num(p.get('entry')) or 0) for p in positions.values())
+    realized=cash+used-start
+    unreal=None if unpriced else sum((px[t]-p['entry'])*p['shares'] for t,p in positions.items())
+    total=None if unpriced else cash+sum(px[t]*p['shares'] for t,p in positions.items())
+    profit=None if total is None else total-start
+    share=f'{cash/total:.0%} of the account' if total else ''
+    cell=lambda label,value,sub='',tone='':f'<div><small>{label}</small><b class="{tone}">{value}</b><small>{sub}</small></div>'
+    n=len(positions)
+    out=('<div class="tq-acct">'
+         +cell('Total amount',_money(total) if total is not None else 'unknown',f'{len(unpriced)} without a price now' if unpriced else f'started {_money(start)}')
+         +cell('Total profit',_money(profit,True) if profit is not None else 'unknown',_pct(profit/start*100) if profit is not None and start else '',_tone(profit))
+         +cell('Cash at hand',_money(cash),share)
+         +cell('Cash used',_money(used),f'{n} open position{"s" if n!=1 else ""}, at cost')
+         +cell('Realized profit',_money(realized,True),f'{closed} closed trade{"s" if closed!=1 else ""}',_tone(realized))
+         +cell('Unrealized profit',_money(unreal,True) if unreal is not None else 'unknown','open positions, right now',_tone(unreal))
+         +'</div>')
+    return out
+
+
 def trade_row(trade: dict, position=None, price=None) -> str:
     opened=trade.get('status')=='OPEN'
     result,pct=_num(trade.get('result')),_num(trade.get('pct'))
@@ -150,6 +179,11 @@ def trade_row(trade: dict, position=None, price=None) -> str:
         result=(price-entry)*shares if price is not None and entry is not None and shares is not None and entry>0 and price>0 and shares>0 else None
         pct=(price/entry-1)*100 if result is not None else None
     display_entry=(position or {}).get('entry') if opened else trade.get('entry')
+    held_line=''
+    if opened:
+        sh=_num((position or {}).get('shares'))
+        amount=sh*price if sh is not None and price is not None and price>0 else None
+        held_line=f'Shares {sh:g} · Amount {_money(amount)}<br>' if sh is not None else 'Shares unknown<br>'
     path=price_path(trade)
     rank,of=_num(trade.get('rank')),_num(trade.get('of'))
     ranking=f'{rank:g} of {of:g}' if rank is not None and of is not None else 'unknown'
@@ -157,7 +191,7 @@ def trade_row(trade: dict, position=None, price=None) -> str:
     reason=trade.get('reason') if opened else trade.get('exit_reason')
     return (f'<div class="tq-row{ "" if path else " no-path"}"><div>{_link(trade.get("ticker"))}<small>{_time(trade.get("opened"))}</small></div>{path}'
             f'<div class="tq-result {_tone(result)}">{_money(result,True)}<small>{_pct(pct)}</small></div>'
-            f'<div class="tq-levels">Entry {_price(display_entry)} · Initial stop {_price(trade.get("stop0"))} · '
+            f'<div class="tq-levels">{held_line}Entry {_price(display_entry)} · Initial stop {_price(trade.get("stop0"))} · '
             f'{"Now " + _price(price) if opened else "Exit " + _price(trade.get("exit")) + " at " + _time(trade.get("closed"))}<br>'
             f'Signal {_price(trade.get("signal"))} · Pullback low {_price(trade.get("pullback_low"))} · Rank {ranking}</div>'
             f'<div class="tq-reason">{escape(str(reason)) if reason else "Reason unknown"}{" · " + escape(tags) if tags else ""}</div></div>')
@@ -173,6 +207,7 @@ def parts(st: dict, prices: dict | None=None, now=None) -> tuple[str,list,str]:
     top=(f'<div class="tq"><h2>Quick trading</h2><small>Quick · {now:%d %b} NY · day total</small>'
          f'<div class="tq-day {_tone(summary["total"])}">{_money(summary["total"],True)}</div>'
          f'<small>{summary["closed"]} closed trades · {won} won ({summary["known"]} known) · {summary["open"]} open<br>Closed today + open result</small>')
+    top+=account_html(book,prices,sum(t.get('status')=='CLOSED' for t in book.get('trades',[])))
     if summary['unknown']:
         top+=f'<div class="tq-note">{summary["unknown"]} required readings unknown; day total unavailable.</div>'
     if state.get('note'):
