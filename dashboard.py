@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import crash, portfolio as portfolio_acct, portfolio_view, extended, testlist, rising, rising_view, ask_ai, ask_ai_view, candidates, stockhead, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import tape_screens, crash, portfolio as portfolio_acct, portfolio_view, extended, testlist, rising, rising_view, ask_ai, ask_ai_view, candidates, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -243,7 +243,7 @@ summary = ("Across your " + f"{len(held)} positions and {len(snaps) - len(held)}
            + (", ".join(parts) if parts else "nothing urgent right now") + ".")
 if reg:
     summary += f" The market backdrop reads <b>{reg['state'].lower()}</b>."
-if view not in ("quick", "rising"):
+if view not in ("quick", "rising", "radar", "portfolio", "target"):
     st.markdown(ui.hero(greeting, summary), unsafe_allow_html=True)
 
     st.markdown(ui.tiles([
@@ -290,10 +290,11 @@ def radar_list(snaps: list[dict], brief: str):
     if query.strip() and not shown:
         st.caption(f"No stock on your list matches “{query.strip()}”.")
         return
-    st.markdown(dayboard.render(shown, changed=verdict_changes(snaps), brief=brief), unsafe_allow_html=True)
+    st.markdown(tape_screens.radar_rows(shown, changed=verdict_changes(snaps)), unsafe_allow_html=True)
 
 
 if view == "radar":
+    st.markdown(tape_screens.radar_summary(snaps, market_tile[1], urgent, opps, soon, market_tile[2]), unsafe_allow_html=True)
     st.markdown(ui.news_strip(snaps), unsafe_allow_html=True)
     radar_list(snaps, dayboard.today_card(briefing.portfolio(snaps, prevs, reg), tickers, datetime.now(NY).strftime("%A %d %b")))
 
@@ -343,247 +344,251 @@ if view == "target":
                                            else "Add it on the [Fleet page](?view=fleet) to track it."))
     p = snap["payload"]
     t, f, ev = p["technical"], p["fundamental"], p.get("events") or {}
-    st.markdown(stockhead.html(snap), unsafe_allow_html=True)           # one card: call, reading, price ladder, key technicals and fundamentals, news
-    with st.expander("How the chart was read · second opinion · flow", expanded=False):
-        st.markdown(ui.status_note(snap) + ui.flow_note(snap) + ("" if ui.HIDE_OLD_CALLS else ui.reassess_note(snap)) + ui.wire_note(snap), unsafe_allow_html=True)
+    st.markdown(tape_screens.chips(order[:8],ticker), unsafe_allow_html=True)
+    st.markdown(tape_screens.detail_header(snap), unsafe_allow_html=True)           # one card: call, reading, price ladder, key technicals and fundamentals, news
     industry = (p.get("profile") or {}).get("industry")
     if industry:
         st.caption(industry)
     note = next((h.notes for h in portfolio.holdings if h.ticker == ticker and h.notes), None)
     if note:
         st.markdown(f'<div class="mc-log"><small>YOUR NOTE</small><br>{escape(note)}</div>', unsafe_allow_html=True)
-    st.markdown(details.brief_html(briefing.stock(snap, prevs.get(ticker))), unsafe_allow_html=True)
-    research = p.get("research") or {}
+    st.markdown(details.tape_brief_html(briefing.stock(snap, prevs.get(ticker))), unsafe_allow_html=True)
+    st.markdown(tape_screens.detail_ladder(snap), unsafe_allow_html=True)
+    st.markdown(tape_screens.detail_tables(snap), unsafe_allow_html=True)
+    with st.expander("How the chart was read · second opinion · flow", expanded=False):
+        st.markdown(ui.status_note(snap) + ui.flow_note(snap) + ("" if ui.HIDE_OLD_CALLS else ui.reassess_note(snap)) + ui.wire_note(snap), unsafe_allow_html=True)
+    with st.expander("More analysis and account controls", expanded=False):
+        research = p.get("research") or {}
 
-    st.markdown('<div class="mc-section">Fundamentals</div>', unsafe_allow_html=True)
-    st.markdown(fundamentals_view.fundamentals(snap), unsafe_allow_html=True)
-    st.markdown(debtcash_view.html(snap), unsafe_allow_html=True)
+        st.markdown('<div class="mc-section">Fundamentals</div>', unsafe_allow_html=True)
+        st.markdown(fundamentals_view.fundamentals(snap), unsafe_allow_html=True)
+        st.markdown(debtcash_view.html(snap), unsafe_allow_html=True)
 
-    st.markdown('<div class="mc-section">Company overview & report card</div>', unsafe_allow_html=True)
-    st.markdown(ui.overview_card(briefing.overview(snap), ticker), unsafe_allow_html=True)
+        st.markdown('<div class="mc-section">Company overview & report card</div>', unsafe_allow_html=True)
+        st.markdown(ui.overview_card(briefing.overview(snap), ticker), unsafe_allow_html=True)
 
-    plan = p.get("plan") or {}
-    lv = (research.get("valuation") or {}).get("levels") or {}
+        plan = p.get("plan") or {}
+        lv = (research.get("valuation") or {}).get("levels") or {}
 
-    try:
-        ind = technical.indicators(_history_now(ticker)).iloc[-180:]
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.74, 0.26], vertical_spacing=0.04)
-        fig.add_trace(go.Candlestick(x=ind.index, open=ind.Open, high=ind.High, low=ind.Low, close=ind.Close,
-                                     name="Price", increasing_line_color=ui.OPP, decreasing_line_color=ui.RISK,
-                                     increasing_fillcolor=ui.OPP, decreasing_fillcolor=ui.RISK), 1, 1)
-        fig.add_trace(go.Scatter(x=ind.index, y=ind.SMA50, name="50-day", line=dict(width=2, color=ui.INFO)), 1, 1)
-        fig.add_trace(go.Scatter(x=ind.index, y=ind.SMA200, name="200-day", line=dict(width=2, color=ui.WARN)), 1, 1)
-        fig.add_trace(go.Scatter(x=ind.index, y=ind.RSI, name="RSI", line=dict(width=2, color=ui.INFO),
-                                 showlegend=False), 2, 1)
-        fig.add_hrect(y0=30, y1=70, fillcolor="rgba(54,197,240,0.06)", line_width=0, row=2, col=1)
+        try:
+            ind = technical.indicators(_history_now(ticker)).iloc[-180:]
+            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.74, 0.26], vertical_spacing=0.04)
+            fig.add_trace(go.Candlestick(x=ind.index, open=ind.Open, high=ind.High, low=ind.Low, close=ind.Close,
+                                         name="Price", increasing_line_color=ui.OPP, decreasing_line_color=ui.RISK,
+                                         increasing_fillcolor=ui.OPP, decreasing_fillcolor=ui.RISK), 1, 1)
+            fig.add_trace(go.Scatter(x=ind.index, y=ind.SMA50, name="50-day", line=dict(width=2, color=ui.INFO)), 1, 1)
+            fig.add_trace(go.Scatter(x=ind.index, y=ind.SMA200, name="200-day", line=dict(width=2, color=ui.WARN)), 1, 1)
+            fig.add_trace(go.Scatter(x=ind.index, y=ind.RSI, name="RSI", line=dict(width=2, color=ui.INFO),
+                                     showlegend=False), 2, 1)
+            fig.add_hrect(y0=30, y1=70, fillcolor="rgba(54,197,240,0.06)", line_width=0, row=2, col=1)
+            if plan:
+                fig.add_hrect(y0=plan["entry_low"], y1=plan["entry_high"], fillcolor="rgba(61,255,168,0.12)", line_width=0,
+                              row=1, col=1)
+                fig.add_hline(y=plan["stop"], line_dash="dash", line_width=1, line_color=ui.RISK, row=1, col=1,
+                              annotation_text=f"stop {plan['stop']:.2f}", annotation_font_color=ui.RISK,
+                              annotation_position="bottom left")
+            for level, label in ((lv.get("support"), "support"), (lv.get("resistance"), "resistance")):
+                if level:
+                    fig.add_hline(y=level, line_dash="dot", line_width=1, line_color=ui.MUTED, row=1, col=1,
+                                  annotation_text=f"{label} {level:.2f}", annotation_font_color=ui.MUTED,
+                                  annotation_position="top left")
+            grid = "rgba(95,135,150,0.15)"
+            fig.update_layout(height=430, margin=dict(l=0, r=0, t=24, b=0), xaxis_rangeslider_visible=False,
+                              paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", hovermode="x unified",
+                              font=dict(family="Share Tech Mono, monospace", color=ui.INK, size=11),
+                              legend=dict(orientation="h", y=1.06, x=0, bgcolor="rgba(0,0,0,0)"))
+            fig.update_xaxes(gridcolor=grid, zeroline=False)
+            fig.update_yaxes(gridcolor=grid, zeroline=False)
+            fig.update_yaxes(title_text="RSI", range=[0, 100], row=2, col=1)
+            st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+        except Exception as e:
+            st.warning(f"Chart offline: {e}")
+
+        try:
+            st.markdown(technical_view.html(technical_view.evidence(_history_now(ticker), datetime.now(NY).date(),
+                                                                    us_session() != "CLOSED")), unsafe_allow_html=True)
+        except Exception as e:
+            st.caption(f"Technical evidence offline: {e}")
+
+        street_m = research.get("street") or {}
+        if street_m:
+            st.markdown('<div class="mc-section">Outlook · 3 to 12 months</div>', unsafe_allow_html=True)
+            if not street_m.get("consensus"):
+                st.caption("Analyst ratings and targets are missing. " + "Yahoo blocks this data for apps on Streamlit Cloud. " + ("Finnhub didn't have it either." if finnhub.enabled() else "Add a free FINNHUB_API_KEY secret (finnhub.io) to fill it."))
+            st.markdown(ui.outlook(street_m, snap["price"]), unsafe_allow_html=True)
+        elif ticker not in tickers:
+            if st.button("Run the full analysis (street view, outlook, SEC)"):
+                with st.spinner(f"Analysing {ticker}..."):
+                    store.save_snapshot(evaluate(Holding(ticker, 2, 0), portfolio, data))
+                st.rerun()
+
+        plan = p.get("plan") or {}
         if plan:
-            fig.add_hrect(y0=plan["entry_low"], y1=plan["entry_high"], fillcolor="rgba(61,255,168,0.12)", line_width=0,
-                          row=1, col=1)
-            fig.add_hline(y=plan["stop"], line_dash="dash", line_width=1, line_color=ui.RISK, row=1, col=1,
-                          annotation_text=f"stop {plan['stop']:.2f}", annotation_font_color=ui.RISK,
-                          annotation_position="bottom left")
-        for level, label in ((lv.get("support"), "support"), (lv.get("resistance"), "resistance")):
-            if level:
-                fig.add_hline(y=level, line_dash="dot", line_width=1, line_color=ui.MUTED, row=1, col=1,
-                              annotation_text=f"{label} {level:.2f}", annotation_font_color=ui.MUTED,
-                              annotation_position="top left")
-        grid = "rgba(95,135,150,0.15)"
-        fig.update_layout(height=430, margin=dict(l=0, r=0, t=24, b=0), xaxis_rangeslider_visible=False,
-                          paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", hovermode="x unified",
-                          font=dict(family="Share Tech Mono, monospace", color=ui.INK, size=11),
-                          legend=dict(orientation="h", y=1.06, x=0, bgcolor="rgba(0,0,0,0)"))
-        fig.update_xaxes(gridcolor=grid, zeroline=False)
-        fig.update_yaxes(gridcolor=grid, zeroline=False)
-        fig.update_yaxes(title_text="RSI", range=[0, 100], row=2, col=1)
-        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
-    except Exception as e:
-        st.warning(f"Chart offline: {e}")
+            portfolio_value = sum(x["payload"]["position"].get("value", 0) for x in snaps if not x["payload"]["watchlist"])
+            risk_pct = st.session_state.get("risk_pct", portfolio.settings.risk_per_trade_pct)
+            sizing = tradeplan.size(plan, portfolio_value, risk_pct, portfolio.rules(snap["tier"]).max_position_pct)
+            st.markdown(ui.trade_plan(plan, sizing, risk_pct, portfolio_value), unsafe_allow_html=True)
+            st.select_slider("Risk per trade (% of portfolio lost if the stop is hit)", [0.25, 0.5, 1.0, 1.5, 2.0],
+                             value=risk_pct, key="risk_pct")
+            st.session_state.setdefault("account_size", int(portfolio_value) if portfolio_value else 10000)   # set once, so a typed number sticks
+            account = st.number_input("Your account size in $ (include cash; used by the trade guide)", min_value=0, step=1000,
+                                      key="account_size")
+            st.markdown(guide.card(snap, float(account), risk_pct, portfolio.rules(snap["tier"]).max_position_pct), unsafe_allow_html=True)
 
-    try:
-        st.markdown(technical_view.html(technical_view.evidence(_history_now(ticker), datetime.now(NY).date(),
-                                                                us_session() != "CLOSED")), unsafe_allow_html=True)
-    except Exception as e:
-        st.caption(f"Technical evidence offline: {e}")
+        if cis_decision.mode() == "shadow":
+            _cis_shadow_card(ticker, snap)
 
-    street_m = research.get("street") or {}
-    if street_m:
-        st.markdown('<div class="mc-section">Outlook · 3 to 12 months</div>', unsafe_allow_html=True)
-        if not street_m.get("consensus"):
-            st.caption("Analyst ratings and targets are missing. " + "Yahoo blocks this data for apps on Streamlit Cloud. " + ("Finnhub didn't have it either." if finnhub.enabled() else "Add a free FINNHUB_API_KEY secret (finnhub.io) to fill it."))
-        st.markdown(ui.outlook(street_m, snap["price"]), unsafe_allow_html=True)
-    elif ticker not in tickers:
-        if st.button("Run the full analysis (street view, outlook, SEC)"):
-            with st.spinner(f"Analysing {ticker}..."):
-                store.save_snapshot(evaluate(Holding(ticker, 2, 0), portfolio, data))
-            st.rerun()
+        oc = ((snap.get("payload") or {}).get("technical") or {}).get("one_call")
+        if isinstance(oc, dict):          # SHADOW: the new technical-first call, beside the old labels; drives nothing
+            st.markdown('<div class="mc-section">New call (testing only)</div>', unsafe_allow_html=True)
+            if not oc.get("known"):
+                st.caption(f"No new call: {oc.get('why', 'unknown')}")
+            else:
+                risk, tf, sz = oc.get("risk") or {}, oc.get("timeframe"), oc.get("size")
+                st.markdown(ui.flag(oc["call"], escape(oc["why"]) + " · testing only: nothing is traded or alerted",
+                                    ui.INFO), unsafe_allow_html=True)
+                bits = [f"Exit line {oc['exit_line']:g} (band down to {oc['band_line']:g})", f"Risk: {risk.get('grade')} ({risk.get('why')})"]
+                if tf:
+                    bits.append(f"Time: {tf['word'].lower()}, {tf['text']}")
+                if sz:
+                    bits.append(f"Size so the exit line costs about 1%: {sz['shares']} shares")
+                if oc.get("over_limit"):
+                    bits.append("Position is over its limit")
+                st.caption(" · ".join(bits + list(oc.get("flags") or [])))
 
-    plan = p.get("plan") or {}
-    if plan:
-        portfolio_value = sum(x["payload"]["position"].get("value", 0) for x in snaps if not x["payload"]["watchlist"])
-        risk_pct = st.session_state.get("risk_pct", portfolio.settings.risk_per_trade_pct)
-        sizing = tradeplan.size(plan, portfolio_value, risk_pct, portfolio.rules(snap["tier"]).max_position_pct)
-        st.markdown(ui.trade_plan(plan, sizing, risk_pct, portfolio_value), unsafe_allow_html=True)
-        st.select_slider("Risk per trade (% of portfolio lost if the stop is hit)", [0.25, 0.5, 1.0, 1.5, 2.0],
-                         value=risk_pct, key="risk_pct")
-        st.session_state.setdefault("account_size", int(portfolio_value) if portfolio_value else 10000)   # set once, so a typed number sticks
-        account = st.number_input("Your account size in $ (include cash; used by the trade guide)", min_value=0, step=1000,
-                                  key="account_size")
-        st.markdown(guide.card(snap, float(account), risk_pct, portfolio.rules(snap["tier"]).max_position_pct), unsafe_allow_html=True)
+        st.markdown('<div class="mc-section">Signals</div>', unsafe_allow_html=True)
+        st.markdown("".join(f'<div class="mc-log">{ui.signal_glyph(s["kind"])}{"!" * s["severity"]} {escape(s["message"])} '
+                            f'<small>· {s["source"]}</small></div>' for s in p["signals"])
+                    or '<div class="mc-d">no signals</div>', unsafe_allow_html=True)
 
-    if cis_decision.mode() == "shadow":
-        _cis_shadow_card(ticker, snap)
+        earn = research.get("earnings") or {}
+        with st.expander("Earnings track record", expanded=False):
+            if earn.get("reported"):
+                st.markdown(f"Beat EPS estimates **{earn['beats']} of {earn['reported']}** recent quarters"
+                            + (f" · streak **{earn['beat_streak']}**" if earn.get("beat_streak") else "")
+                            + (f" · avg report-day move **±{earn['avg_move'] * 100:.1f}%**" if earn.get("avg_move") else ""))
+                st.markdown(ui.table(["Quarter", "Est EPS", "Actual", "Surprise", "Report-day move"], [
+                    [q["quarter"], ui.num(q.get("eps_estimate")), ui.num(q.get("eps_actual")),
+                     ui.pct(q.get("surprise_pct"), digits=1), ui.pct(q.get("reaction"), digits=1)]
+                    for q in earn["quarters"]]), unsafe_allow_html=True)
+                st.caption("Report day is estimated as the heaviest-volume session after each quarter closed.")
+            if earn.get("revenue_q"):
+                qoq = earn.get("revenue_qoq") or []
+                st.markdown(ui.table(["Quarter", "Revenue", "QoQ", "Gross margin", "Op margin"], [
+                    [r["period"], ui.money(r["revenue"]), ui.pct(qoq[i], digits=1) if i < len(qoq) else "—",
+                     ui.pct(r.get("gross_margin"), signed=False), ui.pct(r.get("op_margin"), signed=False)]
+                    for i, r in enumerate(earn["revenue_q"])]), unsafe_allow_html=True)
+                if earn.get("revenue_yoy_latest") is not None:
+                    st.caption(f"Latest quarter revenue vs a year ago: {ui.pct(earn['revenue_yoy_latest'], digits=1)}")
+            if not earn.get("reported") and not earn.get("revenue_q"):
+                st.caption("No earnings history available for this symbol.")
 
-    oc = ((snap.get("payload") or {}).get("technical") or {}).get("one_call")
-    if isinstance(oc, dict):          # SHADOW: the new technical-first call, beside the old labels; drives nothing
-        st.markdown('<div class="mc-section">New call (testing only)</div>', unsafe_allow_html=True)
-        if not oc.get("known"):
-            st.caption(f"No new call: {oc.get('why', 'unknown')}")
-        else:
-            risk, tf, sz = oc.get("risk") or {}, oc.get("timeframe"), oc.get("size")
-            st.markdown(ui.flag(oc["call"], escape(oc["why"]) + " · testing only: nothing is traded or alerted",
-                                ui.INFO), unsafe_allow_html=True)
-            bits = [f"Exit line {oc['exit_line']:g} (band down to {oc['band_line']:g})", f"Risk: {risk.get('grade')} ({risk.get('why')})"]
-            if tf:
-                bits.append(f"Time: {tf['word'].lower()}, {tf['text']}")
-            if sz:
-                bits.append(f"Size so the exit line costs about 1%: {sz['shares']} shares")
-            if oc.get("over_limit"):
-                bits.append("Position is over its limit")
-            st.caption(" · ".join(bits + list(oc.get("flags") or [])))
+        sm = research.get("smart_money") or {}
+        with st.expander("Smart money & short interest", expanded=False):
+            if sm and not any(sm.get(k) is not None for k in ("short_pct_float", "insider_pct", "institution_pct")) \
+                    and not sm.get("insider_tx"):
+                st.caption("Short interest, ownership and insider trades are missing. " + "Yahoo blocks this data for apps on Streamlit Cloud. " + ("Finnhub didn't have it either." if finnhub.enabled() else "Add a free FINNHUB_API_KEY secret (finnhub.io) to fill it.")
+                           + " Short interest and institutional ownership need a paid plan on most providers.")
+            elif sm:
+                st.markdown('<div class="mc-kv">' + "".join(f"<div><span>{k}</span>{escape(v)}</div>" for k, v in [
+                    ("Short % float", ui.pct(sm.get("short_pct_float"), signed=False)),
+                    ("Days to cover", ui.num(sm.get("days_to_cover"), ".1f")),
+                    ("Short Δ vs last month", ui.pct(sm.get("short_change"))),
+                    ("Insiders own", ui.pct(sm.get("insider_pct"), signed=False)),
+                    ("Institutions own", ui.pct(sm.get("institution_pct"), signed=False)),
+                    ("Insider buys 90d", f"{ui.money(sm.get('insider_buy_90d'))} ({sm.get('buyers_90d', 0)})"),
+                    ("Insider sells 90d", f"{ui.money(sm.get('insider_sell_90d'))} ({sm.get('sellers_90d', 0)})"),
+                ]) + "</div>", unsafe_allow_html=True)
+                if sm.get("insider_tx"):
+                    st.markdown(ui.table(["Date", "Insider", "Role", "Type", "Value"], [
+                        [tx.get("date") or "—", (tx.get("insider") or "—")[:22], (tx.get("position") or "—")[:18],
+                         {"buy": "BUY", "sell": "SELL"}.get(tx.get("kind"), "other"), ui.money(tx.get("value"))]
+                        for tx in sm["insider_tx"]]), unsafe_allow_html=True)
+                    st.caption("Only open-market purchases and sales count as signals; awards and option exercises don't. "
+                               "Many sales are pre-planned (10b5-1).")
+            else:
+                st.caption("No ownership data available.")
 
-    st.markdown('<div class="mc-section">Signals</div>', unsafe_allow_html=True)
-    st.markdown("".join(f'<div class="mc-log">{ui.signal_glyph(s["kind"])}{"!" * s["severity"]} {escape(s["message"])} '
-                        f'<small>· {s["source"]}</small></div>' for s in p["signals"])
-                or '<div class="mc-d">no signals</div>', unsafe_allow_html=True)
+        va = research.get("valuation") or {}
+        with st.expander("Valuation in context", expanded=False):
+            fv = va.get("fair_value")
+            if fv:
+                st.markdown(ui.fair_value_bar(fv, snap["price"]), unsafe_allow_html=True)
+                st.markdown(ui.table(["Method", "Low", "Mid", "High"], [
+                    [k, ui.num(v["low"]), ui.num(v["mid"]), ui.num(v["high"])] for k, v in fv["methods"].items()]),
+                    unsafe_allow_html=True)
+            st.markdown(f"P/E now **{ui.num(va.get('pe_now'), '.1f')}** · own history median "
+                        f"**{ui.num(va.get('pe_hist_median'), '.1f')}** · peer median forward "
+                        f"**{ui.num(va.get('peer_median_pe'), '.1f')}**")
+            if va.get("pe_history"):
+                st.markdown(ui.table(["Year", "EPS", "P/E at year end"], [
+                    [r["year"], ui.num(r["eps"]), ui.num(r["pe"], ".1f")] for r in va["pe_history"]]), unsafe_allow_html=True)
+            if va.get("peers"):
+                rows = [[r["ticker"], ui.num(r["pe"], ".1f"), ui.num(r["ps"], ".1f"), ui.pct(r["growth"]),
+                         ui.pct(r["margin"], signed=False), ui.money(r["market_cap"])]
+                        for r in [{"ticker": ticker, **(va.get("self") or {})}] + va["peers"]]
+                st.markdown(ui.table(["Peer", "Fwd P/E", "P/S", "Rev growth", "Op margin", "Mkt cap"], rows, highlight=0),
+                            unsafe_allow_html=True)
+                st.caption("Peers are the largest companies in the same industry, so small caps are compared with giants.")
+            if not fv and not va.get("peers"):
+                st.caption("Not enough data for a valuation comparison.")
 
-    earn = research.get("earnings") or {}
-    with st.expander("Earnings track record", expanded=False):
-        if earn.get("reported"):
-            st.markdown(f"Beat EPS estimates **{earn['beats']} of {earn['reported']}** recent quarters"
-                        + (f" · streak **{earn['beat_streak']}**" if earn.get("beat_streak") else "")
-                        + (f" · avg report-day move **±{earn['avg_move'] * 100:.1f}%**" if earn.get("avg_move") else ""))
-            st.markdown(ui.table(["Quarter", "Est EPS", "Actual", "Surprise", "Report-day move"], [
-                [q["quarter"], ui.num(q.get("eps_estimate")), ui.num(q.get("eps_actual")),
-                 ui.pct(q.get("surprise_pct"), digits=1), ui.pct(q.get("reaction"), digits=1)]
-                for q in earn["quarters"]]), unsafe_allow_html=True)
-            st.caption("Report day is estimated as the heaviest-volume session after each quarter closed.")
-        if earn.get("revenue_q"):
-            qoq = earn.get("revenue_qoq") or []
-            st.markdown(ui.table(["Quarter", "Revenue", "QoQ", "Gross margin", "Op margin"], [
-                [r["period"], ui.money(r["revenue"]), ui.pct(qoq[i], digits=1) if i < len(qoq) else "—",
-                 ui.pct(r.get("gross_margin"), signed=False), ui.pct(r.get("op_margin"), signed=False)]
-                for i, r in enumerate(earn["revenue_q"])]), unsafe_allow_html=True)
-            if earn.get("revenue_yoy_latest") is not None:
-                st.caption(f"Latest quarter revenue vs a year ago: {ui.pct(earn['revenue_yoy_latest'], digits=1)}")
-        if not earn.get("reported") and not earn.get("revenue_q"):
-            st.caption("No earnings history available for this symbol.")
+        sec_m = research.get("sec") or {}
+        with st.expander("SEC filings", expanded=False):
+            if sec_m.get("filings"):
+                st.markdown("".join(
+                    f'<div class="mc-log"><small>{escape(f["date"])}</small><br>'
+                    f'<a href="{escape(f["url"])}" target="_blank" style="color:var(--info)">{escape(f["label"])}</a></div>'
+                    for f in sec_m["filings"]), unsafe_allow_html=True)
+                facts = []
+                if sec_m.get("shares_change_1y") is not None:
+                    facts.append(f"Share count {ui.pct(sec_m['shares_change_1y'], digits=1)} over the last year")
+                if sec_m.get("form4_90d"):
+                    facts.append(f"{sec_m['form4_90d']} insider (Form 4) filings in 90 days")
+                if facts:
+                    st.caption(" · ".join(facts))
+            else:
+                st.caption("No SEC data. Foreign companies and funds may file differently, or SEC was unreachable.")
 
-    sm = research.get("smart_money") or {}
-    with st.expander("Smart money & short interest", expanded=False):
-        if sm and not any(sm.get(k) is not None for k in ("short_pct_float", "insider_pct", "institution_pct")) \
-                and not sm.get("insider_tx"):
-            st.caption("Short interest, ownership and insider trades are missing. " + "Yahoo blocks this data for apps on Streamlit Cloud. " + ("Finnhub didn't have it either." if finnhub.enabled() else "Add a free FINNHUB_API_KEY secret (finnhub.io) to fill it.")
-                       + " Short interest and institutional ownership need a paid plan on most providers.")
-        elif sm:
-            st.markdown('<div class="mc-kv">' + "".join(f"<div><span>{k}</span>{escape(v)}</div>" for k, v in [
-                ("Short % float", ui.pct(sm.get("short_pct_float"), signed=False)),
-                ("Days to cover", ui.num(sm.get("days_to_cover"), ".1f")),
-                ("Short Δ vs last month", ui.pct(sm.get("short_change"))),
-                ("Insiders own", ui.pct(sm.get("insider_pct"), signed=False)),
-                ("Institutions own", ui.pct(sm.get("institution_pct"), signed=False)),
-                ("Insider buys 90d", f"{ui.money(sm.get('insider_buy_90d'))} ({sm.get('buyers_90d', 0)})"),
-                ("Insider sells 90d", f"{ui.money(sm.get('insider_sell_90d'))} ({sm.get('sellers_90d', 0)})"),
-            ]) + "</div>", unsafe_allow_html=True)
-            if sm.get("insider_tx"):
-                st.markdown(ui.table(["Date", "Insider", "Role", "Type", "Value"], [
-                    [tx.get("date") or "—", (tx.get("insider") or "—")[:22], (tx.get("position") or "—")[:18],
-                     {"buy": "BUY", "sell": "SELL"}.get(tx.get("kind"), "other"), ui.money(tx.get("value"))]
-                    for tx in sm["insider_tx"]]), unsafe_allow_html=True)
-                st.caption("Only open-market purchases and sales count as signals; awards and option exercises don't. "
-                           "Many sales are pre-planned (10b5-1).")
-        else:
-            st.caption("No ownership data available.")
+        parts = t.get("score_parts") or []
+        if parts:
+            with st.expander(f"Why the technical score is {snap['technical_score']:.0f}", expanded=False):
+                ordered = sorted(parts, key=lambda x: x[1])
+                st.markdown(ui.table(["Factor", "Points"], [[name, f"{pts:+.1f}"] for name, pts in ordered]
+                                     + [["Net (50 is neutral)", f"{sum(pt for _, pt in parts):+.1f}"]], wrap=True),
+                            unsafe_allow_html=True)
+                st.caption("Each factor adds or subtracts points from a neutral 50. The total goes through a smooth "
+                           "curve, so a stock where every factor is negative lands near 5-15 instead of a flat 0, "
+                           "and weak stocks can still be told apart.")
 
-    va = research.get("valuation") or {}
-    with st.expander("Valuation in context", expanded=False):
-        fv = va.get("fair_value")
-        if fv:
-            st.markdown(ui.fair_value_bar(fv, snap["price"]), unsafe_allow_html=True)
-            st.markdown(ui.table(["Method", "Low", "Mid", "High"], [
-                [k, ui.num(v["low"]), ui.num(v["mid"]), ui.num(v["high"])] for k, v in fv["methods"].items()]),
-                unsafe_allow_html=True)
-        st.markdown(f"P/E now **{ui.num(va.get('pe_now'), '.1f')}** · own history median "
-                    f"**{ui.num(va.get('pe_hist_median'), '.1f')}** · peer median forward "
-                    f"**{ui.num(va.get('peer_median_pe'), '.1f')}**")
-        if va.get("pe_history"):
-            st.markdown(ui.table(["Year", "EPS", "P/E at year end"], [
-                [r["year"], ui.num(r["eps"]), ui.num(r["pe"], ".1f")] for r in va["pe_history"]]), unsafe_allow_html=True)
-        if va.get("peers"):
-            rows = [[r["ticker"], ui.num(r["pe"], ".1f"), ui.num(r["ps"], ".1f"), ui.pct(r["growth"]),
-                     ui.pct(r["margin"], signed=False), ui.money(r["market_cap"])]
-                    for r in [{"ticker": ticker, **(va.get("self") or {})}] + va["peers"]]
-            st.markdown(ui.table(["Peer", "Fwd P/E", "P/S", "Rev growth", "Op margin", "Mkt cap"], rows, highlight=0),
-                        unsafe_allow_html=True)
-            st.caption("Peers are the largest companies in the same industry, so small caps are compared with giants.")
-        if not fv and not va.get("peers"):
-            st.caption("Not enough data for a valuation comparison.")
+        with st.expander("All readouts", expanded=False):
+            kv = [
+                ("Trend", (t.get("trend") or "—").upper()), ("RSI", ui.num(t.get("rsi"), ".0f")),
+                ("vs SPY 1M", ui.pct(t.get("rs_spy_1m"))), ("vs SPY 3M", ui.pct(t.get("rs_spy_3m"))),
+                (f"vs {t.get('sector_etf') or 'sector'} 3M", ui.pct(t.get("rs_sector_3m"))),
+                ("From 52w high", ui.pct(t.get("drawdown_52w"))), ("50-day", ui.num(t.get("sma50"))),
+                ("200-day", ui.num(t.get("sma200"))), ("Fwd P/E", ui.num(f.get("pe"), ".1f")), ("PEG", ui.num(f.get("peg"))),
+                ("Rev growth", ui.pct(f.get("revenue_growth"))), ("Op margin", ui.pct(f.get("operating_margin"), signed=False)),
+                ("Debt/Equity", ui.num(f.get("debt_to_equity"), ".1f")), ("Analyst upside", ui.pct(f.get("analyst_upside"))),
+                ("Valuation", ui.num(f.get("pillar_valuation"), ".0f")), ("Growth", ui.num(f.get("pillar_growth"), ".0f")),
+                ("Quality", ui.num(f.get("pillar_quality"), ".0f")), ("Balance", ui.num(f.get("pillar_balance"), ".0f")),
+                ("Earnings", f"{ev['earnings_date']} (T-{ev['days_to_earnings']}d)" if ev.get("earnings_date") else "—"),
+            ]
+            st.markdown('<div class="mc-kv">' + "".join(f"<div><span>{escape(k)}</span>{escape(v)}</div>" for k, v in kv)
+                        + "</div>", unsafe_allow_html=True)
 
-    sec_m = research.get("sec") or {}
-    with st.expander("SEC filings", expanded=False):
-        if sec_m.get("filings"):
-            st.markdown("".join(
-                f'<div class="mc-log"><small>{escape(f["date"])}</small><br>'
-                f'<a href="{escape(f["url"])}" target="_blank" style="color:var(--info)">{escape(f["label"])}</a></div>'
-                for f in sec_m["filings"]), unsafe_allow_html=True)
-            facts = []
-            if sec_m.get("shares_change_1y") is not None:
-                facts.append(f"Share count {ui.pct(sec_m['shares_change_1y'], digits=1)} over the last year")
-            if sec_m.get("form4_90d"):
-                facts.append(f"{sec_m['form4_90d']} insider (Form 4) filings in 90 days")
-            if facts:
-                st.caption(" · ".join(facts))
-        else:
-            st.caption("No SEC data. Foreign companies and funds may file differently, or SEC was unreachable.")
+        if ev.get("rating_changes"):
+            with st.expander("Analyst moves", expanded=False):
+                st.markdown("".join(
+                    f'<div class="mc-log"><small>{escape(str(r["date"]))}</small> {escape(str(r.get("firm") or "?"))} · '
+                    f'{escape(str(r.get("action") or "").upper())} {escape(str(r.get("from_grade") or ""))} → '
+                    f'{escape(str(r.get("to_grade") or ""))}</div>' for r in ev["rating_changes"]), unsafe_allow_html=True)
 
-    parts = t.get("score_parts") or []
-    if parts:
-        with st.expander(f"Why the technical score is {snap['technical_score']:.0f}", expanded=False):
-            ordered = sorted(parts, key=lambda x: x[1])
-            st.markdown(ui.table(["Factor", "Points"], [[name, f"{pts:+.1f}"] for name, pts in ordered]
-                                 + [["Net (50 is neutral)", f"{sum(pt for _, pt in parts):+.1f}"]], wrap=True),
-                        unsafe_allow_html=True)
-            st.caption("Each factor adds or subtracts points from a neutral 50. The total goes through a smooth "
-                       "curve, so a stock where every factor is negative lands near 5-15 instead of a flat 0, "
-                       "and weak stocks can still be told apart.")
+        if ev.get("news"):
+            with st.expander("All recent news", expanded=False):
+                st.markdown(ui.news_list(ev["news"], limit=20), unsafe_allow_html=True)
 
-    with st.expander("All readouts", expanded=False):
-        kv = [
-            ("Trend", (t.get("trend") or "—").upper()), ("RSI", ui.num(t.get("rsi"), ".0f")),
-            ("vs SPY 1M", ui.pct(t.get("rs_spy_1m"))), ("vs SPY 3M", ui.pct(t.get("rs_spy_3m"))),
-            (f"vs {t.get('sector_etf') or 'sector'} 3M", ui.pct(t.get("rs_sector_3m"))),
-            ("From 52w high", ui.pct(t.get("drawdown_52w"))), ("50-day", ui.num(t.get("sma50"))),
-            ("200-day", ui.num(t.get("sma200"))), ("Fwd P/E", ui.num(f.get("pe"), ".1f")), ("PEG", ui.num(f.get("peg"))),
-            ("Rev growth", ui.pct(f.get("revenue_growth"))), ("Op margin", ui.pct(f.get("operating_margin"), signed=False)),
-            ("Debt/Equity", ui.num(f.get("debt_to_equity"), ".1f")), ("Analyst upside", ui.pct(f.get("analyst_upside"))),
-            ("Valuation", ui.num(f.get("pillar_valuation"), ".0f")), ("Growth", ui.num(f.get("pillar_growth"), ".0f")),
-            ("Quality", ui.num(f.get("pillar_quality"), ".0f")), ("Balance", ui.num(f.get("pillar_balance"), ".0f")),
-            ("Earnings", f"{ev['earnings_date']} (T-{ev['days_to_earnings']}d)" if ev.get("earnings_date") else "—"),
-        ]
-        st.markdown('<div class="mc-kv">' + "".join(f"<div><span>{escape(k)}</span>{escape(v)}</div>" for k, v in kv)
-                    + "</div>", unsafe_allow_html=True)
-
-    if ev.get("rating_changes"):
-        with st.expander("Analyst moves", expanded=False):
-            st.markdown("".join(
-                f'<div class="mc-log"><small>{escape(str(r["date"]))}</small> {escape(str(r.get("firm") or "?"))} · '
-                f'{escape(str(r.get("action") or "").upper())} {escape(str(r.get("from_grade") or ""))} → '
-                f'{escape(str(r.get("to_grade") or ""))}</div>' for r in ev["rating_changes"]), unsafe_allow_html=True)
-
-    if ev.get("news"):
-        with st.expander("All recent news", expanded=False):
-            st.markdown(ui.news_list(ev["news"], limit=20), unsafe_allow_html=True)
-
-# ---------------------------------------------------------------- S&P 500 scan
+    # ---------------------------------------------------------------- S&P 500 scan
 if view == "market":
     st.markdown('<div class="mc-section">S&P 500 opportunity scan</div>', unsafe_allow_html=True)
     st.markdown("Screens all S&P 500 stocks for technical entry setups, then runs the full fundamental and "
@@ -834,11 +839,11 @@ def _hand_sell_do(prefix, ticker, fn):
     st.session_state[f"{prefix}_msg"] = fn(store, ticker)["note"]
 
 
-def _open_with_sell_buttons(prefix, top, opens, rest, fn, intro=None, css=None):
+def _open_with_sell_buttons(prefix, top, opens, rest, fn, intro=None, css=None, title="Open now"):
     """The account page in pieces: a sell-by-hand button under each open trade, with a confirm step so a stray tap cannot sell. Works on
     session state and on_click callbacks, so the page's auto-reload does not lose the tap."""
     st.markdown(f"<style>{css or paper_view.CSS}</style><div class='pp'>{top}</div>", unsafe_allow_html=True)
-    st.markdown("<div class='pp'><div class='pp-c'><div class='pp-h'>Open now</div><div class='pp-m'>" + (intro or "If an entry looks like an obvious mistake, "
+    st.markdown("<div class='pp'><div class='pp-c'><div class='pp-h'>" + escape(title) + "</div><div class='pp-m'>" + (intro or "If an entry looks like an obvious mistake, "
                 "sell it by hand under its card. It is kept apart from the rules' results, and the stock is not bought back today.") + "</div></div></div>",
                 unsafe_allow_html=True)
     if st.session_state.get(f"{prefix}_msg"):
@@ -915,7 +920,7 @@ if view == "portfolio":
         _c1.button("Approve", key=f"pf_ap_{_t}", on_click=_pf_pick, args=(_t, "yes"), type="primary", use_container_width=True)
         _c2.button("Skip", key=f"pf_sk_{_t}", on_click=_pf_pick, args=(_t, "no"), use_container_width=True)
     _open_with_sell_buttons("pf_hand", "", _opens, _rest, portfolio_acct.sell_by_hand, css=portfolio_view.CSS,
-                            intro="Each card is one of your holdings. The account never sells one to zero by itself; if you want out, tap the button under it.")
+                            intro="Your holdings and recorded results. Manual sales require confirmation.", title="Holdings")
     _rows = [{"Stock": _t, "Price now": ppx.get(_t), "Stop": _p.get("stop"), "Profit exit": _p.get("target"), "Broker stop set": bool(_p.get("broker_stop"))}
              for _t, _p in pst["book"]["positions"].items()]
     with st.expander("Stops and profit exits: edit a price, tick the broker box", expanded=False):

@@ -64,6 +64,17 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--dz-ink) !important;
 .stApp .js-plotly-plot text{font-family:var(--sans) !important;font-variant-numeric:tabular-nums}
 .mc-title{text-shadow:none !important;letter-spacing:.02em !important;color:var(--dz-ink) !important}
 .mc-tile,.mc-card{background:var(--dz-surface) !important}
+/* Remaining screens keep their layouts; legacy semantic colours follow the active theme. */
+.stApp [style*="--c:#3dffa8"]{--c:var(--dz-buy) !important}.stApp [style*="color:#3dffa8"]{color:var(--dz-buy) !important}
+.stApp [style*="--c:#ff4d7a"]{--c:var(--dz-act) !important}.stApp [style*="color:#ff4d7a"]{color:var(--dz-act) !important}
+.stApp [style*="--c:#ffb020"]{--c:var(--dz-watch) !important}.stApp [style*="color:#ffb020"]{color:var(--dz-watch) !important}
+.stApp [style*="--c:#36c5f0"]{--c:var(--dz-calm) !important}.stApp [style*="color:#36c5f0"]{color:var(--dz-calm) !important}
+.aiv [style*="--call:#3dffa8"]{--call:var(--dz-gain) !important}
+.aiv [style*="--call:#ff697b"]{--call:var(--dz-loss) !important}
+.aiv [style*="--call:#ffb020"]{--call:var(--dz-watch) !important}
+.aiv-good{color:var(--dz-gain) !important}.aiv-bad{color:var(--dz-loss) !important}.aiv-neutral{color:var(--dz-ink) !important}
+.aiv-level{color:var(--dz-soft) !important}.aiv-level.exit{color:var(--dz-gain) !important;border-color:var(--dz-gain) !important}
+.aiv-level.support{color:var(--dz-loss) !important;border-color:var(--dz-loss) !important}.aiv-level.price{color:var(--dz-ink) !important;border-color:var(--dz-line) !important}
 .block-container{padding-bottom:calc(104px + env(safe-area-inset-bottom,0px)) !important}
 .tape-nav{position:fixed;bottom:0;left:0;right:0;z-index:999;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));
  background:var(--dz-bg);border-top:1px solid var(--dz-line);padding:8px max(8px,env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) max(8px,env(safe-area-inset-left,0px));gap:2px}

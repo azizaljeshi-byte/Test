@@ -160,3 +160,57 @@ CSS = """
 .tl-g-strong{background:var(--dz-ink);color:var(--dz-bg,#0b1118);border-color:var(--dz-ink)}.tl-g-medium{border-color:var(--dz-ink);color:var(--dz-ink)}.tl-g-weak{opacity:.75}
 .tl-foot{margin-top:8px;border-top:1px solid var(--dz-line);padding-top:8px;font-size:.78rem;color:var(--dz-soft)}
 """
+
+
+def scaled_layout(rows: list[dict], height: int = 360) -> list[dict]:
+    """Price positions and separate label slots, without moving the data marks.
+
+    Equal prices share a y coordinate. Labels use ordered slots connected by
+    leaders so tight/coincident levels remain readable at phone width.
+    """
+    import math
+    valid=[]
+    for row in rows:
+        value=row.get('level')
+        if isinstance(value,(int,float)) and not isinstance(value,bool) and math.isfinite(value) and value>0:
+            valid.append(dict(row))
+    valid.sort(key=lambda row:-row['level'])
+    if not valid:
+        return []
+    low,high=valid[-1]['level'],valid[0]['level']
+    for i,row in enumerate(valid):
+        row['y']=height/2 if high==low else 20+(high-row['level'])/(high-low)*(height-40)
+        row['label_y']=height/2 if len(valid)==1 else 20+i/(len(valid)-1)*(height-40)
+    return valid
+
+
+def scaled_html(rows: list[dict], price=None) -> str:
+    """Tape ladder: the exact existing levels on a proportional price axis."""
+    height=max(180,len(rows)*76)
+    layout=scaled_layout(rows,height)
+    if not layout:
+        return '<div class="ts"><h3>Price ladder</h3><small>Levels unknown: no usable price levels were saved.</small></div>'
+    lines=[];labels=[]
+    for row in layout:
+        val=row['level'];now=row.get('tone')=='now'
+        tone='now' if now else 'exit' if row.get('tone')=='exit' else 'level'
+        gap=f'{(val/price-1)*100:+.1f}%' if isinstance(price,(int,float)) and price>0 and not now else ''
+        label='Chart exit (Exit line)' if row['label']=='Exit line' else row['label']
+        lines.append(f'<path d="M 144 {row["y"]:.2f} L 208 {row["label_y"]:.2f}" class="tsl-{tone}"/>'
+                     f'<circle cx="144" cy="{row["y"]:.2f}" r="3" class="tsl-{tone}"/>')
+        labels.append(f'<div class="tsl-label tsl-{tone}" style="top:{row["label_y"]/height*100:.3f}%" data-price="{val:g}" data-y="{row["y"]:.3f}">'
+                      f'<div><b>{escape(label)}</b><strong>{val:,.2f} <small>{gap}</small></strong></div><small>{escape(row.get("note") or "")}</small></div>')
+    return (f'<style>{TAPE_CSS}</style><div class="ts"><h3>Price ladder</h3><div class="tsl" style="height:{height}px">'
+            f'<svg viewBox="0 0 320 {height}" role="img" aria-label="Saved price levels drawn to scale"><title>Dots follow the price scale; labels are staggered for readability.</title>'
+            f'<line x1="144" x2="144" y1="20" y2="{height-20}"/>{"".join(lines)}</svg><div>{"".join(labels)}</div></div></div>')
+
+
+TAPE_CSS='''
+.tsl{position:relative;margin:24px 0;min-width:0}
+.tsl svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}.tsl svg line,.tsl svg path{stroke:var(--dz-line);stroke-width:1;fill:none}.tsl svg circle{fill:var(--dz-soft)}
+.tsl svg .tsl-now{stroke:var(--dz-ink);fill:var(--dz-ink)}.tsl svg .tsl-exit{stroke:var(--dz-loss);fill:var(--dz-loss)}
+.tsl>div{position:relative;height:100%;min-width:0}.tsl-label{position:absolute;left:0;right:0;transform:translateY(-50%);border-top:1px solid var(--dz-line);padding:4px 0;font-size:12px}
+.tsl-label>div{display:flex;justify-content:space-between;gap:8px}.tsl-label b{font-weight:500;max-width:40%}.tsl-label strong{font-size:14px;white-space:nowrap}
+.tsl-label>small{display:block;max-width:40%;color:var(--dz-soft);font-size:11px;line-height:1.25}.tsl-label strong small{font-size:11px;font-weight:400;color:var(--dz-soft)}
+.tsl-label.tsl-now{border-top:2px solid var(--dz-ink)}.tsl-label.tsl-exit{border-top:1px dashed var(--dz-loss)}
+'''
