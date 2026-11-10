@@ -124,3 +124,34 @@ def test_csv_output(tmp_path):
     res = {"rows": [], "log": [{"time": "10 Nov 18:00", "ticker": "AAA", "event": "Entered the shortlist"}]}
     paths = sc.write_csv(res, tmp_path)
     assert [p.name for p in paths] == ["shortlist.csv", "log.csv"] and "Entered" in paths[1].read_text()
+
+
+def _rows(n, start=0):
+    return {"data": [{"s": f"NASDAQ:T{i}", "d": [f"T{i}", 5e8, 10.0, 1e6]} for i in range(start, start + n)]}
+
+
+def test_screener_asks_for_stocks_in_the_size_bands_and_the_list_rebuilds_weekly_and_survives_a_failure():
+    pl = sc.screener_payload()
+    sizes = [f for f in pl["filter"] if f["left"] == "market_cap_basic"][0]["right"]
+    assert sizes == [50e6, 10e9] and pl["markets"] == ["america"]
+    store, calls = Store(), []
+
+    def good(payload): calls.append(1); return _rows(30)
+    t, note = sc.universe(store, NOW, good)
+    assert len(t) == 30 and "new list" in note and calls == [1]
+    t, note = sc.universe(store, NOW + timedelta(days=3), good)               # fresh enough: no new request
+    assert "list from" in note and calls == [1]
+
+    def bad(payload): raise OSError("blocked")
+    t, note = sc.universe(store, NOW + timedelta(days=8), bad)                # stale and the screener is down: keep the old list
+    assert len(t) == 30 and "kept the list" in note
+    try:
+        sc.universe(Store(), NOW, bad)
+        assert False
+    except RuntimeError as e:
+        assert "--universe" in str(e)
+    try:
+        sc.fetch_universe(lambda p: _rows(5))                                 # a near-empty answer is a failure, not a list
+        assert False
+    except ValueError:
+        pass

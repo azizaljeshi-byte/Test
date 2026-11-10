@@ -1,4 +1,4 @@
-"""Small, mid and tiny company screen: python -m stockwatch.smallcap --universe tickers.csv --out folder
+"""Small, mid and tiny company screen: python -m stockwatch.smallcap --out folder   (the list rebuilds itself weekly; --universe file.csv overrides it)
 
 Display only. It reads prices and fundamentals and writes two small tables (Shortlist, Log). It never changes a score, signal,
 verdict, trade plan, alert or paper account, and the app page never waits on it: run it from its own job.
@@ -87,6 +87,59 @@ def load_universe(text: str) -> list[str]:
         seen.add(t)
         out.append(t)
     return out[:MAX_UNIVERSE]
+
+
+
+# ---- the weekly list, built from TradingView's public screener (the same unofficial endpoint stockwatch.tradingview uses)
+UNIVERSE_DAYS = 7
+SCREENER_EXCHANGES = ["NASDAQ", "NYSE", "AMEX"]
+
+
+def screener_payload(limit: int = MAX_UNIVERSE) -> dict:
+    """Common stock on a US exchange, inside the size bands and over MIN_PRICE, the most traded first."""
+    lo, hi = min(b[0] for b in BANDS.values()), max(b[1] for b in BANDS.values())
+    return {"markets": ["america"], "symbols": {"query": {"types": ["stock"]}, "tickers": []},
+            "filter": [{"left": "market_cap_basic", "operation": "in_range", "right": [lo, hi]},
+                       {"left": "close", "operation": "greater", "right": MIN_PRICE},
+                       {"left": "type", "operation": "equal", "right": "stock"},
+                       {"left": "exchange", "operation": "in_range", "right": SCREENER_EXCHANGES}],
+            "columns": ["name", "market_cap_basic", "close", "average_volume_30d_calc"],
+            "sort": {"sortBy": "average_volume_30d_calc", "sortOrder": "desc"}, "range": [0, limit]}
+
+
+def fetch_universe(post=None) -> list[str]:
+    """Ticker list from the screener. Raises on any failure; the caller keeps the old list."""
+    if post is None:
+        from .tradingview import _post as post
+    data = post(screener_payload())
+    rows = (data or {}).get("data")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("the screener returned no rows")
+    tickers = load_universe("\n".join(str(((r or {}).get("d") or [""])[0]) for r in rows))
+    if len(tickers) < 20:
+        raise ValueError(f"the screener returned only {len(tickers)} usable tickers")
+    return tickers
+
+
+def universe(store, now: datetime, post=None) -> tuple[list[str], str]:
+    """(tickers, note). Rebuilt when the saved list is older than UNIVERSE_DAYS; if the screener fails the saved list is kept
+    and the note says so. No saved list and no screener means no run, never a guess."""
+    saved = _load(store, "smallcap_universe", {})
+    try:
+        age = now - datetime.fromisoformat(saved["t"]) if saved.get("t") else None
+    except ValueError:
+        age = None
+    if saved.get("tickers") and age is not None and age < timedelta(days=UNIVERSE_DAYS):
+        return saved["tickers"], f"list from {saved['t'][:10]}"
+    try:
+        tickers = fetch_universe(post)
+    except Exception as e:
+        if saved.get("tickers"):
+            return saved["tickers"], f"screener unavailable ({str(e)[:80]}); kept the list from {saved['t'][:10]}"
+        raise RuntimeError(f"No stock list yet and the screener is unavailable ({str(e)[:80]}). "
+                           "Give the job a CSV of tickers with --universe.") from e
+    _save(store, "smallcap_universe", {"t": now.isoformat(), "tickers": tickers})
+    return tickers, f"new list of {len(tickers)} from the screener"
 
 
 # ------------------------------------------------------------------ fundamentals
@@ -379,14 +432,19 @@ def main(argv=None):
     from .store import Store
 
     p = argparse.ArgumentParser(description="Screen small, mid and tiny companies")
-    p.add_argument("--universe", required=True, help="CSV file of tickers (first column)")
+    p.add_argument("--universe", help="CSV file of tickers (first column). Without it the list is rebuilt weekly from the screener")
     p.add_argument("--out", default="smallcap_out", help="folder for shortlist.csv and log.csv")
     p.add_argument("--demo", action="store_true")
     a = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    tickers = load_universe(Path(a.universe).read_text(encoding="utf-8"))
+    store = Store()
+    if a.universe:
+        tickers, note = load_universe(Path(a.universe).read_text(encoding="utf-8")), "list from your file"
+    else:
+        tickers, note = universe(store, datetime.now(timezone.utc))
+    print(note)
     provider = get_provider("demo" if a.demo else "yahoo")
-    res = run(provider, tickers, Store())
+    res = run(provider, tickers, store)
     for path in write_csv(res, Path(a.out)):
         print(path)
     print(f"{res['qualified']} qualified of {res['tradable']} tradable ({res['universe']} listed); "
