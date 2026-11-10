@@ -267,3 +267,10 @@ Playwright screenshots at phone width (390px).
 - **AI analyst:** a written opinion on any stock (needs a Claude API key).
 - **Broker import,** plus average costs in the sheet, which would turn on P&L and cost-based stops.
 - **Holidays:** a market-holiday calendar.
+
+### Smallcap Sheet delivery and Windows schedule
+`stockwatch/smallcap_sheet.py` writes Shortlist and Log with a service account;
+`python -m stockwatch.smallcap` gates scans to the weekday New York session and
+uses `data/smallcap.db` by default. Pending deliveries survive failures in settings.
+Windows setup (separate persistent database, no Actions): `docs/SMALLCAP_SHEET.md`
+and `scripts/install_smallcap_task.ps1`. Nothing is activated by merging.

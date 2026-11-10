@@ -6,3 +6,6 @@ cryptography>=42  # encrypts the Telegram alert memory kept in the public Action
 streamlit>=1.35
 plotly>=5.20
 pytest>=8.0
+gspread>=6.0,<7  # smallcap Sheet writer; service-account authentication
+google-auth>=2.0
+tzdata>=2024.1  # America/New_York and Asia/Riyadh on Windows

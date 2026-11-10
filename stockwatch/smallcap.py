@@ -335,7 +335,7 @@ def refresh_fundamentals(provider, tickers: list[str], cache: dict, now: datetim
 
 
 # ------------------------------------------------------------------ run
-def run(provider, tickers: list[str], store=None, now: datetime | None = None) -> dict:
+def run(provider, tickers: list[str], store=None, now: datetime | None = None, on_result=None) -> dict:
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     tickers = list(dict.fromkeys(tickers))[:MAX_UNIVERSE]
     hist = provider.bulk_history(tuple(tickers))
@@ -381,6 +381,11 @@ def run(provider, tickers: list[str], store=None, now: datetime | None = None) -
                 for t in now_list if t not in prev_list] + \
                [{"time": now.astimezone(ZoneInfo("Asia/Riyadh")).strftime("%d %b %H:%M"), "ticker": t, "event": "Left the shortlist"}
                 for t in prev_list if t not in now_list] if prev_list or store is None else []
+    result = {"as_of": now.isoformat(), "universe": len(tickers), "tradable": len(tech), "dropped": dropped,
+              "fundamentals_fetched": fetched, "fundamentals_missing": len(no_fund), "qualified": len(rows),
+              "first_hour_no_arrows": not base, "rows": rows, "log": log_rows}
+    if on_result:
+        on_result(result)  # persist delivery before advancing the event baseline
     if store:
         _save(store, "smallcap_list", now_list)
         last = snaps[-1]["t"] if snaps else None
@@ -388,9 +393,7 @@ def run(provider, tickers: list[str], store=None, now: datetime | None = None) -
             snaps.append({"t": now.isoformat(), "v": {r["ticker"]: {"rsi": r["rsi"], "macd": r["macd"], "atr": r["atr"]} for r in rows}})
         snaps = [s for s in snaps if now - datetime.fromisoformat(s["t"]) <= timedelta(minutes=KEEP_SNAPSHOTS_MIN)]
         _save(store, "smallcap_snaps", snaps)
-    return {"as_of": now.isoformat(), "universe": len(tickers), "tradable": len(tech), "dropped": dropped,
-            "fundamentals_fetched": fetched, "fundamentals_missing": len(no_fund), "qualified": len(rows),
-            "first_hour_no_arrows": not base, "rows": rows, "log": log_rows}
+    return result
 
 
 # ------------------------------------------------------------------ the two tables
@@ -428,28 +431,73 @@ def write_csv(result: dict, folder: Path) -> list[Path]:
 
 
 def main(argv=None):
-    from .data import get_provider
+    from .data import get_provider, us_session
     from .store import Store
+    from .smallcap_sheet import connect, deliver, SheetConfigError
 
-    p = argparse.ArgumentParser(description="Screen small, mid and tiny companies")
-    p.add_argument("--universe", help="CSV file of tickers (first column). Without it the list is rebuilt weekly from the screener")
-    p.add_argument("--out", default="smallcap_out", help="folder for shortlist.csv and log.csv")
-    p.add_argument("--demo", action="store_true")
+    p = argparse.ArgumentParser(description="Screen small, mid and tiny companies during the US session")
+    p.add_argument("--universe", help="CSV of tickers; otherwise rebuilt weekly from the screener")
+    p.add_argument("--db", default=str(Path(__file__).resolve().parent.parent / "data" / "smallcap.db"),
+                   help="persistent database for this job only")
+    p.add_argument("--out", help="also export shortlist.csv and log.csv to this folder")
+    p.add_argument("--demo", action="store_true", help="synthetic CSV only; never writes the owner's Sheet")
     a = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    store = Store()
-    if a.universe:
-        tickers, note = load_universe(Path(a.universe).read_text(encoding="utf-8")), "list from your file"
-    else:
-        tickers, note = universe(store, datetime.now(timezone.utc))
-    print(note)
-    provider = get_provider("demo" if a.demo else "yahoo")
-    res = run(provider, tickers, store)
-    for path in write_csv(res, Path(a.out)):
-        print(path)
-    print(f"{res['qualified']} qualified of {res['tradable']} tradable ({res['universe']} listed); "
-          f"{res['fundamentals_missing']} still waiting for fundamentals")
+    now = datetime.now(timezone.utc)
+    if us_session(now) == "CLOSED":
+        print("Outside the US session (weekdays, 4am to 8pm New York); skipped.")
+        return 0
+    if a.demo and not a.out:
+        p.error("--demo requires --out (CSV only)")
+    try:
+        sheet = None if a.demo else connect()
+    except SheetConfigError as e:
+        print(str(e))
+        return 0
+    except Exception:
+        print("Cannot open the Google Sheet; check the Sheets API, service-account access and connection.")
+        return 1
+    # Demo state is separate, so synthetic names never enter the live delivery queue.
+    store = Store(str(a.db) + ".demo.db" if a.demo else a.db)
+
+    def save_pending(pending):
+        _save(store, "smallcap_sheet_pending", pending)
+
+    def flush(pending):
+        deliver(sheet, pending, save_pending)
+        _save(store, "smallcap_list", pending["tickers"])
+        save_pending(None)
+
+    try:
+        pending = _load(store, "smallcap_sheet_pending", None)
+        if pending and sheet is not None:
+            flush(pending)
+            print("Retried the saved Sheet delivery; next hourly run will scan fresh data.")
+            return 0
+        if a.universe:
+            tickers, note = load_universe(Path(a.universe).read_text(encoding="utf-8")), "list from your file"
+        else:
+            tickers, note = universe(store, now)
+        print(note)
+
+        def queue(result):
+            save_pending({"shortlist": shortlist_rows(result), "log": log_rows(result),
+                          "tickers": [r["ticker"] for r in result["rows"]]})
+
+        res = run(get_provider("demo" if a.demo else "yahoo"), tickers, store, now,
+                  on_result=queue if sheet is not None else None)
+        if sheet is not None:
+            flush(_load(store, "smallcap_sheet_pending", None))
+        if a.out:
+            write_csv(res, Path(a.out))
+        print(f"{res['qualified']} qualified of {res['tradable']} tradable ({res['universe']} listed); "
+              f"{res['fundamentals_missing']} still waiting for fundamentals")
+        return 0
+    except Exception:
+        print("Smallcap job failed; saved Sheet deliveries will retry next run. "
+              "Check the connection, Sheet access, stock list and local database.")
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

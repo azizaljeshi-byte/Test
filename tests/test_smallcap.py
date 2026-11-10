@@ -155,3 +155,32 @@ def test_screener_asks_for_stocks_in_the_size_bands_and_the_list_rebuilds_weekly
         assert False
     except ValueError:
         pass
+
+
+def test_sheet_queue_is_saved_before_event_baseline_advances(monkeypatch):
+    monkeypatch.setattr(sc, "levels_of", lambda h, n: {"support": None, "resistance": None})
+    store = Store()
+    p = Provider({"AAA": GOOD, "BBB": GOOD}, {"AAA": bars(), "BBB": bars()})
+    sc.run(p, ["AAA"], store, NOW)
+    saved = []
+
+    def queue(result):
+        import json
+        assert json.loads(store.get_setting("smallcap_list")) == ["AAA"]
+        saved.extend(result["log"])
+        raise OSError("disk full")
+
+    import pytest
+    with pytest.raises(OSError):
+        sc.run(p, ["AAA", "BBB"], store, NOW + timedelta(hours=1), on_result=queue)
+    assert [(r["ticker"], r["event"]) for r in saved] == [("BBB", "Entered the shortlist")]
+    assert store.get_setting("smallcap_list") == '["AAA"]'
+
+
+def test_fundamental_refresh_never_exceeds_40_and_next_run_covers_the_rest():
+    tickers = [f"T{i}" for i in range(55)]
+    provider, cache = Provider({t: GOOD for t in tickers}, {}), {}
+    assert sc.refresh_fundamentals(provider, tickers, cache, NOW) == 40
+    assert len(provider.calls) == 40
+    assert sc.refresh_fundamentals(provider, tickers, cache, NOW + timedelta(hours=1)) == 15
+    assert len(set(provider.calls)) == 55

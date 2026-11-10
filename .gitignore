@@ -6,3 +6,7 @@ data/*.bin
 .pytest_cache/
 .env
 portfolio.yaml
+
+# Smallcap local exports and optional local Google key files
+smallcap_out/
+*service-account*.json
