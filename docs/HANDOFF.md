@@ -94,6 +94,12 @@ against each other. On top of that, every stock gets a plain-English briefing an
     - **Readers:** both the app and the GitHub job read it.
     - **New rows:** get an automatic company overview in the Fleet tab.
     - **Fallback:** the YAML list.
+**Small, mid and tiny company shortlist** (`smallcap.py`, built Nov 2026, not wired to a schedule or the Sheet yet). Its own job, not an app page; display only.
+    - **List:** rebuilt every 7 days from TradingView's public screener (common stock, NASDAQ/NYSE/AMEX, $50M-$10B, over $1, most traded first, max 800); `--universe file.csv` overrides it; a failed refresh keeps the old list.
+    - **Fundamentals test (`fund_check`):** revenue growth, profit, debt and cash flow must each pass or be unknown, at least 3 of 4 known, size in a band, price not "Rich". Constants at the top of the file are the owner's words as numbers.
+    - **Shortlist row:** price, day move, Moving/Quiet, volume vs normal, RSI/MACD/ATR with arrows against about an hour ago, support and resistance (`candidates.extract`), value label, fundamentals line.
+    - **State:** fundamentals cached 7 days (40 per run), hourly snapshots for the arrows, last shortlist for the Log, all in the `settings` table of the job's own `Store`.
+    - **Output:** `shortlist.csv` and `log.csv`. Still to build: write them to the owner's Sheet (two tabs, Shortlist and Log) and run hourly in the US session.
 17. **Navigation.**
     - **Driven by the URL:** `?view=radar|turbo|target|market|log|fleet|research&t=TICKER`, so cards, brief tickers and scan results link to Details.
     - **Radar filters follow card verdicts and show counts:** Risk, Opportunity, Hold, Held, Watch.
