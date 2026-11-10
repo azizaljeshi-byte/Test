@@ -8,7 +8,7 @@ from stockwatch import smallcap as sc
 
 GOOD = dict(name="Good Co", market_cap=800e6, revenue_growth=0.25, earnings_growth=0.3, profit_margin=0.1, debt_to_equity=0.4,
             current_ratio=2.0, free_cash_flow=20e6, total_cash=50e6, peg=1.0)
-NOW = datetime(2026, 11, 10, 15, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 11, 10, 22, 0, tzinfo=timezone.utc)      # after the close, so the day bar is whole
 
 
 def test_universe_cleans_dedupes_and_skips_headers():
@@ -184,3 +184,24 @@ def test_fundamental_refresh_never_exceeds_40_and_next_run_covers_the_rest():
     assert len(provider.calls) == 40
     assert sc.refresh_fundamentals(provider, tickers, cache, NOW + timedelta(hours=1)) == 15
     assert len(set(provider.calls)) == 55
+
+
+def test_levels_come_from_the_real_level_finder_not_a_missing_module():
+    rng = np.random.default_rng(3)
+    n = 500
+    idx = pd.bdate_range(end="2026-11-10", periods=n)
+    c = 20 * np.exp(np.cumsum(rng.normal(0.0004, 0.02, n)))
+    h = pd.DataFrame({"Open": c, "High": c * 1.01, "Low": c * .99, "Close": c, "Volume": np.full(n, 2e6)}, index=idx)
+    lv = sc.levels_of(h, datetime(2026, 11, 10, 22, 0, tzinfo=timezone.utc))
+    assert lv["support"] is not None and lv["support"] > 0
+
+
+def test_volume_so_far_is_compared_with_a_normal_morning():
+    open_now = datetime(2026, 11, 10, 16, 0, tzinfo=timezone.utc)            # 11:00 New York: 90 of the 390 session minutes
+    assert abs(sc.session_fraction("2026-11-10", open_now) - 90 / 390) < 1e-9
+    assert sc.session_fraction("2026-11-09", open_now) == 1.0                  # an old bar is a whole day
+    assert sc.session_fraction("2026-11-10", datetime(2026, 11, 10, 23, 0, tzinfo=timezone.utc)) == 1.0     # after the close
+    h = bars(vol=1_000_000)
+    h.iloc[-1, h.columns.get_loc("Volume")] = 1_000_000 * 90 / 390
+    assert abs(sc.tech_values(h, open_now)["relvol"] - 1.0) < 0.05             # a normal morning reads as normal
+    assert sc.tech_values(h)["relvol"] < 0.3                                  # without the clock it would look dead

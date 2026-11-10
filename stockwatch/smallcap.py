@@ -245,9 +245,11 @@ def arrow(now, before, tol: float) -> str:
 def levels_of(hist, now) -> dict:
     """Nearest support and resistance from the app's own level finder; unknown when it cannot place them."""
     try:
-        from . import candidates
-        from .cis import decision
-        done, _note, _last = decision.current_bars(hist.iloc[-420:], now)
+        from .cis import candidates, decision          # the same level finder status.py uses
+        done, why, _last = decision.current_bars(hist.iloc[-420:], now)
+        if done is None:
+            log.info("levels unavailable: %s", why)
+            return {"support": None, "resistance": None}
         pk, _diag = candidates.extract(done.iloc[-400:], "STATUS", "provider")
         close = float(done["Close"].iloc[-1])
         if pk is None:
@@ -260,7 +262,19 @@ def levels_of(hist, now) -> dict:
         return {"support": None, "resistance": None}
 
 
-def tech_values(hist) -> dict | None:
+def session_fraction(day, now: datetime | None) -> float:
+    """How much of the regular session (9:30 to 16:00 New York) has passed, when `day` is today and the market is open; otherwise 1.
+    Used so a morning's partial volume is compared with a normal morning, not with a whole normal day."""
+    if now is None:
+        return 1.0
+    ny = now.astimezone(NY)
+    if str(day) != str(ny.date()) or ny.weekday() > 4:
+        return 1.0
+    minutes = ny.hour * 60 + ny.minute - (9 * 60 + 30)
+    return 1.0 if minutes <= 0 or minutes >= 390 else max(0.1, minutes / 390)
+
+
+def tech_values(hist, now: datetime | None = None) -> dict | None:
     if hist is None or len(hist) < MIN_BARS:
         return None
     ind = technical.indicators(hist)
@@ -270,8 +284,9 @@ def tech_values(hist) -> dict | None:
         return None
     avg_vol = _n(last["VolAvg20"])
     vol = _n(last["Volume"])
+    frac = session_fraction(str(ind.index[-1])[:10], now)
     return {"price": close, "day": close / pclose - 1, "rsi": _n(last["RSI"]), "macd": _n(last["MACD"] - last["MACD_signal"]),
-            "atr": atr, "atr_pct": atr / close, "relvol": (vol / avg_vol if vol is not None and avg_vol else None),
+            "atr": atr, "atr_pct": atr / close, "relvol": (vol / frac / avg_vol if vol is not None and avg_vol else None),
             "avg_dollars": (avg_vol * close if avg_vol else None), "as_of": str(ind.index[-1])[:10]}
 
 
@@ -341,7 +356,7 @@ def run(provider, tickers: list[str], store=None, now: datetime | None = None, o
     hist = provider.bulk_history(tuple(tickers))
     tech, dropped = {}, {"no prices": 0, "thin trading or under $1": 0}
     for t in tickers:
-        v = tech_values(hist.get(t))
+        v = tech_values(hist.get(t), now)
         if v is None:
             dropped["no prices"] += 1
         elif v["price"] < MIN_PRICE or (v["avg_dollars"] or 0) < MIN_DOLLAR_VOL:
