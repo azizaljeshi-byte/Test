@@ -3,7 +3,7 @@ Setup (all on closed daily bars, no look-ahead): uptrend = EMA10 above EMA20 and
 but closes above EMA20, then a later day closes above the previous day's high (the bounce). Buy at that close. Stop = lowest low of the dip, minus 0.2%.
 Exit = the first of: stop (a close under it, sold at the close), "extension" (close 3 ATR or more above EMA10), or "crossback failed" (close under both EMAs).
 Compared with a plain baseline: buying the same number of random uptrend days and holding for the same days. Costs ignored. Uses the S&P 500 list and 5 years,
-so it carries survivorship bias (today's members only). The download is kept in data/study_cache_5y.pkl for a day."""
+so it carries survivorship bias (today's members only). The download is kept in data/ema_cache_5y.pkl for a day."""
 from __future__ import annotations
 
 import logging
@@ -22,7 +22,8 @@ sys.path.insert(0, str(ROOT))
 warnings.filterwarnings("ignore")
 logging.disable(logging.CRITICAL)
 
-CACHE = ROOT / "data" / "study_cache_5y.pkl"
+CACHE = ROOT / "data" / "ema_cache_5y.pkl"
+OLD_CACHE = ROOT / "data" / "study_cache_5y.pkl"   # the recovery study's file; an earlier run of this script wrongly wrote an empty one there
 DIP_BARS, MAX_HOLD, EXT_ATRS, STOP_PAD, MAX_RISK = 5, 60, 3.0, 0.002, 0.12
 
 
@@ -43,10 +44,21 @@ def fetch(tickers: list, period: str = "5y") -> dict:
 
 
 def load(tickers: list) -> dict:
-    if CACHE.exists() and time.time() - CACHE.stat().st_mtime < 86400:
-        return pickle.loads(CACHE.read_bytes())
+    try:
+        if isinstance(pickle.loads(OLD_CACHE.read_bytes()), dict):   # wrong format for the recovery study: remove it
+            OLD_CACHE.unlink()
+    except Exception:
+        pass
+    try:
+        if CACHE.exists() and time.time() - CACHE.stat().st_mtime < 86400:
+            frames = pickle.loads(CACHE.read_bytes())
+            if frames:
+                return frames
+    except Exception:
+        pass
     frames = fetch(tickers)
-    CACHE.write_bytes(pickle.dumps(frames))
+    if frames:
+        CACHE.write_bytes(pickle.dumps(frames))
     return frames
 
 
@@ -115,10 +127,13 @@ def stats(name: str, rets: list[float], rs: list[float] | None = None, days: lis
 
 def main() -> None:
     from stockwatch.market import load_universe
-    tickers = list(load_universe())
+    tickers = list(load_universe()["ticker"])
     print(f"Downloading {len(tickers)} tickers (5 years of daily bars)...")
     frames = load(tickers)
     print(f"Got {len(frames)} tickers.\n")
+    if not frames:
+        print("No prices came back from Yahoo; try again in a few minutes.")
+        return
     random.seed(1)
     trades, base, hold_all = [], [], []
     for t, raw in frames.items():
@@ -136,6 +151,8 @@ def main() -> None:
     stats("random uptrend day, same hold", base)
     print(f"{'buy and hold (avg stock)':<26} {np.mean(hold_all):+.0%} over the whole period\n")
     print("How the trades ended:")
+    if not trades:
+        return
     df = pd.DataFrame(trades)
     for why, g in df.groupby("why"):
         print(f"  {why:<17} {len(g):>5} trades  avg {g['ret'].mean():+.2%}")
