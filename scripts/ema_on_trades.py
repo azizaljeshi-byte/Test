@@ -26,11 +26,28 @@ CACHE = ROOT / "data" / "ema_trades_cache.pkl"
 
 
 class ReadOnlyStore:
-    """Just enough of Store to read the books while the app is running (the app keeps the database locked for writing)."""
+    """Just enough of Store to read the books while the app is running: the app keeps its database locked, so this reads a private copy of the file
+    (with its -wal/-shm side files, if any), trying again if the copy was caught mid-write."""
     def __init__(self):
+        import shutil
         import sqlite3
+        import tempfile
         from stockwatch.store import DEFAULT_DB
-        self.conn = sqlite3.connect(f"file:{Path(DEFAULT_DB).resolve().as_posix()}?mode=ro", uri=True, timeout=30)
+        src, last = Path(DEFAULT_DB).resolve(), None
+        for attempt in range(5):
+            self.tmp = tempfile.mkdtemp(prefix="ema_db_")
+            try:
+                for suffix in ("", "-wal", "-shm"):
+                    f = Path(str(src) + suffix)
+                    if f.exists():
+                        shutil.copy2(f, Path(self.tmp) / f.name)
+                self.conn = sqlite3.connect(str(Path(self.tmp) / src.name), timeout=30)
+                self.conn.execute("SELECT value FROM settings LIMIT 1").fetchone()
+                return
+            except Exception as e:
+                last = e
+                time.sleep(3)
+        raise RuntimeError(f"could not read a copy of the database: {last}")
 
     def get_setting(self, key, default=None):
         r = self.conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
