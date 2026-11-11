@@ -35,3 +35,39 @@ def test_a_new_setup_found_by_the_scan_is_written(tmp_path, monkeypatch):
     assert [r["ticker"] for r in live.market_scan(None, st)] == []           # not new the second time
     rows = list(csv.reader(open(tmp_path / "Quick log" / b.FILE, encoding="utf-8-sig")))
     assert len(rows) == 2
+
+
+class FakeTab:
+    def __init__(self):
+        self.rows = []
+
+    def append_rows(self, rows, value_input_option=None):
+        self.rows += rows
+
+    def update(self, **k):
+        pass
+
+
+class FakeSheet:
+    def __init__(self, tab=None, fail=False):
+        self.tab, self.fail = tab, fail
+
+    def worksheet(self, name):
+        if self.fail:
+            raise RuntimeError("boom https://docs.google.com/spreadsheets/d/SECRET")
+        return self.tab
+
+
+def test_google_sheet_gets_the_rows_and_failures_wait_for_the_next_scan(tmp_path, monkeypatch):
+    from stockwatch.store import Store
+    st = Store(tmp_path / "t.db")
+    monkeypatch.delenv("STOCKWATCH_BUYSETUP_SHEET_URL", raising=False)
+    monkeypatch.delenv("STOCKWATCH_SMALLCAP_SHEET_URL", raising=False)
+    assert b.to_google(st, [R], NOW, connect=lambda env: None) == ""            # not set up: nothing sent, nothing lost
+    assert st.get_setting(b.PENDING_KEY) is None                                # nothing queued without a sheet (the CSV has them)
+    monkeypatch.setenv("STOCKWATCH_SMALLCAP_SHEET_URL", "https://docs.google.com/spreadsheets/d/x")
+    err = b.to_google(st, [R], NOW, connect=lambda env: FakeSheet(fail=True))
+    assert "RuntimeError" in err and "SECRET" not in err and "docs.google" not in err
+    tab = FakeTab()
+    assert b.to_google(st, [{**R, "ticker": "XYZ"}], NOW, connect=lambda env: FakeSheet(tab)) == ""
+    assert [r[2] for r in tab.rows] == ["ABC", "XYZ"] and st.get_setting(b.PENDING_KEY) == "[]"

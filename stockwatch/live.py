@@ -128,7 +128,8 @@ def market_scan(provider, store: Store | None = None, progress=None) -> list[dic
         try:
             from . import buy_setups_log
             err = buy_setups_log.append(fresh)                       # the owner reads these on a sheet instead of the phone (11 Nov)
-            store.set_setting("buy_setups_sheet_error", err)
+            gerr = buy_setups_log.to_google(store, fresh)            # and on his Google Sheet, like the small-cap one
+            store.set_setting("buy_setups_sheet_error", "; ".join(x for x in (err, gerr) if x))
         except Exception:
             log.exception("buy setups sheet step failed")
         return fresh
