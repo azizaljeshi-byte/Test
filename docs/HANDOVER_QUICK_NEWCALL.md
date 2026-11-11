@@ -8,6 +8,37 @@ Read `CLAUDE.md` and `docs/COLLABORATION.md` first. These change trading rules, 
 constant with a comment giving the owner, the date and the evidence, like the existing ones in `stockwatch/quick.py`. Add tests for each.
 Do not deploy mid-session: the owner applies updates after the US close.
 
+## FINAL SCOPE: what to code (owner, 11 Nov, 14:26 Riyadh). This section overrides everything below it.
+The owner's decision after the review: **keep every Quick and New call rule exactly as it is** (entries, the pullback rule, exits, sizing rules,
+blocks, grades, ranking). Code only these two things, for both accounts:
+
+**A. Start each account with $100,000 instead of $50,000.**
+- `stockwatch/quick.py` `START_CASH` and `stockwatch/paper.py` `START_CASH`: 50,000 -> 100,000.
+- Existing books are kept (trades, open positions, history): lift them once, cash +$50,000 and `start` = 100,000. Quick already has `top_up()`
+  for this (it did $10,000 -> $50,000); the New call book (`paper.Book`, loaded in `paper_newcall.load_book`) needs the same one-time lift.
+  Never reset or lose a book. Test both: a $50,000 book is lifted once, a $100,000 book is left alone, trades and positions unchanged.
+- Sizes are a percent of the account, so they double on their own (Quick: grade A 5% = $5,000, B 3% = $3,000; New call cap 15% = $15,000), and
+  Quick's day-loss stop (1%) becomes $1,000. That follows from "keep as is"; say it in the pull request so the owner sees it.
+- No new cap on the number of stocks (owner: "I'm not going to cap the stocks, they decide"). Open question for the owner, do not change
+  without his word: the existing caps `quick.MAX_OPEN = 15` and `paper_newcall.MAX_POSITIONS = 10` are still in the code.
+
+**B. Open both accounts to the whole S&P 500** (today: the ~120 tracked stocks plus up to 30 market extras, `live.wide_extras`, `WIDE_MAX = 30`;
+about 380 S&P stocks are never considered). Same rules for every stock; an untracked stock gets no Radar card and no alerts, as today.
+- Do not simply raise `WIDE_MAX` to 400: the live sweep reads each stock on its own and Yahoo allows 3 requests in flight (`@_yahoo`). Use bulk
+  reads: `funnel.py` already reads all ~500 S&P stocks every 5 minutes, and `bulk_history` / `bulk_quotes` exist in `data.py`.
+- New call: once a day after the close (and once before the open), work out the one call (`onecall.py`) for every S&P stock from bulk daily
+  bars; during the session a stock whose call is BUY or ADD joins the live list so its price, volume pace and stop are watched. Missing or
+  blocked data is "unknown", never a call.
+- Quick: candidates come from the whole-market picture (queue item 33: scan, rank every setup, enter the best); a stock that qualifies joins
+  the live list for its 20-second samples and the pullback watch. A stock with an open trade always stays on the live list.
+- Long work stays on the tracker thread (`live.py`), never in the page. Measure the sweep time before and after; it must not slow the app.
+- Tests with the fake provider: an untracked S&P stock can be bought by each account under the unchanged rules; rate limits respected; the
+  tracked-stock behaviour is identical to today.
+- Who: Sonnet or Claude for B (scan, rate limits, tracker thread). Codex can take A.
+
+**Not to be coded** (kept below only as the record of the analysis): Q1, Q3, Q4, Q5, Q6, N1, N2, N4, N7, N8, the no-money-limit idea, the
+15-trade cap, the sector cap and "replace the weakest". Q2 and N6 are what B implements. Task 0 (bar replay) is optional now.
+
 ## How far to trust the evidence
 11 trading days, one crash day (Thu 5 Nov), Quick's rules changed on 7 Nov (only 12 trades under today's rules). The patterns were found on
 the same trades they are judged on. Candidate numbers are the price an hour after the flag, not entries with stops. So: task 0 comes first.
@@ -50,7 +81,7 @@ win rate have to come from Q2.
 What New call buys is far better than anything it skips (bought: 13 of 21 good, +2.8% at the close; every skipped group averages worse), so the
 aim is a bigger pool (N6) and one new entry type (N7), not looser checks. Its real record to 9 Nov is 26 wins of 46 (57%), +$1,426.
 
-## Both accounts: no money limit, a cap on open trades (owner, 11 Nov)
+## Superseded the same day (see FINAL SCOPE): no money limit, a cap on open trades
 The owner wants Quick and New call to take every good trade with no cash ceiling (no fake $50,000), and at most 15 open trades each.
 - **Fixed dollars per trade** replace the percent-of-account sizing (`quick.SIZE_PCT`, `quick.POSITION_PCT`, `paper_newcall.SIZE_CAP_PCT`): proposed $5,000 a trade for both (to be confirmed by the owner; grade and half-size rules scale from it). Cash can go negative or is not tracked; the page shows money in use, realized and unrealized result, and result per trade in percent.
 - **Cap: 15 open trades** per account (`quick.MAX_OPEN` is already 15; `paper_newcall.MAX_POSITIONS` 10 -> 15). At the cap a new setup is logged as skipped ("15 open").
