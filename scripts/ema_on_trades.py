@@ -43,9 +43,12 @@ class ReadOnlyStore:
                         shutil.copy2(f, Path(self.tmp) / f.name)
                 self.conn = sqlite3.connect(str(Path(self.tmp) / src.name), timeout=30)
                 self.conn.execute("SELECT value FROM settings LIMIT 1").fetchone()
+                import atexit
+                atexit.register(shutil.rmtree, self.tmp, True)      # the copy is big: remove it when done
                 return
             except Exception as e:
                 last = e
+                shutil.rmtree(self.tmp, True)
                 time.sleep(3)
         raise RuntimeError(f"could not read a copy of the database: {last}")
 
