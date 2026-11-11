@@ -70,3 +70,54 @@ def test_a_sweep_reads_positions_first_then_watchlist_then_market_extras():
         engine.evaluate = orig
     assert seen == ["H1", "H2", "W1", "W2", "X1"]
     assert out == ["W1", "H1", "X1", "W2", "H2"]               # results keep the order of the list
+
+
+def _funnel_moves(st, moves, minutes_ago=1):
+    from datetime import datetime, timedelta
+    from stockwatch import funnel
+    from stockwatch.data import NY
+    at = (datetime.now(NY) - timedelta(minutes=minutes_ago)).isoformat()
+    st.set_setting(funnel.KEY_MOVES, json.dumps({"at": at, "moves": moves}))
+
+
+def test_whole_sp500_feeds_in_turn_one_call_buys_then_risers_then_scan_setups(tmp_path):
+    st = store_with(tmp_path, [("SCAN1", "WATCH"), ("SCAN2", "WATCH")], quick_open=["OPEN"])
+    st.set_setting(live.BUYS_KEY, json.dumps({"at": "x", "buys": ["B1", "B2", "B3"]}))
+    _funnel_moves(st, {"R1": [4.0, 10], "R2": [2.5, 10], "DOWN": [-3.0, 10], "HELD": [9.0, 10]})
+    got = live.wide_extras(st, {"HELD"}, limit=6)
+    assert got == ["OPEN", "B1", "R1", "SCAN1", "B2", "R2", "SCAN2"][:7]       # open trade first, then one from each list in turn
+    assert "DOWN" not in got and "HELD" not in got
+    assert len(live.wide_extras(st, set(), limit=2)) == 1 + 2                   # the ceiling counts new stocks only
+
+
+def test_stale_risers_are_ignored_and_a_stock_is_added_once(tmp_path):
+    st = store_with(tmp_path, [("B1", "WATCH")])
+    st.set_setting(live.BUYS_KEY, json.dumps({"at": "x", "buys": ["B1"]}))
+    _funnel_moves(st, {"OLD": [8.0, 10]}, minutes_ago=60)
+    assert live.wide_extras(st, set(), limit=10) == ["B1"]
+
+
+def test_whole_sp500_one_call_pass_lists_only_known_buys(monkeypatch):
+    import pandas as pd
+    from stockwatch import market, onecall
+    calls = {"AAA": {"known": True, "call": "BUY", "distance_swings": 1.2, "exit_line": 9.0},
+             "BBB": {"known": True, "call": "BUY", "distance_swings": 0.4, "exit_line": 8.0},
+             "CCC": {"known": True, "call": "WAIT", "distance_swings": 3, "exit_line": 7.0},
+             "DDD": {"known": False, "call": "UNKNOWN"}}
+    monkeypatch.setattr(onecall, "assess", lambda h, now=None, **k: calls[h.attrs["t"]])
+    hs = {}
+    for t in list(calls) + ["SHORT"]:
+        df = pd.DataFrame({"Close": [1.0] * (10 if t == "SHORT" else 200)})
+        df.attrs["t"] = t
+        hs[t] = df
+    assert [b["ticker"] for b in market.one_call_buys(hs)] == ["BBB", "AAA"]     # closest to the exit line first; short and unknown skipped
+
+
+def test_the_scan_saves_the_one_call_buys_for_the_live_sweep(tmp_path, monkeypatch):
+    from stockwatch import market
+    st = Store(tmp_path / "t.db")
+    monkeypatch.setattr(live, "current_portfolio", lambda store, wide=False: Portfolio(holdings=[], tiers={}))
+    monkeypatch.setattr(market, "run", lambda *a, **k: {"results": [], "stats": None, "buys": [{"ticker": "ZZZ"}, {"ticker": "YYY"}]})
+    live.market_scan(None, st)
+    assert json.loads(st.get_setting(live.BUYS_KEY))["buys"] == ["ZZZ", "YYY"]
+    assert live.wide_extras(st, set(), limit=5) == ["ZZZ", "YYY"]

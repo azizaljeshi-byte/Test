@@ -28,7 +28,11 @@ MARKET_LOCK = threading.Lock()   # one S&P scan at a time (tracker or the button
 SWEEP_LOCK = threading.Lock()
 
 
-WIDE_MAX = int(os.getenv("STOCKWATCH_WIDE_MAX", "30"))     # market stocks added to the live sweep (0 switches it off)
+# A technical ceiling on the live sweep (Yahoo allows 3 requests in flight), NOT a trading cap: every untracked S&P stock that
+# qualifies is joined until the ceiling; stocks with an open trade are always added on top of it. 0 switches it off.
+WIDE_MAX = int(os.getenv("STOCKWATCH_WIDE_MAX", "90"))
+BUYS_KEY = "sp500_buys"            # {"at", "buys": [tickers]}: the one-call BUYs found in the last whole-S&P scan
+MOVERS_MAX_AGE_S = 15 * 60
 
 
 def wide_extras(store: Store, held: set[str], limit: int | None = None) -> list[str]:
@@ -49,17 +53,43 @@ def wide_extras(store: Store, held: set[str], limit: int | None = None) -> list[
                     out.append(t)                      # an open trade is always tracked, whatever the limit
     except Exception:
         log.exception("open-trade tickers could not be read")
+    # Whole S&P 500 (owner, 11 Nov): three lists feed the live sweep in turn so no one list fills it. (1) stocks whose one-call
+    # is BUY in the last scan of every constituent (New call), (2) today's biggest risers from the 5-minute funnel read (Quick),
+    # (3) the setups of the old scan. Each list is already ranked.
+    lists: list[list[str]] = []
     try:
-        room = limit
-        for r in (store.latest_market_scan() or {}).get("results", []):
-            t = r.get("ticker")
-            if room <= 0:
-                break
-            if t and t not in held and t not in out and r.get("verdict") != "AVOID":
-                out.append(t)
-                room -= 1
+        raw = store.get_setting(BUYS_KEY)
+        lists.append([t for t in ((json.loads(raw) if raw else {}).get("buys") or [])])
+    except Exception:
+        log.exception("S&P buy list could not be read")
+        lists.append([])
+    try:
+        from . import funnel
+        raw = store.get_setting(funnel.KEY_MOVES)
+        mv = json.loads(raw) if raw else {}
+        at = datetime.fromisoformat(mv["at"]) if mv.get("at") else None
+        ups = [(c[0], t) for t, c in (mv.get("moves") or {}).items() if c and c[0] is not None and c[0] > 0]
+        fresh = at is not None and at.tzinfo is not None and abs((datetime.now(at.tzinfo) - at).total_seconds()) <= MOVERS_MAX_AGE_S
+        lists.append([t for _, t in sorted(ups, reverse=True)] if fresh else [])
+    except Exception:
+        log.exception("movers list could not be read")
+        lists.append([])
+    try:
+        lists.append([r["ticker"] for r in (store.latest_market_scan() or {}).get("results", [])
+                      if r.get("ticker") and r.get("verdict") != "AVOID"])
     except Exception:
         log.exception("market scan list could not be read")
+        lists.append([])
+    room, i = limit, 0
+    while room > 0 and any(lists):
+        lst = lists[i % len(lists)]
+        i += 1
+        while lst:
+            t = lst.pop(0)
+            if t not in held and t not in out:
+                out.append(t)
+                room -= 1
+                break
     return out
 
 
@@ -84,6 +114,10 @@ def market_scan(provider, store: Store | None = None, progress=None) -> list[dic
         before = store.latest_market_scan() or {}
         was = {r["ticker"] for r in before.get("results", []) if r["verdict"] == "BUY SETUP"}
         result = market.run(provider, progress=progress, exclude={h.ticker for h in portfolio.holdings})
+        buys = result.pop("buys", None)
+        if buys is not None:
+            import json
+            store.set_setting(BUYS_KEY, json.dumps({"at": datetime.now().isoformat(timespec="seconds"), "buys": [b["ticker"] for b in buys]}))
         stats = result.pop("stats", None)
         if stats:
             import json
