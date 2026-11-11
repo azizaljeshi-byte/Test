@@ -96,6 +96,24 @@ def universe_stats(histories: dict, names) -> dict:
     return out
 
 
+def one_call_buys(histories: dict, now=None) -> list[dict]:
+    """The New call account's one-call (`onecall.assess`, unchanged) for every stock in the bulk download; returns the BUYs, closest to
+    their exit line first. Uses the daily bars already downloaded: no extra request. Unknown data is skipped, never a call."""
+    from . import onecall
+    out = []
+    for t, h in histories.items():
+        if len(h) < 120:
+            continue
+        try:
+            c = onecall.assess(h, now=now)
+        except Exception:
+            continue
+        if c.get("known") and c.get("call") == "BUY":
+            out.append({"ticker": t, "distance": c.get("distance_swings"), "line": c.get("exit_line")})
+    out.sort(key=lambda r: (r["distance"] is None, r["distance"]))
+    return out
+
+
 def run(provider, top: int = 25, progress=None, exclude: set[str] = frozenset()) -> dict:
     """Full scan. progress(fraction, text) is called as stages complete."""
     def step(frac, text):
@@ -149,7 +167,8 @@ def run(provider, top: int = 25, progress=None, exclude: set[str] = frozenset())
     step(1.0, f"Done: {sum(r['verdict'] == 'BUY SETUP' for r in results)} buy setups among {len(results)} finalists")
     return {"universe": len(tickers), "priced": len(histories), "setups": len(shortlist),
             "results": results, "evaluations": [e for e, _ in evaluated if not e.error],
-            "stats": universe_stats(histories, names)}
+            "stats": universe_stats(histories, names),
+            "buys": one_call_buys(histories)}
 
 
 def main(argv=None):
