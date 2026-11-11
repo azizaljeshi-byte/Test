@@ -20,17 +20,17 @@ def test_enters_on_buy_and_sizes_to_one_percent():
     did = paper_newcall.step(book, {"AAA": snap(line=92.0, band=91.0)}, {"AAA": 100.0}, at(11, 0))
     assert [d["action"] for d in did] == ["ENTER"]
     pos = book.positions["AAA"]
-    assert pos["shares"] == 62 and pos["stop"] == 91.0           # $500 risk / $8 to the line
-    assert book.trades[0]["risk"] == 496.0
+    assert pos["shares"] == 125 and pos["stop"] == 91.0           # $1,000 risk / $8 to the line
+    assert book.trades[0]["risk"] == 1000.0
 
 
 def test_high_risk_gets_half_size_and_cap_applies():
     book = paper.Book()
     paper_newcall.step(book, {"AAA": snap(line=92.0, band=91.0, grade="High")}, {"AAA": 100.0}, at(11, 0))
-    assert book.positions["AAA"]["shares"] == 31
+    assert book.positions["AAA"]["shares"] == 62
     book2 = paper.Book()
     paper_newcall.step(book2, {"AAA": snap(line=99.9, band=99.0)}, {"AAA": 100.0}, at(11, 0))
-    assert book2.positions["AAA"]["shares"] * 100 <= 50_000 * 0.15 + 100     # capped at 15% of the account
+    assert book2.positions["AAA"]["shares"] * 100 == 100_000 * 0.15     # capped at 15% of the account
 
 
 def test_no_entry_in_the_first_five_minutes_late_or_without_a_call():
@@ -65,8 +65,8 @@ def test_exit_on_call_turn_and_at_1545_under_band():
 
 def test_max_positions():
     book = paper.Book()
-    snaps = {f"T{i}": {**snap(line=80.0, band=79.0), "ticker": f"T{i}"} for i in range(12)}
-    for m in (0, 16, 32, 48, 64):                                   # entries are paced: 3 per 15 minutes
+    snaps = {f"T{i}": {**snap(line=80.0, band=79.0), "ticker": f"T{i}"} for i in range(17)}
+    for m in (0, 16, 32, 48, 64, 80):                                   # entries are paced: 3 per 15 minutes
         paper_newcall.step(book, snaps, {k: 100.0 for k in snaps}, at(11, 0) .replace(hour=11 + (m // 60), minute=m % 60))
     assert len(book.positions) == paper_newcall.MAX_POSITIONS
 

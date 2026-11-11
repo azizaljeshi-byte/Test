@@ -146,7 +146,7 @@ def test_a_day_on_the_book_buys_sells_and_journals_with_r():
     done = paper.step(book, {"AAA": s}, {"AAA": 99.5}, at(11, 30))
     assert [x["action"] for x in done] == ["ENTER"] and "AAA" in book.positions
     pos = book.positions["AAA"]
-    assert pos["shares"] * 99.5 <= 0.15 * 50000 + 100 and book.cash < 50000          # capped by the 15% limit
+    assert pos["shares"] * 99.5 <= 0.15 * paper.START_CASH + 100 and book.cash < paper.START_CASH          # capped by the 15% limit
     paper.step(book, {"AAA": s}, {"AAA": 108.5}, at(13, 0), decision.Config(stretch=False))   # a third at the target, stop to entry
     assert book.positions["AAA"]["stop"] == 99.5 and book.positions["AAA"]["t1_done"]
     paper.step(book, {"AAA": s}, {"AAA": 97.0}, at(15, 45))                         # warning exit: half of what is left

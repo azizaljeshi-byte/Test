@@ -12,7 +12,7 @@ from datetime import datetime
 
 from . import decision, tradeplan
 
-START_CASH = 50_000.0
+START_CASH = 100_000.0  # owner, 11 Nov 2026: PR #84 FINAL SCOPE A; existing New call books lifted on load
 RISK_PCT = 1.0
 MAX_POSITION_PCT = 15.0
 MIN_TRADES_TO_JUDGE = 30

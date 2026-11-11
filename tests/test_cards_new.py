@@ -30,6 +30,6 @@ def test_quick_holding_and_no_call(monkeypatch):
 def test_quick_top_up_keeps_trades():
     b = {**quick.new_book(), "cash": 9000.0, "start": 10000.0, "trades": [{"id": 1}]}
     assert quick.top_up(b) is True
-    assert b["cash"] == 49000.0 and b["start"] == 50000.0 and b["trades"] == [{"id": 1}]
+    assert b["cash"] == 99000.0 and b["start"] == 100000.0 and b["trades"] == [{"id": 1}]
     assert quick.top_up(b) is False
     assert quick.POSITION_PCT == 5 and quick.MAX_OPEN == 15

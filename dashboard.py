@@ -882,7 +882,7 @@ if view == "paper":
               help="Fake money only. Sells every open trade in this account at the latest price. The tracker keeps running and picks again on its next cycle.")
     if st.session_state.get("nc_force_msg"):
         st.caption(st.session_state["nc_force_msg"])
-    st.caption("A separate $50,000 account that buys when the new call says BUY near the exit line and sells when it turns EXIT. Fills are simulated at the latest price the tracker holds, so they are approximate. The app only trades while it is awake. Build: wait-1.")
+    st.caption("A separate $100,000 account that buys when the new call says BUY near the exit line and sells when it turns EXIT. Fills are simulated at the latest price the tracker holds, so they are approximate. The app only trades while it is awake. Build: wait-1.")
     with st.expander("Why stocks are not bought · all tracked stocks"):
         st.markdown(whynot.html(whynot.study(store.latest_snapshots())), unsafe_allow_html=True)
     _candidates_block()

@@ -135,9 +135,9 @@ def test_newcall_without_order_buys_nothing():
 def test_newcall_level1_is_half_then_level2_adds():
     book = paper.Book()
     _, res = run(book, 100.0, NOW, [order()])
-    assert res["o1"][0] == "done" and book.positions["AAA"]["shares"] == 31
+    assert res["o1"][0] == "done" and book.positions["AAA"]["shares"] == 62
     _, res2 = run(book, 100.6, NOW + timedelta(minutes=20), [order("BUY_L2", "riding")])
-    assert res2["o1"][0] == "done" and book.positions["AAA"]["shares"] > 31 and book.trades[0]["levels"] == 2
+    assert res2["o1"][0] == "done" and book.positions["AAA"]["shares"] > 62 and book.trades[0]["levels"] == 2
 
 
 def test_newcall_level2_refused_when_not_above_entry():

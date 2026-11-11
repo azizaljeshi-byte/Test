@@ -208,6 +208,13 @@ class Store:
                           (key, value))
         self.conn.commit()
 
+    def replace_setting(self, key: str, expected: str, value: str) -> bool:
+        """Replace only the copy we read, so a book migration cannot overwrite a newer trade."""
+        row = self.conn.execute("UPDATE settings SET value=? WHERE key=? AND value=? RETURNING key",
+                                (value, key, expected)).fetchone()
+        self.conn.commit()
+        return row is not None
+
     # ---- tickers added / removed from the dashboard, layered over portfolio.yaml
 
     def upsert_ticker(self, ticker: str, tier: int, shares: float = 0.0) -> None:

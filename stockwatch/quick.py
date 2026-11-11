@@ -36,7 +36,7 @@ from .data import NY, us_session
 
 log = logging.getLogger("stockwatch.quick")
 BOOK_KEY, MARKS_KEY, STATE_KEY = "quick_book", "quick_marks", "quick_state"
-START_CASH = 50_000.0
+START_CASH = 100_000.0  # owner, 11 Nov 2026: PR #84 FINAL SCOPE A; keep percentage sizing and risk rules
 POSITION_PCT = 5.0            # of the account per trade
 MAX_OPEN = 15
 SAMPLES = 90                   # about 30 minutes of 20-second samples
@@ -130,7 +130,7 @@ def _new_in_window(book: dict, now: datetime) -> int:
 
 
 def top_up(book: dict) -> bool:
-    """One-time: an account that started at $10,000 is lifted to $50,000 (cash +$40,000, trades kept)."""
+    """Lift older books to $100,000 once by adding the difference; trades and positions stay intact."""
     if book["start"] < START_CASH:
         book["cash"] += START_CASH - book["start"]
         book["start"] = START_CASH
@@ -141,8 +141,10 @@ def top_up(book: dict) -> bool:
 def load_book(store, migrate: bool = True) -> dict:
     raw = store.get_setting(BOOK_KEY)
     book = {**new_book(), **json.loads(raw)} if raw else new_book()
-    if migrate:
-        top_up(book)
+    if migrate and top_up(book):
+        # Persist only the lift; save_book trims journals, which a migration must not do.
+        if not store.replace_setting(BOOK_KEY, raw, json.dumps(book, default=str)):
+            return load_book(store, migrate=migrate)
     return book
 
 
