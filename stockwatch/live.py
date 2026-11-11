@@ -124,7 +124,14 @@ def market_scan(provider, store: Store | None = None, progress=None) -> list[dic
             store.set_setting("universe_stats", json.dumps({"at": datetime.now().isoformat(timespec="seconds"), "stats": stats}))
         store.save_market_scan(result)
         new = [r for r in result["results"] if r["verdict"] == "BUY SETUP" and r["ticker"] not in was]
-        return store.record_market_alerts(new)
+        fresh = store.record_market_alerts(new)
+        try:
+            from . import buy_setups_log
+            err = buy_setups_log.append(fresh)                       # the owner reads these on a sheet instead of the phone (11 Nov)
+            store.set_setting("buy_setups_sheet_error", err)
+        except Exception:
+            log.exception("buy setups sheet step failed")
+        return fresh
 
 
 def sweep(provider, store: Store | None = None):
