@@ -23,14 +23,14 @@ database from a copy, the app keeps it locked: see `scripts/ema_on_trades.py`). 
 
 | # | Rule | Evidence (record replay) |
 |---|---|---|
-| Q1 | **Skip wild stocks**: no entry when ATR(14) / price is over `MAX_RANGE_PCT = 6.0`. Log the skip ("too wild: daily swing N% of the price"). | 101 wild trades: 29% wins, -$1,700, red on 8 of 11 days. The other 206: 47% wins, +$95. Whole account: -$1,605 -> +$95, green days 4 -> 7 of 11, worst day -$608 -> -$180. Holds in both weeks (week 2: 55% wins, +$274). Cut-off 5% or 6% both work; 7% and 8% do not. Candidate log agrees for bounces: calm stocks up after an hour 82-87%, wild 18-29%. |
-| Q2 | **Trade calm bounces across the S&P 500**, not only tracked stocks. This is queue item 33 (whole-market scan, rank, enter the best). Start with bounce candidates with ATR/price at or under 4.5% from the candidate list (`funnel.py` already reads all ~500 every 5 minutes). Respect the Yahoo limit (3 in flight; bulk downloads). | 163 untracked calm bounce candidates in 5 days: about 80% up an hour later, +0.5 to +0.8% on average, shallow dips. Tracked bounce candidates: 44% up, -1.5%. Two strong days (3 and 6 Nov) carry most of it. |
-| Q3 | **A stock that runs away without a pullback gets a half-size entry** instead of being dropped (`WATCH_CHASE_PCT` path, "ran away without a pullback"). Constant `RUNAWAY_STARTER = True`, size half of the grade size, normal stop. | 22 dropped candidates: 20 up an hour later, +2.6% on average, all reached +1%. One strong day (9 Nov), so the weakest evidence here: replay before switching on. |
+| Q1 | **Wild stocks stay tradable, at reduced risk** (owner, 11 Nov: do NOT skip them, on up days they catch good moves). When ATR(14) / price is over `WILD_RANGE_PCT = 6.0`: enter at half the grade size (`WILD_SIZE_FRAC = 0.5`) and tag the trade "wild" so it can be judged separately. The replay must also test "wild only when the market is up" (market gate healthy) against half size, and the owner picks. | 101 wild trades: 29% wins, -$1,700, red on 8 of 11 days; green only on the three strong days (27 Oct, 3 Nov, 9 Nov: +$214 together, the other eight days -$1,914), which fits the owner's point. The other 206 trades: 47% wins, +$95. Half size on the records: wild loss -$1,700 -> about -$850. Candidate log, bounces: calm stocks up after an hour 82-87%, wild 18-29%. |
+| Q2 | **Open Quick to the S&P 500: rank every setup, then decide the entry** (owner confirmed 11 Nov). This is queue item 33. Not only tracked stocks; the pullback rule applies to these too. Start from the candidate list (`funnel.py` already reads all ~500 every 5 minutes). Respect the Yahoo limit (3 in flight; bulk downloads). | 163 untracked calm bounce candidates in 5 days: about 80% up an hour later, +0.5 to +0.8% on average, shallow dips. Tracked bounce candidates: 44% up, -1.5%. Two strong days (3 and 6 Nov) carry most of it. |
+| Q3 | **Pullback rule stays exactly as it is** (owner, 11 Nov: the pullback must not disappear). No runaway entry. | For the record only: 22 candidates dropped as "ran away without a pullback" were up +2.6% an hour later (20 of 22), all on one strong day (9 Nov). Not to be coded. |
 | Q4 | **Only the #1 ranked setup each round.** | Ranked #1: 25 trades, 52% wins, +$91. Ranked #2 or lower: 36 trades, 19% wins, -$858. Record replay with Q1: +$169. |
 | Q5 | **Same size for grade A and B** (`SIZE_PCT`), until grade A proves better. | Grade A: 101 trades, 37% wins, -$1,168; B: 113, 44%, -$120. A stocks are wilder (average swing 6.9% against 4.2%); in calm stocks A and B are equal (49% and 47%). Small effect on its own (-$1,605 -> -$1,414). |
 | Q6 (watch, do not code yet) | Entries on 2-5x normal volume. | 36 trades, 19% wins, -$1,031, but 16 of them are one day (6 Nov). Add to the replay only. |
 
-Q1 + Q4 + Q5 together on the records: 192 trades, 48% wins, +$200, 8 of 11 days green. That is break-even, not an edge: the extra trades and the
+Owner decisions so far (11 Nov): Q1 changed to reduced risk, Q2 yes, Q3 dropped (pullback stays). Q4 and Q5 not decided yet. The extra trades and the
 win rate have to come from Q2.
 
 ## New call (`stockwatch/paper_newcall.py`)
@@ -47,5 +47,5 @@ win rate have to come from Q2.
 Item 35: indicator fixes (short history, Bollinger width, RSI 100 where it should be unknown). Item 36: support and resistance fixes.
 
 ## Who can take what
-Codex: task 0, Q1, Q4, Q5, N1, N2 (small, well-bounded, with tests). Sonnet or Claude: Q2 (touches the scan, the rate limits and the tracker
-thread) and Q3. N4 waits for the replay result and the owner's word.
+Codex: task 0, Q1, N1, N2, and Q4, Q5 once the owner decides (small, well-bounded, with tests). Sonnet or Claude: Q2 (touches the scan, the rate
+limits and the tracker thread). The New call list is open: the owner will add a point. N4 waits for the replay result and the owner's word.
