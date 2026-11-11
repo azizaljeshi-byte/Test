@@ -25,6 +25,18 @@ logging.disable(logging.CRITICAL)
 CACHE = ROOT / "data" / "ema_trades_cache.pkl"
 
 
+class ReadOnlyStore:
+    """Just enough of Store to read the books while the app is running (the app keeps the database locked for writing)."""
+    def __init__(self):
+        import sqlite3
+        from stockwatch.store import DEFAULT_DB
+        self.conn = sqlite3.connect(f"file:{Path(DEFAULT_DB).resolve().as_posix()}?mode=ro", uri=True, timeout=30)
+
+    def get_setting(self, key, default=None):
+        r = self.conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return r[0] if r else default
+
+
 def skip(t) -> bool:
     r = str(t.get("exit_reason") or "")
     return t.get("status") != "CLOSED" or r.startswith("forced sell") or r.startswith("owner override")
@@ -95,8 +107,7 @@ def block(title: str, trades: list[dict]) -> None:
 
 def main() -> None:
     from stockwatch import paper_newcall, quick
-    from stockwatch.store import Store
-    store = Store()
+    store = ReadOnlyStore()
     books = {"QUICK": [t for t in quick.load_book(store, migrate=False)["trades"] if not skip(t)],
              "NEW CALL": [t for t in paper_newcall.load_book(store).trades if not skip(t)]}
     tickers = sorted({t["ticker"] for ts in books.values() for t in ts})
