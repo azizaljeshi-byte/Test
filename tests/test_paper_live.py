@@ -55,7 +55,7 @@ def test_tick_enters_in_session_skips_unknown_tickers_and_saves_the_book(env, mo
     st = paper_live.tick(env, datetime(2026, 10, 26, 11, 30, tzinfo=NY))
     assert "NOPE" in st["skipped"] and "AAA" not in st["skipped"]
     book = paper_live.status(env)["book"]
-    assert [t["ticker"] for t in book.trades] == ["AAA"] and book.cash < 50000
+    assert [t["ticker"] for t in book.trades] == ["AAA"] and book.cash < paper.START_CASH
     feed(env, datetime(2026, 10, 26, 11, 35, tzinfo=NY))
     paper_live.tick(env, datetime(2026, 10, 26, 11, 35, tzinfo=NY))            # a second cycle does not buy again
     assert len(paper_live.status(env)["book"].trades) == 1

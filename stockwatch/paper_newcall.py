@@ -1,4 +1,4 @@
-"""The "New call" paper account (owner, 2026-10-27): its own $50,000 fake account that trades the technical-first one-call
+"""The "New call" paper account (owner, 2026-10-27): its own $100,000 fake account that trades the technical-first one-call
 (`onecall.py`) beside the Paper and whole-watchlist accounts, which are untouched. Nothing real is traded and no alert is sent.
 
 Rules (every stock the app tracks, regular session only, live price must be fresh):
@@ -27,7 +27,7 @@ from .data import NY, us_session
 
 BOOK_KEY, STATE_KEY = "paper_newcall_book", "paper_newcall_state"
 OVERRIDE = "owner override"
-MAX_POSITIONS = 10
+MAX_POSITIONS = 15  # owner, 11 Nov 2026: PR #84 FINAL SCOPE A; match Quick's cap, no other rule changes
 SIZE_CAP_PCT = 15.0
 BLACKOUT_MIN = 5          # owner, 4 Nov: start trading 5 minutes after the open (was 60: the first hour)
 MIN_PACE = 0.8        # no buy unless today's volume is at least this much of normal for the time of day (a setup that is not established)
@@ -151,7 +151,19 @@ def _profit_check(pos: dict, price: float, move: float, now: datetime, mins: flo
 
 def load_book(store) -> paper.Book:
     raw = store.get_setting(BOOK_KEY)
-    return paper.Book.from_dict(json.loads(raw)) if raw else paper.Book()
+    if not raw:
+        return paper.Book()
+    saved = json.loads(raw)
+    book = paper.Book.from_dict(saved)
+    # Owner, 11 Nov 2026 (PR #84 FINAL SCOPE A): add capital, never reset the book.
+    if book.start < paper.START_CASH:
+        book.cash += paper.START_CASH - book.start
+        book.start = paper.START_CASH
+        # Keep all saved history and extra fields; to_dict trims blocked/log entries.
+        saved.update(cash=book.cash, start=book.start)
+        if not store.replace_setting(BOOK_KEY, raw, json.dumps(saved, default=str)):
+            return load_book(store)
+    return book
 
 
 def _call_of(snap: dict) -> dict | None:

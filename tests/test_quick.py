@@ -56,12 +56,12 @@ def test_a_flush_then_a_turn_up_enters_a_bounce_with_a_stop_under_the_low():
     assert [t["kind"] for t in book["trades"]] == ["bounce"]
     t = book["trades"][0]
     assert t["stop0"] < t["entry"] and t["entry"] - t["stop0"] <= quick.STOP_ATR * 2.0 + 0.01 and book["cash"] < quick.START_CASH
-    assert "turned up off the low" in t["reason"] and t["grade"] == "A" and abs(t["size"] - 2500) < 100
+    assert "turned up off the low" in t["reason"] and t["grade"] == "A" and abs(t["size"] - 5000) < 100
 
 
 def test_the_grade_comes_from_the_volume_pace_and_a_weak_or_unread_volume_does_not_trade():
     book, _ = run(ENTRY, s=snap(vol=200_000.0))                  # about 0.9x normal for the time: a B, three percent
-    assert [t["grade"] for t in book["trades"]] == ["B"] and abs(book["trades"][0]["size"] - 1500) < 100
+    assert [t["grade"] for t in book["trades"]] == ["B"] and abs(book["trades"][0]["size"] - 3000) < 100
     book, _ = run(ENTRY, s=snap(vol=90_000.0))                   # about 0.4x: a weak bounce
     assert book["trades"] == [] and "weak bounce" in book["skipped"][0]["reason"]
     s = snap()
@@ -143,7 +143,7 @@ def test_tick_runs_from_the_store_only_in_session_and_the_tab_renders(tmp_path, 
     st = quick.tick(store, now)
     assert st["watching"] == 1 and not st["skipped"]
     out = quick_view.html(quick.status(store), {"AAA": 100.0})
-    assert "Quick trading" in out and "$50,000.00" in out and "No open trades." in out
+    assert "Quick trading" in out and "$100,000.00" in out and "No open trades." in out
 
 
 def test_the_journal_is_written_as_sheet_files_in_a_quick_log_folder_and_a_missing_drive_only_reports(tmp_path):
@@ -220,7 +220,7 @@ def test_a_stock_may_trade_again_the_day_stops_at_a_one_percent_loss_and_entries
     assert all(x.get("nth_today", 2) == 2 for x in book["trades"][1:])
     # the daily loss stop: today's result is under -1% of the account, so another stock does not enter
     book = quick.new_book()
-    book["trades"].append({"ticker": "OLD", "opened": "2026-10-26 09:45", "closed": "2026-10-26 09:55", "result": -600.0, "status": "CLOSED"})
+    book["trades"].append({"ticker": "OLD", "opened": "2026-10-26 09:45", "closed": "2026-10-26 09:55", "result": -1100.0, "status": "CLOSED"})
     run(ENTRY, book=book)
     assert [t["ticker"] for t in book["trades"]] == ["OLD"] and any("daily loss stop" in x["reason"] for x in book["skipped"])
     monkeypatch.setattr(quick, "MAX_PER_DAY", 0)
