@@ -19,8 +19,14 @@ blocks, grades, ranking). Code only these two things, for both accounts:
   Never reset or lose a book. Test both: a $50,000 book is lifted once, a $100,000 book is left alone, trades and positions unchanged.
 - Sizes are a percent of the account, so they double on their own (Quick: grade A 5% = $5,000, B 3% = $3,000; New call cap 15% = $15,000), and
   Quick's day-loss stop (1%) becomes $1,000. That follows from "keep as is"; say it in the pull request so the owner sees it.
-- No new cap on the number of stocks (owner: "I'm not going to cap the stocks, they decide"). Open question for the owner, do not change
-  without his word: the existing caps `quick.MAX_OPEN = 15` and `paper_newcall.MAX_POSITIONS = 10` are still in the code.
+- Caps (owner, 11 Nov, final): the caps stay, but New call opens to 15. `paper_newcall.MAX_POSITIONS` 10 -> 15; `quick.MAX_OPEN` stays 15.
+  No other new cap. Update tests and any text on screen that says 10. Say the change in the pull request (it is a limit change, not a rule change).
+
+**Paste-ready prompt for Codex (task A only):** "Read CLAUDE.md and docs/HANDOVER_QUICK_NEWCALL.md, section FINAL SCOPE, part A. Branch
+`codex/start-cash-100k` off the default branch. Set `quick.START_CASH` and `paper.START_CASH` to 100,000; lift existing books once (cash +50,000,
+start = 100,000; Quick via `top_up()`, add the same for the New call book; a 100,000 book is left alone; trades and positions untouched); set
+`paper_newcall.MAX_POSITIONS` = 15. Do not touch any other rule. Add tests, run `python -m pytest -q` and pyflakes, open a PR with the template.
+Part B (whole S&P 500) is being built by Claude on `claude/sp500-open`: do not touch live.py, market.py, funnel.py or candidates.py."
 
 **B. Open both accounts to the whole S&P 500** (today: the ~120 tracked stocks plus up to 30 market extras, `live.wide_extras`, `WIDE_MAX = 30`;
 about 380 S&P stocks are never considered). Same rules for every stock; an untracked stock gets no Radar card and no alerts, as today.
@@ -34,7 +40,7 @@ about 380 S&P stocks are never considered). Same rules for every stock; an untra
 - Long work stays on the tracker thread (`live.py`), never in the page. Measure the sweep time before and after; it must not slow the app.
 - Tests with the fake provider: an untracked S&P stock can be bought by each account under the unchanged rules; rate limits respected; the
   tracked-stock behaviour is identical to today.
-- Who: Sonnet or Claude for B (scan, rate limits, tracker thread). Codex can take A.
+- Who: Sonnet or Claude for B (scan, rate limits, tracker thread). Codex takes A now (prompt above).
 
 **Not to be coded** (kept below only as the record of the analysis): Q1, Q3, Q4, Q5, Q6, N1, N2, N4, N7, N8, the no-money-limit idea, the
 15-trade cap, the sector cap and "replace the weakest". Q2 and N6 are what B implements. Task 0 (bar replay) is optional now.
