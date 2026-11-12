@@ -614,6 +614,9 @@ if view == "market":
         when = ms["scanned_at"][5:16].replace("T", " ")
         st.caption(f"Last scan {when} UTC · {ms['priced']} of {ms['universe']} stocks priced · "
                    f"{ms['setups']} setups · {len(ms['results'])} evaluated in depth. Tap a stock for details.")
+        _bs_err = store.get_setting("buy_setups_sheet_error")
+        if _bs_err:
+            st.caption(f"Buy-setup sheet: {_bs_err}")
         before = store.latest_market_scan(offset=1) or {}
         was = {r["ticker"] for r in before.get("results", []) if r["verdict"] == "BUY SETUP"}
         new_setups = {r["ticker"] for r in ms["results"] if r["verdict"] == "BUY SETUP" and r["ticker"] not in was}

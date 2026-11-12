@@ -81,7 +81,10 @@ def to_google(store, rows: list[dict], now: datetime | None = None, connect=None
     waiting = json.loads(raw) if raw else []
     waiting += [row_of(r, now) for r in rows]
     env = sheet_env()
-    if not env or not waiting:
+    if not env:
+        return ("Google Sheet not set up: this app window does not see STOCKWATCH_SMALLCAP_SHEET_URL (or STOCKWATCH_BUYSETUP_SHEET_URL). "
+                "Set it in Windows, then close and reopen the app. The CSV file still gets every setup.")
+    if not waiting:
         return ""
     try:
         if connect is None:
@@ -95,6 +98,8 @@ def to_google(store, rows: list[dict], now: datetime | None = None, connect=None
         except gspread.WorksheetNotFound:
             tab = sheet.add_worksheet(title=TAB, rows=2000, cols=len(COLS))
             tab.update(range_name="A1", values=[COLS], value_input_option="RAW")
+            have = {tuple(str(x) for x in r[:3]) for r in waiting}
+            waiting = [r for r in csv_rows() if tuple(r[:3]) not in have] + waiting   # a new tab starts with every setup the CSV holds
         tab.append_rows(waiting, value_input_option="RAW")
         store.set_setting(PENDING_KEY, "[]")
         return ""
@@ -103,3 +108,15 @@ def to_google(store, rows: list[dict], now: datetime | None = None, connect=None
         name = type(e).__name__
         log.warning("buy setups Google Sheet not written (%s)", name)
         return f"Google Sheet not written ({name}); {len(waiting)} row(s) wait for the next scan"
+
+
+def csv_rows(folder: Path | None = None) -> list[list]:
+    """Rows already in the CSV file (without its header); [] if there is none."""
+    try:
+        if folder is None:
+            from . import quick
+            folder = quick.log_dir()
+        with open(folder / FILE, newline="", encoding="utf-8-sig") as f:
+            return [r for r in list(csv.reader(f))[1:] if r]
+    except Exception:
+        return []

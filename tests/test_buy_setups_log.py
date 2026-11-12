@@ -63,7 +63,7 @@ def test_google_sheet_gets_the_rows_and_failures_wait_for_the_next_scan(tmp_path
     st = Store(tmp_path / "t.db")
     monkeypatch.delenv("STOCKWATCH_BUYSETUP_SHEET_URL", raising=False)
     monkeypatch.delenv("STOCKWATCH_SMALLCAP_SHEET_URL", raising=False)
-    assert b.to_google(st, [R], NOW, connect=lambda env: None) == ""            # not set up: nothing sent, nothing lost
+    assert "not set up" in b.to_google(st, [R], NOW, connect=lambda env: None)   # says why on screen; the CSV still has the rows
     assert st.get_setting(b.PENDING_KEY) is None                                # nothing queued without a sheet (the CSV has them)
     monkeypatch.setenv("STOCKWATCH_SMALLCAP_SHEET_URL", "https://docs.google.com/spreadsheets/d/x")
     err = b.to_google(st, [R], NOW, connect=lambda env: FakeSheet(fail=True))
@@ -71,3 +71,23 @@ def test_google_sheet_gets_the_rows_and_failures_wait_for_the_next_scan(tmp_path
     tab = FakeTab()
     assert b.to_google(st, [{**R, "ticker": "XYZ"}], NOW, connect=lambda env: FakeSheet(tab)) == ""
     assert [r[2] for r in tab.rows] == ["ABC", "XYZ"] and st.get_setting(b.PENDING_KEY) == "[]"
+
+
+def test_a_new_tab_starts_with_the_rows_already_in_the_csv(tmp_path, monkeypatch):
+    import gspread
+    from stockwatch.store import Store
+    monkeypatch.setenv("STOCKWATCH_QUICK_LOG_DIR", str(tmp_path / "Quick log"))
+    monkeypatch.setenv("STOCKWATCH_SMALLCAP_SHEET_URL", "https://docs.google.com/spreadsheets/d/x")
+    b.append([{**R, "ticker": "OLD1"}, {**R, "ticker": "OLD2"}], tmp_path / "Quick log", NOW)
+    tab = FakeTab()
+
+    class NewTabSheet:
+        def worksheet(self, name):
+            raise gspread.WorksheetNotFound(name)
+
+        def add_worksheet(self, **k):
+            return tab
+    st = Store(tmp_path / "t.db")
+    b.append([{**R, "ticker": "NEW"}], tmp_path / "Quick log", NOW)          # the scan writes the CSV first, then the Google tab
+    assert b.to_google(st, [{**R, "ticker": "NEW"}], NOW, connect=lambda env: NewTabSheet()) == ""
+    assert [r[2] for r in tab.rows] == ["OLD1", "OLD2", "NEW"]                # no duplicate of the row just written
