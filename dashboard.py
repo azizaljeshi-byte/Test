@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stockwatch import tape_screens, crash, portfolio as portfolio_acct, portfolio_view, extended, testlist, rising, rising_view, ask_ai, ask_ai_view, candidates, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
+from stockwatch import watch_sheet, tape_screens, crash, portfolio as portfolio_acct, portfolio_view, extended, testlist, rising, rising_view, ask_ai, ask_ai_view, candidates, paper_newcall, paper_view, whynot, quick, quick_view, radar_search, debtcash_view, technical_view, guide, briefing, dayboard, design, details, fundamentals_view, finnhub, live, premarket, research_lab, technical, tradeplan, turbo, ui
 from stockwatch.cis import decision as cis_decision, explain as cis_explain, presentation as cis_view, refdata as cis_refdata
 from stockwatch.cis import watchlist as cis_watchlist
 from stockwatch.config import Holding, load_portfolio, sheet_edit_url, to_yaml
@@ -73,7 +73,8 @@ def _save_theme():
     st.query_params["theme"] = mode
 data = provider(selected_provider(base.settings.data_provider), CODE_VERSION)
 # with a Google Sheet, the sheet is the only list; dashboard additions are for setups without one
-portfolio = base if base.sheet_url else store.apply_overrides(base)
+portfolio = live.current_portfolio(store, base=base)
+ui.set_watch(watch_sheet.items(store))
 tickers = {h.ticker for h in portfolio.holdings}
 
 # tickers that appeared in the sheet since this browser session last looked get an overview
@@ -163,7 +164,7 @@ def controls():
 @st.fragment(run_every="30s")
 def _watch_for_updates():
     """Reload the page when the tracker lands new results, and pop up the important new alerts."""
-    mark = store.watermark()
+    mark = store.watermark() + (store.get_setting(watch_sheet.KEY),)
     seen = st.session_state.get("watermark")
     if seen is None:
         st.session_state.watermark = mark
@@ -1157,6 +1158,7 @@ if view == "log":
             ("Ticker list", "Google Sheet" if base.sheet_url else "secret / YAML + app edits"),
             ("Finnhub fallback", "on" if finnhub.enabled() else "off (no FINNHUB_API_KEY)"),
             ("Tickers", len(tickers)),
+            ("Watch tab", watch_sheet.status_line(store)),
         ]) + "</div>", unsafe_allow_html=True)
         st.caption("Extended-hours prices come from minute bars, which keep working when Yahoo rate-limits the app. "
                    "'Blocked' fundamentals mean Yahoo refused the request; they're retried on the next sweep.")

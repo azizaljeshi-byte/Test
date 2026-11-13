@@ -10,15 +10,16 @@ class SheetConfigError(ValueError):
     """Safe to print: never includes credentials, paths or the Sheet URL."""
 
 
-def connect():
+def connect(env=None):
     """Validate configuration before scanning; no credentials or URLs are stored in SQLite."""
-    url = os.environ.get("STOCKWATCH_SMALLCAP_SHEET_URL", "").strip()
+    env = os.environ if env is None else env
+    url = env.get("STOCKWATCH_SMALLCAP_SHEET_URL", "").strip()
     if not url:
         raise SheetConfigError("Missing STOCKWATCH_SMALLCAP_SHEET_URL; no scan or Sheet write was made.")
     if not re.fullmatch(r"https://docs\.google\.com/spreadsheets/d/[A-Za-z0-9_-]+(?:[/?#].*)?", url):
         raise SheetConfigError("STOCKWATCH_SMALLCAP_SHEET_URL must be a Google Sheets link.")
-    raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
-    path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+    raw = env.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
+    path = env.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
     if not raw and not path:
         raise SheetConfigError("Missing Google service-account key: set GOOGLE_APPLICATION_CREDENTIALS (file path) "
                                "or GOOGLE_SERVICE_ACCOUNT_JSON (key JSON).")

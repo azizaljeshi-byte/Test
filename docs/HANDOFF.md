@@ -274,3 +274,18 @@ Playwright screenshots at phone width (390px).
 uses `data/smallcap.db` by default. Pending deliveries survive failures in settings.
 Windows setup (separate persistent database, no Actions): `docs/SMALLCAP_SHEET.md`
 and `scripts/install_smallcap_task.ps1`. Nothing is activated by merging.
+
+### Watch tab (PR #87)
+`stockwatch/watch_sheet.py` reads the owner's Watch tab every five minutes on a
+separate tracker worker. A:B belong to the owner; only C:H receive status updates.
+The first 60 distinct valid symbols join both normal portfolio paths as tier-2
+watchlist stocks, with full analysis, Radar cards and the existing alerts/accounts.
+Duplicates use the first comment; invalid and over-limit rows get feedback.
+Cached snapshots supply prices and calls; sync never makes market-data requests.
+The `watch_sheet` setting keeps the last successful list if Google fails. Removing
+a row removes it from Radar; snapshots and open paper trades are preserved.
+Use `STOCKWATCH_WATCH_SHEET_URL` to override `STOCKWATCH_SMALLCAP_SHEET_URL`, with
+the existing service-account variables and Editor sharing from `SMALLCAP_SHEET.md`.
+No credentials or links are stored in code. Checked/read times use Riyadh time.
+System diagnostics shows read status; owner notes appear escaped beneath the Radar
+call. The page's update poll also watches this setting, including outside sessions.

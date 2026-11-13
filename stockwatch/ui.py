@@ -532,6 +532,20 @@ def set_quick(held: dict | None, setups: dict | None) -> None:
     _QUICK["held"], _QUICK["setups"] = dict(held or {}), dict(setups or {})
 
 
+_WATCH_NOTES = {}
+
+
+def set_watch(items):
+    """Stored owner comments only; rendering never reads Google or a market provider."""
+    _WATCH_NOTES.clear()
+    _WATCH_NOTES.update({i["ticker"]: i.get("comment") or "" for i in items})
+
+
+def watch_note(snap):
+    note = _WATCH_NOTES.get(snap["ticker"])
+    return f"Your note: {note}" if note else ""
+
+
 def new_call(snap: dict) -> dict:
     oc = ((snap.get("payload") or {}).get("technical") or {}).get("one_call")
     return oc if isinstance(oc, dict) else {}
@@ -824,6 +838,7 @@ def row(snap: dict, was: str | None = None) -> str:
     return (f'<a class="mc-a" href="?view=target&t={escape(snap["ticker"])}" target="_self">'
             f'<div class="mc-li{" own" if not p["watchlist"] else ""}" style="--c:{color};--a:{acolor}">'
             f'<div class="call">{act_html}{new}{status_html}{tag}</div>'
+            + (f'<div class="why">{escape(watch_note(snap))}</div>' if watch_note(snap) else "") +
             f'<div class="hd"><div class="id"><b class="k"></b><span class="mc-tk">{escape(snap["ticker"])}</span>'
             f'<span class="nm">{escape(name)}</span></div>{price_html}</div>{ext_html}'
             f'<div class="why">{why_html}</div>' + (f'<div class="facts">{facts}</div>' if facts else "") + '</div></a>')
