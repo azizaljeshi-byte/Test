@@ -12,13 +12,16 @@ class SheetConfigError(ValueError):
 
 def connect(env: str = "STOCKWATCH_SMALLCAP_SHEET_URL"):
     """Validate configuration before scanning; no credentials or URLs are stored in SQLite."""
-    url = os.environ.get(env, "").strip()
+    environ = os.environ
+    if not isinstance(env, str):            # the Watch tab passes its own environment mapping
+        environ, env = env, "STOCKWATCH_SMALLCAP_SHEET_URL"
+    url = environ.get(env, "").strip()
     if not url:
         raise SheetConfigError(f"Missing {env}; no scan or Sheet write was made.")
     if not re.fullmatch(r"https://docs\.google\.com/spreadsheets/d/[A-Za-z0-9_-]+(?:[/?#].*)?", url):
         raise SheetConfigError(f"{env} must be a Google Sheets link.")
-    raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
-    path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+    raw = environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
+    path = environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
     if not raw and not path:
         raise SheetConfigError("Missing Google service-account key: set GOOGLE_APPLICATION_CREDENTIALS (file path) "
                                "or GOOGLE_SERVICE_ACCOUNT_JSON (key JSON).")

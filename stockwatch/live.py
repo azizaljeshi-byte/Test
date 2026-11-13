@@ -93,13 +93,22 @@ def wide_extras(store: Store, held: set[str], limit: int | None = None) -> list[
     return out
 
 
-def current_portfolio(store: Store, wide: bool = False):
-    base = load_portfolio()
-    base = base if base.sheet_url else store.apply_overrides(base)
-    if not wide:
-        return base
+def base_portfolio(store: Store, base=None):
+    base = load_portfolio() if base is None else base
+    return base if base.sheet_url else store.apply_overrides(base)
+
+
+def current_portfolio(store: Store, wide: bool = False, base=None):
     from dataclasses import replace
     from .config import Holding
+    from . import watch_sheet
+    base = base_portfolio(store, base)
+    held = {h.ticker for h in base.holdings}
+    additions = [Holding(i["ticker"], 2, 0) for i in watch_sheet.items(store) if i["ticker"] not in held]
+    if additions:
+        base = replace(base, holdings=list(base.holdings) + additions)
+    if not wide:
+        return base
     extras = wide_extras(store, {h.ticker for h in base.holdings})
     if not extras:
         return base
@@ -151,6 +160,8 @@ class Tracker:
         self.last_market: float | None = None   # read from the store on first use, so restarts don't rescan
         self.market_running = False
         self.market_error: str | None = None
+        self.last_watch = 0.0
+        self.watch_running = False
         self.running = True
         self._thread = threading.Thread(target=self._loop, name="stockwatch-tracker", daemon=True)
         if start:
@@ -213,10 +224,43 @@ class Tracker:
             run()
         return True
 
+    def maybe_watch_sync(self, now: float | None = None, background: bool = True) -> bool:
+        """Sheet I/O has its own worker and connection, so it can never hold up a sweep."""
+        from . import watch_sheet
+        now = time.time() if now is None else now
+        if not watch_sheet.configured() or self.watch_running or (self.last_watch and now - self.last_watch < watch_sheet.EVERY_S):
+            return False
+        self.watch_running = True
+        self.last_watch = now
+
+        def run():
+            work = None
+            try:
+                work = Store(self.store_path) if self.store_path else Store()
+                known = {h.ticker for h in base_portfolio(work).holdings}
+                watch_sheet.sync(work, known)
+            except Exception:
+                # Never log exceptions from Google: they can include the link or key.
+                log.warning("Watch tab sync unavailable; retrying in five minutes")
+                if work is not None:
+                    try:
+                        watch_sheet.record_failure(work)
+                    except Exception:
+                        log.warning("Watch tab error could not be saved")
+            finally:
+                self.watch_running = False
+
+        if background:
+            threading.Thread(target=run, name="stockwatch-watch-sheet", daemon=True).start()
+        else:
+            run()
+        return True
+
     def _loop(self):
         store = Store(self.store_path) if self.store_path else Store()   # its own connection for this thread
         while self.running:
             try:
+                self.maybe_watch_sync()
                 self.step(store)
                 if time.time() - getattr(self, "_paper_at", 0.0) >= 20:
                     self._paper_at = time.time()
