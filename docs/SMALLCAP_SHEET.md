@@ -61,3 +61,20 @@ private database if you want to resume with the same cache and event history.
 For synthetic CSV output only, use `--demo --out smallcap_out`; this never writes
 the Sheet and uses separate demo state. `--out` on a live run also exports CSVs.
 Keep exports private and outside the repo.
+
+The dashboard can also read a **Watch** tab in that Sheet. Type tickers in A and
+optional comments in B, starting at row 2. Keep those columns in place. Every five
+minutes the tracker reads them and fills only C:H: Status, Company, Price, Day %,
+Call and Checked (Riyadh time). The first 60 distinct valid tickers are used; rows
+over that technical ceiling say so. An invalid symbol is marked `Not a ticker`.
+You can point Watch at another Sheet with `STOCKWATCH_WATCH_SHEET_URL`; otherwise
+it uses `STOCKWATCH_SMALLCAP_SHEET_URL` and the same service-account access.
+
+Watch stocks get normal Radar cards, analysis and alerts, and the existing paper
+accounts may trade them under their unchanged rules. Remove a ticker to stop
+watching it; any open paper trade stays monitored. A read failure keeps the old
+list and shows an error in Log → System diagnostics. A first read may say
+`No prices found` until the next normal sweep. No separate price requests run
+from the Sheet sync or page. Comments appear on Radar as “Your note: …”.
+The dashboard must be running for this sync; its task is separate from the hourly
+Smallcap Sheet job. Unconfigured dashboards make no Watch requests.

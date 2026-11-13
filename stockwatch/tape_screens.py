@@ -69,7 +69,9 @@ def radar_rows(snaps,changed=None):
         old=(changed or {}).get(snap['ticker'])
         note=f' · was {old}' if old else ''
         rows.append(f'<div class="ts-stock dz-{cls}"><a href="{stock_link(snap["ticker"])}" target="_self">{escape(snap["ticker"])}</a>'
-                    f'<span class="ts-tag">{label}</span><p>{escape(why or a.get("why") or "No new reading.")}{escape(note)}</p>'
+                    f'<span class="ts-tag">{label}</span>'
+                    +(f'<p>{escape(ui.watch_note(snap))}</p>' if ui.watch_note(snap) else "")+
+                    f'<p>{escape(why or a.get("why") or "No new reading.")}{escape(note)}</p>'
                     +(f'<p>{escape(clash)}</p>' if clash else '')+
                     f'<details><summary>Current calls and checks</summary>{ui.call_chips(snap)}{dayboard._sure_html(a)}</details></div>')
     return f'<style>{CSS}</style><div class="ts">'+(''.join(rows) or '<small>No stocks match this view.</small>')+'</div>'
