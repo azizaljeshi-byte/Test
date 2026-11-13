@@ -201,6 +201,7 @@ def call_flips(store, snaps: list[dict], holdings, extras=frozenset()) -> dict:
     seen = seen if isinstance(seen, dict) else {}
     owned = {h.ticker for h in holdings if h.shares and h.shares > 0}
     fresh_own, fresh_buy, fresh_other = [], [], []
+    logged = []   # (snapshot, previous call, owned) for each buy or add signal: these also go on the owner's sheet
     for s in snaps:
         t = s["ticker"]
         oc = _oc(s)
@@ -217,6 +218,8 @@ def call_flips(store, snaps: list[dict], holdings, extras=frozenset()) -> dict:
             continue
         if t in owned:
             fresh_own.append((s, before))
+            if call in BUY_CALLS:
+                logged.append((s, before, True))
         elif call in BUY_CALLS and before not in BUY_CALLS:
             lc = ui.live_check(s)
             if lc and lc["word"].startswith("under"):       # the tape has already broken the line: not a buy now; look again next sweep
@@ -226,6 +229,7 @@ def call_flips(store, snaps: list[dict], holdings, extras=frozenset()) -> dict:
                     seen[t] = was
                 continue
             fresh_buy.append(s)
+            logged.append((s, before, False))
         elif before is not None and call not in BUY_CALLS:      # any other change on a watchlist stock goes in one quiet batch
             fresh_other.append((s, before))
     out = {"exits": sum(1 for s, _ in fresh_own if _oc(s)["call"] in SELL_CALLS), "owned_changes": len(fresh_own),
@@ -287,6 +291,12 @@ def call_flips(store, snaps: list[dict], holdings, extras=frozenset()) -> dict:
         text = notify.phone_digest(lines, footer, MAX_LINES)
         _push(title, [text], priority, "rotating_light" if priority == 5 else "warning" if priority == 4 else "bell", single, store=store)
     store.set_setting(SEEN_KEY, json.dumps(seen))
+    if logged:
+        try:
+            from . import buy_signals_log
+            buy_signals_log.record(store, logged)
+        except Exception:
+            log.warning("buy signals sheet step failed")
     return out
 
 
