@@ -96,6 +96,46 @@ def universe_stats(histories: dict, names) -> dict:
     return out
 
 
+def tech_of(hist: pd.DataFrame) -> dict:
+    """The technicals the buy-setup sheet shows, from the daily bars the scan already holds (no request). Anything that cannot be
+    worked out is left out, never zero. Support and resistance are the app's own levels (`status.assess`), not new ones."""
+    out: dict = {}
+    try:
+        ind = technical.indicators(hist)
+        last = ind.iloc[-1]
+        close = float(last["Close"])
+
+        def num(v, d=2):
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                return None
+            return round(v, d) if np.isfinite(v) else None
+        out.update(sma50=num(last["SMA50"]), sma200=num(last["SMA200"]), rsi=num(last["RSI"], 1),
+                   ema10=num(technical.ema(ind["Close"], 10).iloc[-1]), ema20=num(technical.ema(ind["Close"], 20).iloc[-1]))
+        m, sig = num(last["MACD"], 3), num(last["MACD_signal"], 3)
+        if m is not None and sig is not None:
+            out["macd"] = "bullish" if m > sig else "bearish"
+        a = num(last["ATR"], 4)
+        if a is not None and close > 0:
+            out["atr_pct"] = round(a / close * 100, 1)
+        v20 = float(last["VolAvg20"])
+        if v20 > 0:
+            out["vol_x"] = round(float(ind["Volume"].iloc[-5:].mean()) / v20, 2)
+        hi = float(ind["High"].tail(252).max())
+        if hi > 0:
+            out["from_high"] = round((close / hi - 1) * 100, 1)
+    except Exception:
+        pass
+    try:
+        from . import status
+        lv = status.assess(hist).get("levels") or {}
+        out.update(support=lv.get("support_high"), major_support=lv.get("exit_below"), resistance=lv.get("resist_low"))
+    except Exception:
+        pass
+    return {k: v for k, v in out.items() if v is not None}
+
+
 def one_call_buys(histories: dict, now=None) -> list[dict]:
     """The New call account's one-call (`onecall.assess`, unchanged) for every stock in the bulk download; returns the BUYs, closest to
     their exit line first. Uses the daily bars already downloaded: no extra request. Unknown data is skipped, never a call."""
@@ -161,7 +201,7 @@ def run(provider, top: int = 25, progress=None, exclude: set[str] = frozenset())
             "earnings_days": (e.events or {}).get("days_to_earnings"),
             "top_signals": [s.message for s in e.signals if s.kind == OPPORTUNITY][:3],
             "top_risks": [s.message for s in e.signals if s.kind != OPPORTUNITY and s.severity >= 2][:2],
-            "plan": e.plan,
+            "plan": e.plan, "tech": tech_of(histories[e.ticker]) if e.ticker in histories else {},
         })
     results.sort(key=lambda r: (r["rank"], -r["composite"]))
     step(1.0, f"Done: {sum(r['verdict'] == 'BUY SETUP' for r in results)} buy setups among {len(results)} finalists")

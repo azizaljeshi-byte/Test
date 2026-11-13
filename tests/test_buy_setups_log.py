@@ -38,6 +38,10 @@ def test_a_new_setup_found_by_the_scan_is_written(tmp_path, monkeypatch):
 
 
 class FakeTab:
+    col_count = 99
+    frozen_row_count = 1
+    id = 7
+
     def __init__(self):
         self.rows = []
 
@@ -91,3 +95,29 @@ def test_a_new_tab_starts_with_the_rows_already_in_the_csv(tmp_path, monkeypatch
     b.append([{**R, "ticker": "NEW"}], tmp_path / "Quick log", NOW)          # the scan writes the CSV first, then the Google tab
     assert b.to_google(st, [{**R, "ticker": "NEW"}], NOW, connect=lambda env: NewTabSheet()) == ""
     assert [r[2] for r in tab.rows] == ["OLD1", "OLD2", "NEW"]                # no duplicate of the row just written
+
+
+def test_rows_carry_the_technicals_and_an_old_csv_gets_the_new_header(tmp_path):
+    f = tmp_path / "Quick log"
+    f.mkdir()
+    old = b.COLS[:11]
+    (f / b.FILE).write_text(",".join(old) + "\nx,y,OLD\n", encoding="utf-8-sig")
+    t = {"support": 10.5, "major_support": 9.8, "resistance": 13.0, "sma50": 11.1, "sma200": 9.9, "ema10": 12.0, "ema20": 11.7,
+         "rsi": 61.2, "macd": "bullish", "atr_pct": 2.4, "vol_x": 1.5, "from_high": -3.2}
+    assert b.append([{**R, "tech": t}], f, NOW) == ""
+    rows = list(csv.reader(open(f / b.FILE, encoding="utf-8-sig")))
+    assert rows[0] == b.COLS and len(rows[1]) == len(b.COLS) and rows[1][2] == "OLD"
+    assert rows[2][11:] == ["10.5", "9.8", "13.0", "11.1", "9.9", "12.0", "11.7", "61.2", "bullish", "2.4", "1.5", "-3.2"]
+    assert len(b.WIDTHS) == len(b.COLS)
+
+
+def test_tech_of_reads_levels_and_indicators_and_never_raises():
+    import numpy as np
+    import pandas as pd
+    from stockwatch import market
+    n = 300
+    c = np.linspace(50, 100, n) + np.sin(np.arange(n))
+    h = pd.DataFrame({"Open": c, "High": c + 1, "Low": c - 1, "Close": c, "Volume": 1e6}, index=pd.date_range("2025-01-01", periods=n, freq="B"))
+    t = market.tech_of(h)
+    assert {"sma50", "sma200", "ema10", "ema20", "rsi", "macd", "atr_pct", "vol_x", "from_high"} <= set(t)
+    assert market.tech_of(pd.DataFrame({"Close": [1.0, 2.0]})) == {}
