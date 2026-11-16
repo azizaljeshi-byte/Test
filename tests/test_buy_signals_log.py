@@ -133,3 +133,16 @@ def test_only_buy_and_add_signals_are_logged_and_the_push_is_unchanged(monkeypat
     events.call_flips(st, [s("AAA", "BUY"), s("BBB", "EXIT"), s("OWN", "ADD")], hold)
     assert sorted((x[0]["ticker"], x[1], x[2]) for x in got) == [("AAA", "WAIT", False), ("OWN", "HOLD", True)]   # BBB's exit is not logged
     assert sent and "AAA: New buy signal" in sent[-1]
+
+
+def test_wait_for_turn_is_said_plainly_on_the_phone_and_on_the_sheet():
+    why = "Close to the exit line (0.0 normal swings above 393.05) but still falling or flat."
+    said = events.plain_why(why)
+    assert "dropped to its buy level" in said and "393.05" in said and "swings" not in said and "normal typical" not in said
+    assert "too near to buy" in events.plain_why("Close to the exit line but earnings are too near.")
+    assert events._call_word("WAIT FOR TURN") == "At its buy level, not rising yet"
+    s = snap("APP", "BUY")
+    s["payload"]["technical"]["one_call"]["why"] = why
+    r = dict(zip(bs.COLS, bs.row_of(s, "WAIT FOR TURN", True, NOW)))
+    assert r["Previous call"] == "At its buy level, not rising yet" and "dropped to its buy level" in r["Why"]
+    assert r["Signal"] == "New buy signal"

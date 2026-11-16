@@ -17,6 +17,7 @@ and skipped, never raised: a push must never stop the tracker."""
 from __future__ import annotations
 
 import json
+import re
 import logging
 import os
 import math
@@ -186,7 +187,21 @@ def _plain(value) -> str:
 
 def _call_word(call) -> str:
     return {"BUY": "New buy signal", "ADD": "Add signal", "EXIT": "Exit signal", "AVOID": "Avoid buying",
-            "ON THE LINE": "Near the exit level", "HOLD": "Hold", "WAIT": "Wait", None: "unknown"}.get(call, _plain(call).capitalize())
+            "ON THE LINE": "Near the exit level", "HOLD": "Hold", "WAIT": "Wait",
+            "WAIT FOR TURN": "At its buy level, not rising yet", None: "unknown"}.get(call, _plain(call).capitalize())
+
+
+_NEAR = re.compile(r"Close to the exit line \(([\d.]+) normal swings above ([\d.,]+)\) but still falling or flat\.")
+
+
+def plain_why(text: str) -> str:
+    """The phone's and the sheet's wording for the one-call reason (display only; the call itself is unchanged)."""
+    text = str(text or "")
+    text = _NEAR.sub(lambda m: f"It has dropped to its buy level ({m.group(1)} typical daily moves above the exit line {m.group(2)}) "
+                               "but is still falling or flat. A buy comes once it turns up.", text)
+    text = text.replace("Close to the exit line but earnings are too near.",
+                        "It is at its buy level, but earnings are too near to buy.")
+    return _plain(text)
 
 
 def call_flips(store, snaps: list[dict], holdings, extras=frozenset()) -> dict:
@@ -256,7 +271,7 @@ def call_flips(store, snaps: list[dict], holdings, extras=frozenset()) -> dict:
                     f"No new buys. A close below {_number(oc.get('band_line'))} gives an exit signal.")
             priority, section = 4, "YOUR STOCKS — CHECK FIRST"
         else:
-            line = f"{t}: Previous call: {_call_word(before)}. Now: {_call_word(call)}. {_plain(oc.get('why') or '')}"
+            line = f"{t}: Previous call: {_call_word(before)}. Now: {_call_word(call)}. {plain_why(oc.get('why'))}"
             priority, section = 3, "BUY SIGNALS" if call in BUY_CALLS else "YOUR STOCKS"
         entries.append((priority, t, section, line))
     for s in fresh_buy:

@@ -64,9 +64,10 @@ def row_of(snap: dict, before: str | None, owned: bool, now: datetime | None = N
         entry += f" · stop {_num(plan['stop'])}"
     profile = p.get("profile") if isinstance(p.get("profile"), dict) else {}
     call = oc.get("call")
+    from . import events                                    # the phone's wording, so the sheet reads the same
     return [now.strftime("%Y-%m-%d"), now.strftime("%H:%M"), snap.get("ticker"), p.get("name") or profile.get("name") or "",
-            profile.get("sector") or "", WORDS.get(call, str(call or "")), WORDS.get(before, str(before or "")), "yes" if owned else "no",
-            _num(price), str(oc.get("why") or "")[:300], entry, _num(_first(zones, "support", "high")), _num(oc.get("exit_line")),
+            profile.get("sector") or "", WORDS.get(call, events._call_word(call)), events._call_word(before) if before else "", "yes" if owned else "no",
+            _num(price), events.plain_why(oc.get("why"))[:300], entry, _num(_first(zones, "support", "high")), _num(oc.get("exit_line")),
             _num(_first(zones, "resistance", "low")), _num(plan.get("sma20")), _num(t.get("sma50")), _num(t.get("sma200")),
             _num(t.get("rsi"), 1), "bullish" if macd is True else "bearish" if macd is False else "",
             _num(atr / price * 100, 1) if isinstance(atr, (int, float)) and isinstance(price, (int, float)) and price else "",
