@@ -205,10 +205,18 @@ def run(provider, top: int = 25, progress=None, exclude: set[str] = frozenset())
         })
     results.sort(key=lambda r: (r["rank"], -r["composite"]))
     step(1.0, f"Done: {sum(r['verdict'] == 'BUY SETUP' for r in results)} buy setups among {len(results)} finalists")
+    breaks = None
+    try:
+        from . import break_watch
+        extra = tuple(t for t in exclude if t not in histories)            # stocks the app tracks are left out of the screen: add their bars for the break watch
+        more = provider.bulk_history(extra) if extra else {}
+        breaks = break_watch.events({**histories, **(more or {})})
+    except Exception:
+        log.exception("break watch step failed")
     return {"universe": len(tickers), "priced": len(histories), "setups": len(shortlist),
             "results": results, "evaluations": [e for e, _ in evaluated if not e.error],
             "stats": universe_stats(histories, names),
-            "buys": one_call_buys(histories)}
+            "buys": one_call_buys(histories), "breaks": breaks}
 
 
 def main(argv=None):

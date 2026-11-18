@@ -127,11 +127,18 @@ def market_scan(provider, store: Store | None = None, progress=None) -> list[dic
         if buys is not None:
             import json
             store.set_setting(BUYS_KEY, json.dumps({"at": datetime.now().isoformat(timespec="seconds"), "buys": [b["ticker"] for b in buys]}))
+        breaks = result.pop("breaks", None)
         stats = result.pop("stats", None)
         if stats:
             import json
             store.set_setting("universe_stats", json.dumps({"at": datetime.now().isoformat(timespec="seconds"), "stats": stats}))
         store.save_market_scan(result)
+        if breaks is not None:
+            try:
+                from . import break_watch
+                break_watch.record(store, breaks)                         # the owner's live test of the break idea, on his Google Sheet (18 Nov)
+            except Exception:
+                log.exception("break watch record failed")
         new = [r for r in result["results"] if r["verdict"] == "BUY SETUP" and r["ticker"] not in was]
         fresh = store.record_market_alerts(new)
         try:
