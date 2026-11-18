@@ -1,7 +1,9 @@
 """Break watch: a live test of the owner's break hypothesis on real stocks, shown on his Google Sheet (owner, 18 Nov).
 
 What is watched: a stock's first close beyond its prior 20-day closing high ("up", it broke resistance) or low ("down", it broke support).
-Each break is followed for 5 sessions and scored, so the sheet shows whether the idea holds on real days, not only in the back-test.
+The `Break watch` tab lists only the breaks that are live now (inside their 5 sessions), each with a plain call and the share of similar
+breaks that went on in the 5-year back-test, so it says what is likely to keep moving. A finished break leaves that list and is counted in
+the `Break scorecard`, which keeps checking the idea against real days (live results beside the back-test).
 
 The rules were fixed in advance from 5 years of the 150 most-traded S&P stocks (18,524 breaks) and are not tuned afterwards:
   qualified (known on the break day) : closes at least 0.5 normal daily swings beyond the level AND volume at least 1.2x its 20-day
@@ -43,9 +45,13 @@ TAB, SCORE_TAB = "Break watch", "Break scorecard"
 # 5-year back-test (2021-26, 150 most-traded S&P stocks): % that continued, % that reversed, and the average 5-day price change in %.
 BASELINE = {("up", "All breaks"): (40, 54, 0.54), ("up", "Qualified"): (50, 33, 0.72), ("up", "Confirmed"): (67, 16, 2.83),
             ("down", "All breaks"): (33, 60, 0.67), ("down", "Qualified"): (40, 39, 0.75), ("down", "Confirmed"): (54, 24, -0.93)}
-COLS = ["Break date (NY)", "Ticker", "Direction", "Level broken", "Break close", "Beyond level (normal swings)", "Volume (x normal)",
-        "Qualified on break day", "Day 1: change %", "Day 1: held beyond level", "Day 1: strong close", "Day 1: volume (x)",
-        "Confirmed on day 1", "Sessions seen (of 5)", "Change since break %", "Status", "Outcome"]
+COLS = ["Ticker", "Direction", "Call", "Chance it continues", "Break date (NY)", "Sessions since break", "Last close", "Level broken",
+        "Change since break %", "Beyond level (normal swings)", "Volume (x normal)", "Qualified on break day", "Day-1 tell strong", "Why"]
+# Chance that a break goes on to finish its 5 sessions further in the break direction, from the same 5-year back-test (fixed, never tuned):
+# on the break day by "qualified" or not; from day 1 on by the day-1 tell (held beyond the level, closed in the strong half, volume >= 1.0x)
+# and by how many sessions it has already held without a close back across the level.
+ODDS = {"up": {"q0": 50, "n0": 37, "strong": [66, 73, 79, 84], "weak": [48, 60, 70, 77]},
+        "down": {"q0": 40, "n0": 31, "strong": [57, 64, 71, 77], "weak": [40, 51, 61, 71]}}
 
 
 def _bars(h: pd.DataFrame, now: datetime | None) -> pd.DataFrame | None:
@@ -76,9 +82,10 @@ def judge(ev: dict) -> dict:
         ev["d1_held"] = (d1["close"] > ev["level"]) if up else (d1["close"] < ev["level"])
         ev["d1_strong"] = d1["pos"] >= 0.5
         ev["d1_vol"] = d1["vol_x"]
-        ev["confirmed"] = bool(ev["qualified"] and ev["d1_held"] and ev["d1_strong"] and d1["vol_x"] >= 1.0)
+        ev["d1_tell"] = bool(ev["d1_held"] and ev["d1_strong"] and d1["vol_x"] >= 1.0)
+        ev["confirmed"] = bool(ev["qualified"] and ev["d1_tell"])
     else:
-        ev["d1_ret"] = ev["d1_held"] = ev["d1_strong"] = ev["d1_vol"] = ev["confirmed"] = None
+        ev["d1_ret"] = ev["d1_held"] = ev["d1_strong"] = ev["d1_vol"] = ev["confirmed"] = ev["d1_tell"] = None
     ev["now_ret"] = round((days[-1]["close"] / ev["close"] - 1) * 100, 1) if days else None
     ev["outcome"] = ""
     word = "under" if up else "over"
@@ -95,6 +102,28 @@ def judge(ev: dict) -> dict:
     else:
         ev["status"] = f"Holding: day {seen} of {HOLD}"
     return ev
+
+
+def call_of(ev: dict) -> tuple[str, int, str]:
+    """(call, chance %, why) for a break that is still open. The chance is the share of similar breaks in the 5-year back-test that
+    went on to finish the 5 sessions further in the break direction; the call follows the day-1 tell, not the number alone."""
+    up = ev["side"] == "up"
+    o = ODDS[ev["side"]]
+    keep, fade = ("rising", "fall back") if up else ("falling", "bounce")
+    seen = ev["seen"]
+    base = (f"Closed {ev['size']:.1f} normal swings {'above' if up else 'below'} its 20-day {'high' if up else 'low'} ({ev['level']:g}) "
+            f"on {ev['vol_x']:.1f}x normal volume.")
+    if seen == 0:
+        if ev["qualified"]:
+            return "Possible: wait for day 1", o["q0"], base + " A clear break on volume; day 1 decides."
+        return f"Likely to {fade}", o["n0"], base + " Not a clear, heavy-volume break, which usually fades."
+    k = min(seen, 4) - 1
+    d1 = (f" Day 1 {'held' if ev['d1_held'] else 'did not hold'} the level, closed in the {'strong' if ev['d1_strong'] else 'weak'} half "
+          f"on {ev['d1_vol']:.1f}x volume.")
+    if ev["d1_tell"]:
+        return f"Likely to keep {keep}", o["strong"][k], base + d1
+    chance = o["weak"][k]
+    return ("Could go either way" if chance >= 45 else f"Likely to {fade}"), chance, base + d1
 
 
 def events(histories: dict, now: datetime | None = None) -> list[dict]:
@@ -192,12 +221,23 @@ SCORE_COLS = ["Direction", "Group", "Breaks seen", "Resolved", "Continued", "Rev
               "Back-test: continued", "Back-test: reversed", "Live vs back-test (continued)"]
 
 
-def row_of(ev: dict) -> list:
+def live_events(state: dict) -> list[dict]:
+    """Open breaks only (still inside their 5 sessions), the most likely to keep going first. Finished ones stay in the scorecard."""
+    order = {"Likely to keep": 0, "Possible": 1, "Could go": 2}
+    rows = []
+    for ev in (state.get("active") or []):
+        call, chance, why = call_of(ev)
+        rows.append((order.get(next((k for k in order if call.startswith(k)), ""), 3), -chance, ev["date"], ev, call, chance, why))
+    rows.sort(key=lambda r: (r[0], r[1], r[2]), reverse=False)
+    return [(r[3], r[4], r[5], r[6]) for r in rows]
+
+
+def row_of(ev: dict, call: str, chance: int, why: str) -> list:
     yn = lambda x: "" if x is None else ("Yes" if x else "No")
-    return [ev["date"], ev["t"], "Up: broke resistance" if ev["side"] == "up" else "Down: broke support", ev["level"], ev["close"], ev["size"],
-            ev["vol_x"], yn(ev["qualified"]), "" if ev["d1_ret"] is None else ev["d1_ret"], yn(ev["d1_held"]), yn(ev["d1_strong"]),
-            "" if ev["d1_vol"] is None else ev["d1_vol"], yn(ev["confirmed"]), ev["seen"], "" if ev["now_ret"] is None else ev["now_ret"],
-            ev["status"], ev["outcome"] or "open"]
+    days = ev["days"]
+    return [ev["t"], "Up: broke resistance" if ev["side"] == "up" else "Down: broke support", call, chance / 100, ev["date"], ev["seen"],
+            days[-1]["close"] if days else ev["close"], ev["level"], "" if ev["now_ret"] is None else ev["now_ret"], ev["size"], ev["vol_x"],
+            yn(ev["qualified"]), yn(ev["d1_tell"]), why]
 
 
 def sheet_env() -> str | None:
@@ -212,7 +252,7 @@ def _rgb(r, g, b):
 
 
 NAVY = _rgb(0.11, 0.176, 0.298)
-WIDTHS = [92, 70, 150, 84, 84, 96, 78, 92, 80, 92, 82, 82, 92, 82, 92, 300, 90]
+WIDTHS = [70, 150, 170, 92, 92, 84, 84, 84, 92, 96, 82, 92, 84, 420]
 SCORE_WIDTHS = [160, 96, 84, 84, 90, 90, 130, 110, 110, 260]
 
 
@@ -251,16 +291,25 @@ def _cond(sheet_id, col, kind, text, bg, fg, nrows, bold=False):
 def table_format(tab_id: int, nrows: int = SHEET_ROWS + 1) -> list[dict]:
     green, red, amber = (_rgb(0.85, 0.94, 0.87), _rgb(0.09, 0.42, 0.20)), (_rgb(0.99, 0.89, 0.88), _rgb(0.70, 0.15, 0.12)), \
         (_rgb(1, 0.96, 0.83), _rgb(0.55, 0.38, 0.0))
+    blue = (_rgb(0.86, 0.92, 0.99), _rgb(0.10, 0.30, 0.65))
+
+    def fmt(c0, c1, pattern=None, bold=False, center=True):
+        f = {"textFormat": {"bold": bold}} if bold else {}
+        if center:
+            f["horizontalAlignment"] = "CENTER"
+        if pattern:
+            f["numberFormat"] = {"type": "PERCENT" if "%" in pattern else "NUMBER", "pattern": pattern}
+        return {"repeatCell": {"range": {"sheetId": tab_id, "startRowIndex": 1, "endRowIndex": nrows, "startColumnIndex": c0, "endColumnIndex": c1},
+                               "cell": {"userEnteredFormat": f}, "fields": ",".join("userEnteredFormat." + k for k in f)}}
+
     extra = [{"setBasicFilter": {"filter": {"range": {"sheetId": tab_id, "startRowIndex": 0, "endRowIndex": nrows, "startColumnIndex": 0,
                                                        "endColumnIndex": len(COLS)}}}},
-             {"repeatCell": {"range": {"sheetId": tab_id, "startRowIndex": 1, "endRowIndex": nrows, "startColumnIndex": 1, "endColumnIndex": 2},
-                             "cell": {"userEnteredFormat": {"horizontalAlignment": "CENTER", "textFormat": {"bold": True, "fontSize": 11}}},
-                             "fields": "userEnteredFormat.horizontalAlignment,userEnteredFormat.textFormat"}}]
-    extra += [_cond(tab_id, 2, "TEXT_STARTS_WITH", "Up", *green, nrows), _cond(tab_id, 2, "TEXT_STARTS_WITH", "Down", *red, nrows)]
-    for col in (7, 12):
+             fmt(0, 1, bold=True), fmt(3, 4, "0%", True), fmt(4, 6), fmt(6, 8, "#,##0.00", center=False), fmt(8, 11, "0.0"), fmt(11, 13)]
+    extra += [_cond(tab_id, 1, "TEXT_STARTS_WITH", "Up", *green, nrows), _cond(tab_id, 1, "TEXT_STARTS_WITH", "Down", *red, nrows),
+              _cond(tab_id, 2, "TEXT_STARTS_WITH", "Likely to keep", *green, nrows, True), _cond(tab_id, 2, "TEXT_STARTS_WITH", "Possible", *blue, nrows),
+              _cond(tab_id, 2, "TEXT_STARTS_WITH", "Could go", *amber, nrows), _cond(tab_id, 2, "TEXT_STARTS_WITH", "Likely to", *red, nrows)]
+    for col in (11, 12):
         extra.append(_cond(tab_id, col, "TEXT_EQ", "Yes", *green, nrows, True))
-    extra += [_cond(tab_id, 16, "TEXT_EQ", "Continued", *green, nrows, True), _cond(tab_id, 16, "TEXT_EQ", "Reversed", *red, nrows, True),
-              _cond(tab_id, 16, "TEXT_EQ", "Neither", *amber, nrows), _cond(tab_id, 15, "TEXT_STARTS_WITH", "Failed", *red, nrows)]
     return _table_requests(tab_id, len(COLS), WIDTHS, nrows, extra)
 
 
@@ -286,7 +335,7 @@ def to_google(state: dict, connect=None) -> str:
         import gspread
         evs = all_events(state)
         for title, values, fmt, cols in ((SCORE_TAB, [SCORE_COLS] + scorecard(evs), score_format, len(SCORE_COLS)),
-                                         (TAB, [COLS] + [row_of(e) for e in evs[:SHEET_ROWS]], table_format, len(COLS))):
+                                         (TAB, [COLS] + [row_of(*x) for x in live_events(state)[:SHEET_ROWS]], table_format, len(COLS))):
             try:
                 tab = sheet.worksheet(title)
             except gspread.WorksheetNotFound:

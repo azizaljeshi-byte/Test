@@ -103,7 +103,7 @@ def test_scorecard_counts_and_says_when_there_is_too_little_to_judge():
     assert up_c[2] == 2 and up_all[-1].startswith("too few")
     assert up_all[7] == 0.40 and up_all[8] == 0.54                                        # the back-test beside the live numbers
     assert len(rows) == 6 and all(len(r) == len(bw.SCORE_COLS) for r in rows)
-    assert all(len(bw.row_of(e)) == len(bw.COLS) for e in (good, bad, ev_of([UP])))
+    assert all(len(bw.row_of(e, *bw.call_of(e))) == len(bw.COLS) for e in (ev_of([UP]), ev_of([UP, (105, 106, 103, 1200)])))
 
 
 class FakeTab:
@@ -144,7 +144,7 @@ def test_sheet_gets_both_tabs_and_errors_never_leak_the_link(monkeypatch):
     state = bw.merge(None, [ev_of([UP, (105, 106, 103, 1200)])], AFTER)
     sheet = FakeSheet()
     assert bw.to_google(state, connect=lambda env: sheet) == ""
-    assert sheet.tabs[bw.TAB].values[0] == bw.COLS and sheet.tabs[bw.TAB].values[1][1] == "AAA"
+    assert sheet.tabs[bw.TAB].values[0] == bw.COLS and sheet.tabs[bw.TAB].values[1][0] == "AAA" and sheet.tabs[bw.TAB].values[1][2].startswith("Likely to keep")
     assert sheet.tabs[bw.SCORE_TAB].values[0] == bw.SCORE_COLS and len(sheet.tabs[bw.SCORE_TAB].values) == 7
     assert len(sheet.requests) == 2 and sheet.tabs[bw.TAB].cleared == 1                   # styled once per tab, rewritten, never appended
     err = bw.to_google(state, connect=lambda env: FakeSheet(fail=True))
@@ -161,3 +161,30 @@ def test_record_saves_first_and_survives_a_failing_sheet(monkeypatch):
     saved = json.loads(st.d[bw.KEY])
     assert len(saved["active"]) == 1 and "not set up" in st.d[bw.ERROR_KEY]
     assert bw.record(st, [], AFTER, background=False) == "" and json.loads(st.d[bw.KEY])["active"] == []
+
+
+def test_calls_say_what_is_likely_to_move_with_the_back_test_chance():
+    wait = bw.call_of(ev_of([UP]))
+    assert wait[0].startswith("Possible") and wait[1] == 50 and "day 1 decides" in wait[2]
+    weak = bw.call_of(ev_of([(101.4, 102.4, 100.4, 1500)]))
+    assert weak[0] == "Likely to fall back" and weak[1] == 37
+    strong = bw.call_of(ev_of([UP, (105, 106, 103, 1200)]))
+    assert strong[0] == "Likely to keep rising" and strong[1] == 66 and "strong half" in strong[2]
+    later = bw.call_of(ev_of([UP, (105, 106, 103, 1200), (105.5, 106, 104, 1000), (106, 107, 105, 1000)]))
+    assert later[0] == "Likely to keep rising" and later[1] == 79                       # it has already held 3 sessions
+    wk = bw.call_of(ev_of([UP, (103.5, 106, 103, 800)]))
+    assert wk[0] == "Could go either way" and wk[1] == 48
+    d = bw.call_of(ev_of([(96, 97, 95, 1400), (95, 96.5, 94.5, 1100)]))
+    assert d[0] == "Likely to keep falling" and d[1] == 57
+    dw = bw.call_of(ev_of([(96, 97, 95, 1400), (97, 98, 94, 1100)]))
+    assert dw[0] == "Likely to bounce" and dw[1] == 40
+
+
+def test_the_live_list_has_only_open_breaks_best_first_and_finished_ones_drop_off():
+    strong = ev_of([UP, (105, 106, 103, 1200)])
+    weak = ev_of([(101.4, 102.4, 100.4, 1500)])
+    done = ev_of([UP, (105, 106, 103, 1200), (100, 101, 99, 1200)])                        # reversed on day 2: finished
+    state = bw.merge(None, [weak, strong, done], AFTER)
+    live = bw.live_events(state)
+    assert len(live) == 2 and live[0][1].startswith("Likely to keep") and live[1][1] == "Likely to fall back" and live[1][2] == 37
+    assert len(bw.scorecard(bw.all_events(state))) == 6 and bw.scorecard(bw.all_events(state))[0][3] == 1      # the finished one is still counted
