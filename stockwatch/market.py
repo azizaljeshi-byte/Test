@@ -213,10 +213,16 @@ def run(provider, top: int = 25, progress=None, exclude: set[str] = frozenset())
         breaks = break_watch.events({**histories, **(more or {})})
     except Exception:
         log.exception("break watch step failed")
+    dips = None
+    try:
+        from . import quality_dips
+        dips = quality_dips.candidates(histories)                         # strong-company dips tab on the owner's sheet (23 Nov): chart signs only here
+    except Exception:
+        log.exception("quality dips step failed")
     return {"universe": len(tickers), "priced": len(histories), "setups": len(shortlist),
             "results": results, "evaluations": [e for e, _ in evaluated if not e.error],
             "stats": universe_stats(histories, names),
-            "buys": one_call_buys(histories), "breaks": breaks}
+            "buys": one_call_buys(histories), "breaks": breaks, "dips": dips}
 
 
 def main(argv=None):

@@ -303,8 +303,8 @@ def _save(store, key, value):
         store.set_setting(key, json.dumps(value))
 
 
-def refresh_fundamentals(provider, tickers: list[str], cache: dict, now: datetime) -> int:
-    """Fetch fundamentals for the oldest or missing entries, at most FUND_PER_RUN. A failed fetch keeps the old entry and is retried
+def refresh_fundamentals(provider, tickers: list[str], cache: dict, now: datetime, keys=KEYS, per_run: int = FUND_PER_RUN) -> int:
+    """Fetch fundamentals for the oldest or missing entries, at most per_run (the small-cap screen's FUND_PER_RUN unless told otherwise). A failed fetch keeps the old entry and is retried
     after ERROR_RETRY_MIN minutes. Returns how many were fetched."""
     def age_min(t):
         e = cache.get(t)
@@ -316,12 +316,12 @@ def refresh_fundamentals(provider, tickers: list[str], cache: dict, now: datetim
     due = [t for t in tickers if (age_min(t) >= FUND_TTL_DAYS * 1440 and not (cache.get(t) or {}).get("err"))
            or (cache.get(t) or {}).get("err") and age_min(t) >= ERROR_RETRY_MIN or t not in cache]
     due.sort(key=lambda t: -age_min(t))
-    due = due[:FUND_PER_RUN]
+    due = due[:per_run]
 
     def get(t):
         try:
             f = provider.fundamentals(t)
-            return t, {k: f.get(k) for k in KEYS if f.get(k) is not None}, None
+            return t, {k: f.get(k) for k in keys if f.get(k) is not None}, None
         except Exception as e:
             return t, None, str(e)[:120]
 

@@ -128,6 +128,7 @@ def market_scan(provider, store: Store | None = None, progress=None) -> list[dic
             import json
             store.set_setting(BUYS_KEY, json.dumps({"at": datetime.now().isoformat(timespec="seconds"), "buys": [b["ticker"] for b in buys]}))
         breaks = result.pop("breaks", None)
+        dips = result.pop("dips", None)
         stats = result.pop("stats", None)
         if stats:
             import json
@@ -139,6 +140,12 @@ def market_scan(provider, store: Store | None = None, progress=None) -> list[dic
                 break_watch.record(store, breaks)                         # the owner's live test of the break idea, on his Google Sheet (18 Nov)
             except Exception:
                 log.exception("break watch record failed")
+        if dips is not None:
+            try:
+                from . import quality_dips
+                quality_dips.record(store, dips, provider)                # strong companies whose chart has weakened, on his Google Sheet (23 Nov)
+            except Exception:
+                log.exception("quality dips record failed")
         new = [r for r in result["results"] if r["verdict"] == "BUY SETUP" and r["ticker"] not in was]
         fresh = store.record_market_alerts(new)
         try:
