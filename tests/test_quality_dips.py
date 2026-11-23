@@ -204,3 +204,60 @@ def test_record_runs_in_the_foreground_when_asked(monkeypatch):
     store = FakeStore()
     assert "not set up" in qd.record(store, [], FakeProvider({}), NOW, background=False)
     assert json.loads(store.d[qd.KEY])["flagged"] == 0
+
+
+def test_live_matches_a_full_recompute_with_the_price_as_one_more_bar():
+    closes = rising(250) + [rising(250)[-1] - 4, rising(250)[-1] - 6, rising(250)[-1] - 7]
+    base = qd.technicals(frame(closes, end="2026-11-20"), AFTER)
+    c = {"t": "X", **base}
+    for p in (closes[-1] - 3, closes[-1] + 2, 45.0):                 # down, up, and a break below the whole year's low
+        got = qd.live(c, p)
+        want = qd.technicals(frame(closes + [p], end="2026-11-23"), datetime(2026, 11, 23, 17, 0, tzinfo=NY))
+        for k in ("price", "day", "above_low", "below_high", "vs_ema", "rsi", "down", "flags"):
+            tol = 6.0 if k in ("above_low", "below_high") else 0.11          # the 52-week window slides one old bar out; the test bars' lows sit 1 under close
+            assert abs(got[k] - want[k]) <= tol if isinstance(want[k], float) else got[k] == want[k], (p, k, got[k], want[k])
+
+
+LIVE_NOW = datetime(2026, 11, 23, 15, 0, tzinfo=timezone.utc)          # Monday 10:00 New York
+
+
+class FakeQuotes:
+    def __init__(self, prices):
+        self.prices, self.calls = prices, []
+
+    def bulk_quotes(self, tickers):
+        self.calls.append(list(tickers))
+        return {t: {"live_price": self.prices.get(t)} for t in tickers}
+
+
+def test_reprice_updates_prices_drops_cleared_names_and_only_runs_in_the_session(monkeypatch):
+    for e in ("STOCKWATCH_QUALITYDIPS_SHEET_URL", "STOCKWATCH_BREAKWATCH_SHEET_URL", "STOCKWATCH_BUYSIGNALS_SHEET_URL", "STOCKWATCH_BUYSETUP_SHEET_URL",
+              "STOCKWATCH_SMALLCAP_SHEET_URL"):
+        monkeypatch.delenv(e, raising=False)
+    up = rising(250)
+    stay = [100.0] * 250 + [99, 98, 97]
+    rebound = up + [up[-1] - 8] * 3
+    cands = qd.candidates({"STAY": frame(stay, "2026-11-20"), "BACK": frame(rebound, "2026-11-20"), "NEW": frame(stay, "2026-11-20")}, AFTER)
+    store = FakeStore()
+    store.d[qd.CANDS_KEY] = json.dumps(cands)
+    store.d[qd.FUND_KEY] = json.dumps({t: {"t": "x", "f": STRONG} for t in ("STAY", "BACK")})          # NEW has no fundamentals yet
+    store.d[qd.KEY] = json.dumps({"at": "2026-11-20T21:00:00+00:00", "flagged": 3, "waiting": 1, "strong": 2, "rows": []})
+    prov = FakeQuotes({"STAY": 95.0, "BACK": rebound[-1] + 12})
+    assert qd.reprice(store, prov, datetime(2026, 11, 21, 15, 0, tzinfo=timezone.utc)) == "market not open"      # Saturday
+    qd.reprice(store, prov, LIVE_NOW)
+    assert prov.calls == [["STAY", "BACK"]]                                    # one call, only the companies that can be shown
+    st = json.loads(store.d[qd.KEY])
+    assert [r[0] for r in st["rows"]] == ["STAY"] and st["rows"][0][3] == 95.0  # BACK jumped back above its average and dropped out
+    assert st["waiting"] == 1 and st["live_at"].startswith("2026-11-23T15:00")
+    prov.prices = {}                                                           # no live price: back to the last completed session, nothing invented
+    qd.reprice(store, prov, LIVE_NOW)
+    rows = json.loads(store.d[qd.KEY])["rows"]
+    assert [r[0] for r in rows] == ["STAY", "BACK"] and rows[0][3] == 97.0
+
+
+def test_a_seed_from_before_the_weekend_gap_is_not_repriced():
+    store = FakeStore()
+    c = {"t": "OLD", **qd.technicals(frame(rising(250) + [30] * 3, "2026-11-10"), AFTER)}
+    store.d[qd.CANDS_KEY] = json.dumps([c])
+    store.d[qd.FUND_KEY] = json.dumps({"OLD": {"t": "x", "f": STRONG}})
+    assert qd.reprice(store, FakeQuotes({"OLD": 29.0}), LIVE_NOW) == "nothing to reprice"

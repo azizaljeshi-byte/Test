@@ -16,12 +16,19 @@ FUND_TTL_DAYS, so the whole flagged list fills in over a few scans.
 Display only. No score, signal, verdict, trade plan, alert or paper rule reads any of this; it uses the daily bars the whole-S&P scan
 already downloaded (stocks the app tracks are not in that scan, they have their own cards). Today's unfinished bar is never used.
 The sheet is rewritten from the stored result at each scan; errors are logged by type only, so a link or key can never reach a log line.
+
+Live during the regular session (owner, 23 Nov): every LIVE_SECONDS the companies already in the table get one bulk price download and their
+signs are recomputed from that price on top of the last completed bar (`live`: the 50-day average and RSI take one more step, the 52-week
+range widens if the price breaks it). A company whose signs have all cleared drops out of the table. New names still join only at the
+30-minute whole-S&P scan, which judges the last completed session. Nothing is invented: a company with no live price shows its last completed session.
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
+import threading
+import time
 from datetime import datetime, timezone
 
 import numpy as np
@@ -46,6 +53,9 @@ MIN_KNOWN = 3             # of the 5 pillars
 SCORE_MIN = 60.0          # the app's own 0-100 fundamental score
 MIN_BARS = 220
 KEY, FUND_KEY, ERROR_KEY = "quality_dips", "quality_dips_fund", "quality_dips_sheet_error"
+CANDS_KEY = "quality_dips_cands"
+LIVE_SECONDS = 300        # how often the table is repriced while the market is open
+SEED_MAX_DAYS = 5         # a seed older than this (app was off) is not repriced
 FUND_PER_RUN = 60
 SHEET_ROWS = 300
 TAB = "Quality dips"
@@ -137,17 +147,39 @@ def technicals(h: pd.DataFrame | None, now: datetime | None = None) -> dict | No
             break
     if min(close, low52, high52, ema50) <= 0 or not np.isfinite(rsi):
         return None
-    above_low = (close / low52 - 1) * 100
+    d = c.diff()
+    ag = float(d.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean().iloc[-1])
+    al = float((-d.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean().iloc[-1])
+    seed = {"pc": close, "low": low52, "high": high52, "ema": ema50, "ag": ag, "al": al, "down": down,
+            "asof": pd.Timestamp(b.index[-1]).date().isoformat()}
+    return {**_signs(close, float(c.iloc[-2]), low52, high52, ema50, rsi, down), "seed": seed}
+
+
+def _signs(price, prev, low52, high52, ema50, rsi, down) -> dict:
+    above_low = (price / low52 - 1) * 100
     flags = []
     if above_low <= NEAR_LOW_PCT:
         flags.append("low")
-    if close < ema50:
+    if price < ema50:
         flags.append("ema")
     if down >= DOWN_DAYS and rsi <= LOW_RSI:
         flags.append("rsi")
-    return {"price": round(close, 2), "day": round((close / float(c.iloc[-2]) - 1) * 100, 2), "above_low": round(above_low, 1),
-            "below_high": round((close / high52 - 1) * 100, 1), "vs_ema": round((close / ema50 - 1) * 100, 1), "rsi": round(rsi, 1),
+    return {"price": round(price, 2), "day": round((price / prev - 1) * 100, 2), "above_low": round(above_low, 1),
+            "below_high": round((price / high52 - 1) * 100, 1), "vs_ema": round((price / ema50 - 1) * 100, 1), "rsi": round(rsi, 1),
             "down": down, "flags": flags}
+
+
+def live(c: dict, price: float) -> dict:
+    """The candidate re-judged at a live price: today's price is treated as one more bar on top of the last completed one."""
+    s = c["seed"]
+    low52, high52 = min(s["low"], price), max(s["high"], price)
+    ema50 = s["ema"] + (price - s["ema"]) * 2 / (EMA_DAYS + 1)
+    delta = price - s["pc"]
+    ag = s["ag"] * 13 / 14 + max(delta, 0) / 14
+    al = s["al"] * 13 / 14 + max(-delta, 0) / 14
+    rsi = 100.0 if al == 0 else 100 - 100 / (1 + ag / al)
+    down = s["down"] + 1 if price < s["pc"] else 0
+    return {**c, **_signs(price, s["pc"], low52, high52, ema50, rsi, down)}
 
 
 def candidates(histories: dict, now: datetime | None = None) -> list[dict]:
@@ -285,8 +317,10 @@ def to_google(state: dict, connect=None) -> str:
         except gspread.WorksheetNotFound:
             tab = sheet.add_worksheet(title=TAB, rows=SHEET_ROWS + 20, cols=len(COLS))
         rows = state.get("rows") or []
+        when = (f"Prices live at {state['live_at'][11:16]} UTC (new names join at the next scan)." if state.get("live_at")
+                else "Last completed session only.")
         note = (f"{state.get('strong', 0)} strong companies of {state.get('flagged', 0)} flagged charts; {state.get('waiting', 0)} still waiting "
-                f"for a fundamentals check. Last scan {state.get('at', '')[:16].replace('T', ' ')} UTC. Last completed session only.")
+                f"for a fundamentals check. Last scan {state.get('at', '')[:16].replace('T', ' ')} UTC. {when}")
         tab.clear()
         tab.update(range_name="A1", values=[COLS] + rows, value_input_option="RAW")
         tab.update(range_name=f"A{len(rows) + 3}", values=[[note]], value_input_option="RAW")
@@ -299,6 +333,10 @@ def to_google(state: dict, connect=None) -> str:
     except Exception as e:
         log.warning("quality dips Google Sheet not written (%s)", type(e).__name__)
         return f"Google Sheet not written ({type(e).__name__}); it is rewritten at the next whole-S&P scan"
+
+
+_LOCK = threading.Lock()
+_state = {"last": 0.0, "running": False}
 
 
 def _load(store, key, default):
@@ -319,9 +357,11 @@ def work(store, cands: list[dict], provider, now: datetime | None = None) -> str
     except Exception as e:
         log.warning("quality dips fundamentals step failed (%s)", type(e).__name__)
     state = {"at": now.isoformat(timespec="seconds"), **build(cands, cache)}
-    store.set_setting(KEY, json.dumps(state))
-    err = to_google(state)
-    store.set_setting(ERROR_KEY, err)
+    with _LOCK:
+        store.set_setting(CANDS_KEY, json.dumps(cands))
+        store.set_setting(KEY, json.dumps(state))
+        err = to_google(state)
+        store.set_setting(ERROR_KEY, err)
     return err
 
 
@@ -339,3 +379,68 @@ def record(store, cands: list[dict], provider, now: datetime | None = None, back
         threading.Thread(target=go, name="stockwatch-quality-dips", daemon=True).start()
         return ""
     return work(store, cands, provider, now)
+
+
+def reprice(store, provider, now: datetime | None = None) -> str:
+    """Live pass during the regular session: new prices for the companies in the table, signs recomputed, sheet rewritten.
+    Returns '' when done or a short reason it did nothing."""
+    from .data import us_session
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if us_session(now) != "REGULAR":
+        return "market not open"
+    cands, cache = _load(store, CANDS_KEY, []), _load(store, FUND_KEY, {})
+    today = now.astimezone(NY).date()
+
+    def fresh(c):
+        try:
+            d = datetime.fromisoformat(c["seed"]["asof"]).date()
+        except (KeyError, TypeError, ValueError):
+            return False
+        return d < today and (today - d).days <= SEED_MAX_DAYS
+
+    shown = [c["t"] for c in cands if fresh(c) and (cache.get(c["t"]) or {}).get("f") and quality(cache[c["t"]]["f"], c["price"])["passed"]]
+    if not shown:
+        return "nothing to reprice"
+    quotes = provider.bulk_quotes(shown)
+    with _LOCK:
+        cands = _load(store, CANDS_KEY, [])                   # a scan may have landed while the prices downloaded
+        moved = []
+        for c in cands:
+            q = quotes.get(c["t"]) or {}
+            p = _num(q.get("live_price"))
+            if p and p > 0 and fresh(c):
+                try:
+                    c = live(c, p)
+                except Exception:
+                    pass
+            moved.append(c)
+        flagged = [c for c in moved if c["flags"]]
+        before = _load(store, KEY, {})
+        state = {**build(flagged, cache), "at": before.get("at") or now.isoformat(timespec="seconds"),
+                 "live_at": now.isoformat(timespec="seconds")}
+        state["flagged"], state["waiting"] = before.get("flagged", state["flagged"]), before.get("waiting", state["waiting"])
+        store.set_setting(KEY, json.dumps(state))
+        err = to_google(state)
+        store.set_setting(ERROR_KEY, err)
+    return err
+
+
+def run_async(store_path, provider, now: float | None = None) -> bool:
+    """Tracker hook: a live pass every LIVE_SECONDS while the market is open, on its own thread so a sweep is never held up."""
+    from .data import us_session
+    now = time.time() if now is None else now
+    if us_session() != "REGULAR" or _state["running"] or now - _state["last"] < LIVE_SECONDS:
+        return False
+    _state["running"], _state["last"] = True, now
+
+    def go():
+        try:
+            from .store import Store
+            reprice(Store(store_path) if store_path else Store(), provider)
+        except Exception as e:
+            log.warning("quality dips live pass failed (%s)", type(e).__name__)
+        finally:
+            _state["running"] = False
+
+    threading.Thread(target=go, name="stockwatch-quality-live", daemon=True).start()
+    return True

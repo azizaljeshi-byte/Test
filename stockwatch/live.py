@@ -356,6 +356,11 @@ class Tracker:
                     except Exception:
                         log.exception("push step failed")
                 self.maybe_market_scan(store)
+                try:
+                    from . import quality_dips
+                    quality_dips.run_async(self.store_path, self.provider)   # live prices for the Quality dips tab, own thread
+                except Exception:
+                    log.exception("quality dips live step failed")
                 self.last_error = None
             except Exception as e:   # keep tracking through a bad sweep
                 self.last_error = str(e)
