@@ -21,13 +21,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
 
 from . import fundamental, smallcap, technical
-from .break_watch import _rgb, _table_requests, sheet_env
 from .data import NY
 
 log = logging.getLogger("stockwatch.quality_dips")
@@ -56,6 +56,47 @@ COLS = ["Ticker", "Company", "Sector", "Price", "Last session %", "Why it is fla
         "Below 52-week high %", "vs 50-day average %", "RSI", "Down sessions in a row", "Fundamentals score", "Revenue growth %",
         "Profit margin %", "Free cash flow ($M)", "Debt / equity", "Analyst target upside %", "Fundamentals"]
 WIDTHS = [70, 170, 130, 76, 82, 260, 70, 84, 92, 92, 56, 84, 92, 84, 84, 92, 76, 92, 420]
+
+
+def sheet_env() -> str | None:
+    """The Windows variable that holds the owner's Google Sheet link (the same sheet as the other tabs)."""
+    for env in ("STOCKWATCH_QUALITYDIPS_SHEET_URL", "STOCKWATCH_BREAKWATCH_SHEET_URL", "STOCKWATCH_BUYSIGNALS_SHEET_URL",
+                "STOCKWATCH_BUYSETUP_SHEET_URL", "STOCKWATCH_SMALLCAP_SHEET_URL"):
+        if os.environ.get(env, "").strip():
+            return env
+    return None
+
+
+def _rgb(r, g, b):
+    return {"red": r, "green": g, "blue": b}
+
+
+NAVY = _rgb(0.11, 0.176, 0.298)
+
+
+def _table_requests(sheet_id: int, ncols: int, widths: list[int], nrows: int, extra: list[dict]) -> list[dict]:
+    def rng(r0=0, r1=nrows, c0=0, c1=ncols):
+        return {"sheetId": sheet_id, "startRowIndex": r0, "endRowIndex": r1, "startColumnIndex": c0, "endColumnIndex": c1}
+
+    out = [
+        {"updateSheetProperties": {"properties": {"sheetId": sheet_id, "tabColorStyle": {"rgbColor": _rgb(0.55, 0.30, 0.75)},
+                                                  "gridProperties": {"frozenRowCount": 1, "hideGridlines": True}},
+                                   "fields": "tabColorStyle,gridProperties.frozenRowCount,gridProperties.hideGridlines"}},
+        {"repeatCell": {"range": rng(), "cell": {"userEnteredFormat": {"verticalAlignment": "MIDDLE", "wrapStrategy": "WRAP",
+                                                                      "textFormat": {"fontFamily": "Roboto", "fontSize": 10}}},
+                        "fields": "userEnteredFormat.verticalAlignment,userEnteredFormat.wrapStrategy,userEnteredFormat.textFormat"}},
+        {"repeatCell": {"range": rng(0, 1), "cell": {"userEnteredFormat": {
+            "backgroundColor": NAVY, "horizontalAlignment": "CENTER", "textFormat": {"foregroundColor": _rgb(1, 1, 1), "bold": True,
+                                                                                    "fontFamily": "Roboto", "fontSize": 10}}},
+            "fields": "userEnteredFormat.backgroundColor,userEnteredFormat.horizontalAlignment,userEnteredFormat.textFormat"}},
+        {"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
+                                       "properties": {"pixelSize": 48}, "fields": "pixelSize"}},
+        {"addBanding": {"bandedRange": {"range": rng(1, nrows), "rowProperties": {
+            "firstBandColorStyle": {"rgbColor": _rgb(1, 1, 1)}, "secondBandColorStyle": {"rgbColor": _rgb(0.94, 0.96, 0.98)}}}}},
+    ]
+    out += [{"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": i, "endIndex": i + 1},
+                                           "properties": {"pixelSize": w}, "fields": "pixelSize"}} for i, w in enumerate(widths)]
+    return out + extra
 
 
 def _num(v):

@@ -155,7 +155,7 @@ def test_the_sheet_gets_the_header_the_rows_and_a_status_line(monkeypatch):
     assert tab.writes[0][0] == "A1" and tab.writes[0][1][0] == qd.COLS and len(tab.writes[0][1]) == 2
     assert tab.writes[1][0] == "A4" and "4 still waiting" in tab.writes[1][1][0][0] and sheet.requests
     monkeypatch.delenv("STOCKWATCH_SMALLCAP_SHEET_URL")
-    for e in ("STOCKWATCH_BREAKWATCH_SHEET_URL", "STOCKWATCH_BUYSIGNALS_SHEET_URL", "STOCKWATCH_BUYSETUP_SHEET_URL"):
+    for e in ("STOCKWATCH_QUALITYDIPS_SHEET_URL", "STOCKWATCH_BREAKWATCH_SHEET_URL", "STOCKWATCH_BUYSIGNALS_SHEET_URL", "STOCKWATCH_BUYSETUP_SHEET_URL"):
         monkeypatch.delenv(e, raising=False)
     assert "not set up" in qd.to_google(state, connect=lambda env: sheet)
 
@@ -179,7 +179,7 @@ class FakeProvider:
 
 def test_work_fetches_the_most_damaged_first_keeps_a_cache_and_survives_a_failure(monkeypatch):
     monkeypatch.delenv("STOCKWATCH_SMALLCAP_SHEET_URL", raising=False)
-    for e in ("STOCKWATCH_BREAKWATCH_SHEET_URL", "STOCKWATCH_BUYSIGNALS_SHEET_URL", "STOCKWATCH_BUYSETUP_SHEET_URL"):
+    for e in ("STOCKWATCH_QUALITYDIPS_SHEET_URL", "STOCKWATCH_BREAKWATCH_SHEET_URL", "STOCKWATCH_BUYSIGNALS_SHEET_URL", "STOCKWATCH_BUYSETUP_SHEET_URL"):
         monkeypatch.delenv(e, raising=False)
     monkeypatch.setattr(qd, "FUND_PER_RUN", 2)
     cands = [{"t": t, "price": 100, "day": -1, "above_low": 2 + i, "below_high": -20, "vs_ema": -5, "rsi": 30, "down": 2, "flags": ["low"]}
@@ -199,7 +199,7 @@ def test_work_fetches_the_most_damaged_first_keeps_a_cache_and_survives_a_failur
 
 def test_record_runs_in_the_foreground_when_asked(monkeypatch):
     monkeypatch.delenv("STOCKWATCH_SMALLCAP_SHEET_URL", raising=False)
-    for e in ("STOCKWATCH_BREAKWATCH_SHEET_URL", "STOCKWATCH_BUYSIGNALS_SHEET_URL", "STOCKWATCH_BUYSETUP_SHEET_URL"):
+    for e in ("STOCKWATCH_QUALITYDIPS_SHEET_URL", "STOCKWATCH_BREAKWATCH_SHEET_URL", "STOCKWATCH_BUYSIGNALS_SHEET_URL", "STOCKWATCH_BUYSETUP_SHEET_URL"):
         monkeypatch.delenv(e, raising=False)
     store = FakeStore()
     assert "not set up" in qd.record(store, [], FakeProvider({}), NOW, background=False)
